@@ -1,6 +1,33 @@
 import { prisma } from '@/lib/prisma'
 import { NextResponse } from 'next/server'
 
+function makeSkuPrefix(itemType: string) {
+  if (itemType === 'L1') return 'L1'
+  if (itemType === 'L2') return 'L2'
+  return 'L3'
+}
+
+function slugifyName(name: string) {
+  return name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+async function generateSku(itemType: string, name: string) {
+  const baseSku = `${makeSkuPrefix(itemType)}-${slugifyName(name)}`
+  let sku = baseSku
+  let counter = 2
+
+  while (await prisma.item.findUnique({ where: { sku } })) {
+    sku = `${baseSku}-${counter}`
+    counter++
+  }
+
+  return sku
+}
+
 export async function GET() {
   try {
     const items = await prisma.item.findMany({
@@ -18,10 +45,9 @@ export async function POST(req: Request) {
   try {
     const body = await req.json()
 
-    const sku = String(body.sku || '').trim()
     const name = String(body.name || '').trim()
     const itemType = body.itemType
-    const unitType = body.unitType
+    const unitType = itemType === 'L1' ? 'each' : body.unitType
 
     const shelfLifeDays =
       body.shelfLifeDays === null || body.shelfLifeDays === ''
@@ -37,10 +63,6 @@ export async function POST(req: Request) {
       body.standardBatchOutput === null || body.standardBatchOutput === ''
         ? null
         : Number(body.standardBatchOutput)
-
-    if (!sku) {
-      return NextResponse.json({ error: 'SKU is required' }, { status: 400 })
-    }
 
     if (!name) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 })
@@ -91,6 +113,8 @@ export async function POST(req: Request) {
         )
       }
     }
+
+    const sku = await generateSku(itemType, name)
 
     const item = await prisma.item.create({
       data: {

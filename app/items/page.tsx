@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 type Item = {
   id: string
@@ -14,8 +14,9 @@ type Item = {
 }
 
 export default function ItemsPage() {
+  const messageRef = useRef<HTMLDivElement | null>(null)
+
   const [items, setItems] = useState<Item[]>([])
-  const [sku, setSku] = useState('')
   const [name, setName] = useState('')
   const [itemType, setItemType] = useState<'L1' | 'L2' | 'L3'>('L3')
   const [unitType, setUnitType] = useState<'g' | 'ml' | 'each'>('g')
@@ -34,12 +35,19 @@ export default function ItemsPage() {
     }
   }
 
+  function scrollToMessage() {
+    setTimeout(() => {
+      messageRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 50)
+  }
+
   async function loadItems() {
     const res = await fetch('/api/items', { cache: 'no-store' })
     const data = await safeJson(res)
 
     if (!res.ok) {
       setError(data.error || 'Failed to load items')
+      scrollToMessage()
       return
     }
 
@@ -56,17 +64,20 @@ export default function ItemsPage() {
     setMessage('')
 
     if (nextType === 'L1') {
+      setUnitType('each')
       setShelfLifeDays('')
       setStandardBatchOutput('')
     }
 
     if (nextType === 'L2') {
       setSellingPrice('')
+      if (unitType === 'each') setUnitType('g')
     }
 
     if (nextType === 'L3') {
       setSellingPrice('')
       setStandardBatchOutput('')
+      if (unitType === 'each') setUnitType('g')
     }
   }
 
@@ -79,10 +90,9 @@ export default function ItemsPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        sku,
         name,
         itemType,
-        unitType,
+        unitType: itemType === 'L1' ? 'each' : unitType,
         shelfLifeDays:
           itemType === 'L2' || itemType === 'L3'
             ? shelfLifeDays
@@ -103,17 +113,18 @@ export default function ItemsPage() {
 
     if (!res.ok) {
       setError(data.error || 'Failed to save item')
+      scrollToMessage()
       return
     }
 
-    setSku('')
     setName('')
     setItemType('L3')
     setUnitType('g')
     setShelfLifeDays('')
     setSellingPrice('')
     setStandardBatchOutput('')
-    setMessage('Item saved.')
+    setMessage(`Item saved. SKU generated: ${data.sku}`)
+    scrollToMessage()
     loadItems()
   }
 
@@ -132,10 +143,12 @@ export default function ItemsPage() {
 
     if (!res.ok) {
       setError(data.error || 'Failed to delete item')
+      scrollToMessage()
       return
     }
 
     setMessage('Item deleted.')
+    scrollToMessage()
     loadItems()
   }
 
@@ -151,19 +164,19 @@ export default function ItemsPage() {
           Create and view L1, L2, and L3 items.
         </p>
 
+        <div ref={messageRef}>
+          {error ? (
+            <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          ) : null}
 
-
-        {error ? (
-          <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        ) : null}
-
-        {message ? (
-          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
-            {message}
-          </div>
-        ) : null}
+          {message ? (
+            <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+              {message}
+            </div>
+          ) : null}
+        </div>
 
         <form
           onSubmit={handleSubmit}
@@ -186,18 +199,6 @@ export default function ItemsPage() {
 
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-900">
-              SKU
-            </label>
-            <input
-              value={sku}
-              onChange={(e) => setSku(e.target.value)}
-              className="w-full rounded-xl border px-3 py-2"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-900">
               Name
             </label>
             <input
@@ -208,20 +209,22 @@ export default function ItemsPage() {
             />
           </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-900">
-              Unit Type
-            </label>
-            <select
-              value={unitType}
-              onChange={(e) => setUnitType(e.target.value as 'g' | 'ml' | 'each')}
-              className="w-full rounded-xl border px-3 py-2"
-            >
-              <option value="g">g</option>
-              <option value="ml">ml</option>
-              <option value="each">each</option>
-            </select>
-          </div>
+          {itemType !== 'L1' ? (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Unit Type
+              </label>
+              <select
+                value={unitType}
+                onChange={(e) => setUnitType(e.target.value as 'g' | 'ml' | 'each')}
+                className="w-full rounded-xl border px-3 py-2"
+              >
+                <option value="g">g</option>
+                <option value="ml">ml</option>
+                <option value="each">each</option>
+              </select>
+            </div>
+          ) : null}
 
           {itemType === 'L1' ? (
             <div>
@@ -302,7 +305,9 @@ export default function ItemsPage() {
                   <td className="px-4 py-3 text-slate-800">{item.sku}</td>
                   <td className="px-4 py-3 text-slate-800">{item.name}</td>
                   <td className="px-4 py-3 text-slate-800">{item.itemType}</td>
-                  <td className="px-4 py-3 text-slate-800">{item.unitType}</td>
+                  <td className="px-4 py-3 text-slate-800">
+                    {item.itemType === 'L1' ? 'N/A' : item.unitType}
+                  </td>
                   <td className="px-4 py-3 text-slate-800">
                     {item.itemType === 'L2' || item.itemType === 'L3'
                       ? displayValue(item.shelfLifeDays)
