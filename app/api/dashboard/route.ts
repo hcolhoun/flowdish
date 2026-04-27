@@ -24,7 +24,7 @@ export async function GET() {
       prisma.inventoryLot.findMany({
         where: { qtyRemaining: { gt: 0 } },
         include: { item: true },
-        orderBy: [{ expiryAt: 'asc' }],
+        orderBy: { expiryAt: 'asc' },
       }),
       prisma.delivery.findMany({
         take: 5,
@@ -61,40 +61,56 @@ export async function GET() {
       }),
     ])
 
-    const totalRevenue = sales.reduce((sum, sale) => {
+    // ✅ Revenue
+    const totalRevenue = sales.reduce((sum: number, sale) => {
       return sum + sale.qty * (sale.item.sellingPrice ?? 0)
     }, 0)
 
-    const totalCogs = sales.reduce((sum, sale) => {
+    // ✅ COGS (real)
+    const totalCogs = sales.reduce((sum: number, sale) => {
       return sum + (sale.cost ?? 0)
     }, 0)
 
     const grossProfit = totalRevenue - totalCogs
+
     const grossMarginPercent =
       totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
 
-    const totalSpend = deliveries.reduce((sum, delivery) => {
+    // 💸 Spend (purchases)
+    const totalSpend = deliveries.reduce((sum: number, delivery) => {
       return sum + delivery.qty * (delivery.price ?? 0)
     }, 0)
 
-    const stockValue = inventoryLots.reduce((sum, lot) => {
+    // 📦 Stock value (true costing)
+    const stockValue = inventoryLots.reduce((sum: number, lot) => {
       return sum + lot.qtyRemaining * (lot.unitCost ?? 0)
     }, 0)
 
-    const wasteCost = waste.reduce((sum, wasteRow) => {
-      const lotsForItem = inventoryLots.filter((lot) => lot.itemId === wasteRow.itemId)
-      const latestCost = lotsForItem.length > 0 ? lotsForItem[0].unitCost ?? 0 : 0
-      return sum + wasteRow.qty * latestCost
+    // 🗑 Waste cost (approx based on latest lot)
+    const wasteCost = waste.reduce((sum: number, wasteRow) => {
+      const lots = inventoryLots.filter(
+        (lot) => lot.itemId === wasteRow.itemId
+      )
+
+      const unitCost = lots.length > 0 ? lots[0].unitCost ?? 0 : 0
+
+      return sum + wasteRow.qty * unitCost
     }, 0)
 
-    const wastePercent = totalSpend > 0 ? (wasteCost / totalSpend) * 100 : 0
+    const wastePercent =
+      totalSpend > 0 ? (wasteCost / totalSpend) * 100 : 0
 
     const baselineWastePercent = 10
+
     const estimatedSavings =
       totalSpend > 0
-        ? Math.max(0, ((baselineWastePercent - wastePercent) / 100) * totalSpend)
+        ? Math.max(
+            0,
+            ((baselineWastePercent - wastePercent) / 100) * totalSpend
+          )
         : 0
 
+    // 📊 Inventory summary
     const inventorySummaryMap = new Map<
       string,
       {
@@ -121,7 +137,11 @@ export async function GET() {
         })
       } else {
         existing.totalQty += lot.qtyRemaining
-        if (lot.expiryAt && (!existing.nextExpiry || lot.expiryAt < existing.nextExpiry)) {
+
+        if (
+          lot.expiryAt &&
+          (!existing.nextExpiry || lot.expiryAt < existing.nextExpiry)
+        ) {
           existing.nextExpiry = lot.expiryAt
         }
       }
@@ -129,6 +149,7 @@ export async function GET() {
 
     const inventorySummary = Array.from(inventorySummaryMap.values())
 
+    // ⏰ Expiring soon
     const expiringSoon = inventoryLots
       .filter((lot) => lot.expiryAt && lot.expiryAt <= in7Days)
       .map((lot) => ({
@@ -142,12 +163,20 @@ export async function GET() {
       }))
       .slice(0, 10)
 
-    const expiringSoonValue = expiringSoon.reduce((sum, lot) => sum + lot.value, 0)
+    const expiringSoonValue = expiringSoon.reduce(
+      (sum: number, lot) => sum + lot.value,
+      0
+    )
 
+    // ⚠️ Low stock L2
     const lowStockL2 = l2Items
       .map((item) => {
         const lots = inventoryLots.filter((lot) => lot.itemId === item.id)
-        const totalQty = lots.reduce((sum, lot) => sum + lot.qtyRemaining, 0)
+
+        const totalQty = lots.reduce(
+          (sum: number, lot) => sum + lot.qtyRemaining,
+          0
+        )
 
         return {
           itemId: item.id,
@@ -160,6 +189,7 @@ export async function GET() {
       .filter((item) => item.totalQty <= 0)
       .slice(0, 10)
 
+    // 💰 Profit per item
     const profitByItemMap = new Map<
       string,
       {
@@ -177,6 +207,7 @@ export async function GET() {
     for (const sale of sales) {
       const revenue = sale.qty * (sale.item.sellingPrice ?? 0)
       const cogs = sale.cost ?? 0
+
       const existing = profitByItemMap.get(sale.itemId)
 
       if (!existing) {
@@ -196,7 +227,9 @@ export async function GET() {
         existing.cogs += cogs
         existing.profit = existing.revenue - existing.cogs
         existing.marginPercent =
-          existing.revenue > 0 ? (existing.profit / existing.revenue) * 100 : 0
+          existing.revenue > 0
+            ? (existing.profit / existing.revenue) * 100
+            : 0
       }
     }
 
@@ -234,6 +267,9 @@ export async function GET() {
     })
   } catch (error) {
     console.error('GET /api/dashboard failed:', error)
-    return NextResponse.json({ error: 'Failed to load dashboard' }, { status: 500 })
+    return NextResponse.json(
+      { error: 'Failed to load dashboard' },
+      { status: 500 }
+    )
   }
 }
