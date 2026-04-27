@@ -1,0 +1,170 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ItemType {
+  L1
+  L2
+  L3
+}
+
+enum UnitType {
+  g
+  ml
+  each
+}
+
+enum InventorySourceType {
+  DELIVERY
+  PREP
+}
+
+model Item {
+  id                  String   @id @default(cuid())
+  sku                 String   @unique
+  name                String
+  itemType            ItemType
+  unitType            UnitType
+  shelfLifeDays       Int?
+  sellingPrice        Float?
+  standardBatchOutput Float?
+  createdAt           DateTime @default(now())
+
+  bomL1AsParent BomL1L2[] @relation("BomL1L2_L1")
+  bomL2AsChild  BomL1L2[] @relation("BomL1L2_L2")
+
+  bomL1AsParentL3 BomL1L3[] @relation("BomL1L3_L1")
+  bomL3AsChildL1  BomL1L3[] @relation("BomL1L3_L3")
+
+  bomL2AsParentL3 BomL2L3[] @relation("BomL2L3_L2")
+  bomL3AsChildL2  BomL2L3[] @relation("BomL2L3_L3")
+
+  deliveries    Delivery[]
+  inventoryLots InventoryLot[]
+  prepBatches   PrepBatch[]
+  sales         Sale[]
+  wastes        Waste[]
+  forecastLines ForecastLine[]
+
+  sopDocument SopDocument?
+}
+
+model BomL1L2 {
+  id       String @id @default(cuid())
+  l1ItemId String
+  l2ItemId String
+  qty      Float
+
+  l1 Item @relation("BomL1L2_L1", fields: [l1ItemId], references: [id])
+  l2 Item @relation("BomL1L2_L2", fields: [l2ItemId], references: [id])
+}
+
+model BomL1L3 {
+  id       String @id @default(cuid())
+  l1ItemId String
+  l3ItemId String
+  qty      Float
+
+  l1 Item @relation("BomL1L3_L1", fields: [l1ItemId], references: [id])
+  l3 Item @relation("BomL1L3_L3", fields: [l3ItemId], references: [id])
+}
+
+model BomL2L3 {
+  id       String @id @default(cuid())
+  l2ItemId String
+  l3ItemId String
+  qty      Float
+
+  l2 Item @relation("BomL2L3_L2", fields: [l2ItemId], references: [id])
+  l3 Item @relation("BomL2L3_L3", fields: [l3ItemId], references: [id])
+}
+
+model Delivery {
+  id          String   @id @default(cuid())
+  deliveredAt DateTime
+  itemId      String
+  qty         Float
+  unitType    UnitType
+  supplier    String?
+  price       Float?
+  expiryAt    DateTime?
+
+  item Item @relation(fields: [itemId], references: [id])
+}
+
+model InventoryLot {
+  id           String              @id @default(cuid())
+  itemId       String
+  qtyInitial   Float
+  qtyRemaining Float
+  unitType     UnitType
+  expiryAt     DateTime?
+  sourceType   InventorySourceType
+  unitCost     Float               @default(0)
+  createdAt    DateTime            @default(now())
+
+  item Item @relation(fields: [itemId], references: [id])
+}
+
+model PrepBatch {
+  id         String   @id @default(cuid())
+  preparedAt DateTime
+  itemId     String
+  qtyOutput  Float
+  expiryAt   DateTime?
+
+  item Item @relation(fields: [itemId], references: [id])
+}
+
+model Sale {
+  id     String   @id @default(cuid())
+  soldAt DateTime
+  itemId String
+  qty    Float
+  cost   Float    @default(0)
+
+  item Item @relation(fields: [itemId], references: [id])
+}
+
+model Waste {
+  id     String   @id @default(cuid())
+  date   DateTime
+  itemId String
+  qty    Float
+
+  item Item @relation(fields: [itemId], references: [id])
+}
+
+model Forecast {
+  id        String         @id @default(cuid())
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  createdAt DateTime       @default(now())
+
+  lines ForecastLine[]
+}
+
+model ForecastLine {
+  id         String   @id @default(cuid())
+  forecastId String
+  itemId     String
+  qty        Float
+
+  forecast Forecast @relation(fields: [forecastId], references: [id], onDelete: Cascade)
+  item     Item     @relation(fields: [itemId], references: [id])
+}
+
+model SopDocument {
+  id           String   @id @default(cuid())
+  itemId        String   @unique
+  instructions  String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+}
