@@ -39,10 +39,7 @@ export default function BomPage() {
     const res = await fetch('/api/items', { cache: 'no-store' })
     const data = await safeJson(res)
 
-    if (!res.ok) {
-      throw new Error(data?.error || 'Failed to load items')
-    }
-
+    if (!res.ok) throw new Error(data?.error || 'Failed to load items')
     setItems(data)
   }
 
@@ -54,6 +51,10 @@ export default function BomPage() {
   const l1Items = items.filter((item) => item.itemType === 'L1')
   const l2Items = items.filter((item) => item.itemType === 'L2')
   const l3Items = items.filter((item) => item.itemType === 'L3')
+
+  function getUnit(itemId: string) {
+    return items.find((item) => item.id === itemId)?.unitType ?? ''
+  }
 
   useEffect(() => {
     ;(async () => {
@@ -89,8 +90,8 @@ export default function BomPage() {
           const l1l2Data = await safeJson(l1l2Res)
           const l1l3Data = await safeJson(l1l3Res)
 
-          if (!l1l2Res.ok) throw new Error(l1l2Data?.error || 'Failed to load L1 -> L2 BOM')
-          if (!l1l3Res.ok) throw new Error(l1l3Data?.error || 'Failed to load L1 -> L3 BOM')
+          if (!l1l2Res.ok) throw new Error(l1l2Data?.error || 'Failed to load L1 → L2 BOM')
+          if (!l1l3Res.ok) throw new Error(l1l3Data?.error || 'Failed to load L1 → L3 BOM')
 
           setL1ToL2Rows(
             l1l2Data.map((row: any) => ({
@@ -115,7 +116,7 @@ export default function BomPage() {
           })
           const data = await safeJson(res)
 
-          if (!res.ok) throw new Error(data?.error || 'Failed to load L2 -> L3 BOM')
+          if (!res.ok) throw new Error(data?.error || 'Failed to load L2 → L3 BOM')
 
           setL2ToL3Rows(
             data.map((row: any) => ({
@@ -167,10 +168,7 @@ export default function BomPage() {
       const hasAnyData = row.childId !== '' || row.qty !== ''
 
       if (!hasAnyData) continue
-
-      if (!row.childId) {
-        return `${label} row ${i + 1}: select a child item`
-      }
+      if (!row.childId) return `${label} row ${i + 1}: select a child item`
 
       if (row.qty === '' || Number(row.qty) <= 0 || Number.isNaN(Number(row.qty))) {
         return `${label} row ${i + 1}: enter a quantity greater than 0`
@@ -185,12 +183,13 @@ export default function BomPage() {
 
     try {
       setError('')
-      setMessage('')
+      setMessage('Saving BOM…')
 
       const validationError =
         validateRows(l1ToL2Rows, 'L1 → L2') || validateRows(l1ToL3Rows, 'L1 → L3')
 
       if (validationError) {
+        setMessage('')
         setError(validationError)
         return
       }
@@ -228,28 +227,11 @@ export default function BomPage() {
         }),
       ])
 
-      const l1l2Text = await l1l2Res.text()
-      const l1l3Text = await l1l3Res.text()
+      const l1l2Data = await safeJson(l1l2Res)
+      const l1l3Data = await safeJson(l1l3Res)
 
-      let l1l2Data: any
-      let l1l3Data: any
-
-      try {
-        l1l2Data = JSON.parse(l1l2Text)
-      } catch {
-        l1l2Data = { error: l1l2Text }
-      }
-
-      try {
-        l1l3Data = JSON.parse(l1l3Text)
-      } catch {
-        l1l3Data = { error: l1l3Text }
-      }
-
-      if (!l1l2Res.ok) throw new Error(l1l2Data?.error || 'Failed to save L1 -> L2')
-      if (!l1l3Res.ok) throw new Error(l1l3Data?.error || 'Failed to save L1 -> L3')
-
-      setMessage('BOM saved.')
+      if (!l1l2Res.ok) throw new Error(l1l2Data?.error || 'Failed to save L1 → L2')
+      if (!l1l3Res.ok) throw new Error(l1l3Data?.error || 'Failed to save L1 → L3')
 
       const [reloadL1L2, reloadL1L3] = await Promise.all([
         fetch(`/api/bom/l1-l2?parentId=${parentItem.id}`, { cache: 'no-store' }),
@@ -272,7 +254,12 @@ export default function BomPage() {
           qty: String(row.qty),
         }))
       )
+
+      setMessage(
+        `BOM saved and reloaded. Showing ${reloadL1L2Data.length} L2 row(s) and ${reloadL1L3Data.length} L3 row(s).`
+      )
     } catch (err) {
+      setMessage('')
       setError(err instanceof Error ? err.message : 'Unknown error')
     }
   }
@@ -282,11 +269,12 @@ export default function BomPage() {
 
     try {
       setError('')
-      setMessage('')
+      setMessage('Saving BOM…')
 
       const validationError = validateRows(l2ToL3Rows, 'L2 → L3')
 
       if (validationError) {
+        setMessage('')
         setError(validationError)
         return
       }
@@ -307,18 +295,9 @@ export default function BomPage() {
         body: JSON.stringify(payload),
       })
 
-      const text = await res.text()
-      let data: any
+      const data = await safeJson(res)
 
-      try {
-        data = JSON.parse(text)
-      } catch {
-        data = { error: text }
-      }
-
-      if (!res.ok) throw new Error(data?.error || 'Failed to save L2 -> L3')
-
-      setMessage('BOM saved.')
+      if (!res.ok) throw new Error(data?.error || 'Failed to save L2 → L3')
 
       const reload = await fetch(`/api/bom/l2-l3?parentId=${parentItem.id}`, {
         cache: 'no-store',
@@ -331,15 +310,46 @@ export default function BomPage() {
           qty: String(row.qty),
         }))
       )
+
+      setMessage(`BOM saved and reloaded. Showing ${reloadData.length} L3 row(s).`)
     } catch (err) {
+      setMessage('')
       setError(err instanceof Error ? err.message : 'Unknown error')
     }
+  }
+
+  function QtyInput({
+    value,
+    unit,
+    onChange,
+    placeholder,
+  }: {
+    value: string
+    unit: string
+    onChange: (value: string) => void
+    placeholder: string
+  }) {
+    return (
+      <div className="flex rounded-xl border bg-white">
+        <input
+          type="number"
+          step="0.001"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="min-w-0 flex-1 rounded-l-xl px-3 py-2 outline-none"
+        />
+        <div className="flex min-w-[60px] items-center justify-center rounded-r-xl border-l bg-slate-100 px-3 text-sm font-medium text-slate-800">
+          {unit || 'unit'}
+        </div>
+      </div>
+    )
   }
 
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-6xl">
-        <h1 className="text-3xl font-semibold">BOM Builder</h1>
+        <h1 className="text-3xl font-semibold text-slate-900">BOM Builder</h1>
         <p className="mt-2 text-slate-800">
           Select a parent item and manage its child components.
         </p>
@@ -357,7 +367,7 @@ export default function BomPage() {
         ) : null}
 
         <div className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-          <label className="mb-2 block text-sm font-medium">Parent Item</label>
+          <label className="mb-2 block text-sm font-medium text-slate-900">Parent Item</label>
           <select
             value={parentId}
             onChange={(e) => {
@@ -376,15 +386,13 @@ export default function BomPage() {
           </select>
         </div>
 
-        {loading ? (
-          <div className="mt-6 text-sm text-slate-800">Loading BOM…</div>
-        ) : null}
+        {loading ? <div className="mt-6 text-sm text-slate-700">Loading BOM…</div> : null}
 
         {parentItem?.itemType === 'L1' ? (
           <div className="mt-8 space-y-8">
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold">L1 → L2</h2>
+                <h2 className="text-xl font-semibold text-slate-900">L1 → L2</h2>
                 <button
                   type="button"
                   onClick={() => addRow(setL1ToL2Rows)}
@@ -396,7 +404,7 @@ export default function BomPage() {
 
               <div className="mt-4 space-y-3">
                 {l1ToL2Rows.map((row, index) => (
-                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_180px_100px]">
+                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_220px_100px]">
                     <select
                       value={row.childId}
                       onChange={(e) =>
@@ -412,15 +420,13 @@ export default function BomPage() {
                       ))}
                     </select>
 
-                    <input
-                      type="number"
-                      step="0.001"
+                    <QtyInput
                       value={row.qty}
-                      onChange={(e) =>
-                        updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'qty', e.target.value)
-                      }
+                      unit={getUnit(row.childId)}
                       placeholder="Qty per portion"
-                      className="rounded-xl border px-3 py-2"
+                      onChange={(value) =>
+                        updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'qty', value)
+                      }
                     />
 
                     <button
@@ -437,7 +443,7 @@ export default function BomPage() {
 
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold">L1 → L3</h2>
+                <h2 className="text-xl font-semibold text-slate-900">L1 → L3</h2>
                 <button
                   type="button"
                   onClick={() => addRow(setL1ToL3Rows)}
@@ -449,7 +455,7 @@ export default function BomPage() {
 
               <div className="mt-4 space-y-3">
                 {l1ToL3Rows.map((row, index) => (
-                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_180px_100px]">
+                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_220px_100px]">
                     <select
                       value={row.childId}
                       onChange={(e) =>
@@ -465,15 +471,13 @@ export default function BomPage() {
                       ))}
                     </select>
 
-                    <input
-                      type="number"
-                      step="0.001"
+                    <QtyInput
                       value={row.qty}
-                      onChange={(e) =>
-                        updateRow(l1ToL3Rows, setL1ToL3Rows, index, 'qty', e.target.value)
-                      }
+                      unit={getUnit(row.childId)}
                       placeholder="Qty per portion"
-                      className="rounded-xl border px-3 py-2"
+                      onChange={(value) =>
+                        updateRow(l1ToL3Rows, setL1ToL3Rows, index, 'qty', value)
+                      }
                     />
 
                     <button
@@ -488,15 +492,13 @@ export default function BomPage() {
               </div>
             </section>
 
-            <div>
-              <button
-                type="button"
-                onClick={saveL1}
-                className="rounded-xl bg-slate-900 px-5 py-3 text-white"
-              >
-                Save L1 BOM
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={saveL1}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-white"
+            >
+              Save L1 BOM
+            </button>
           </div>
         ) : null}
 
@@ -504,7 +506,7 @@ export default function BomPage() {
           <div className="mt-8 space-y-8">
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold">L2 → L3</h2>
+                <h2 className="text-xl font-semibold text-slate-900">L2 → L3</h2>
                 <button
                   type="button"
                   onClick={() => addRow(setL2ToL3Rows)}
@@ -516,7 +518,7 @@ export default function BomPage() {
 
               <div className="mt-4 space-y-3">
                 {l2ToL3Rows.map((row, index) => (
-                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_180px_100px]">
+                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_220px_100px]">
                     <select
                       value={row.childId}
                       onChange={(e) =>
@@ -532,15 +534,13 @@ export default function BomPage() {
                       ))}
                     </select>
 
-                    <input
-                      type="number"
-                      step="0.001"
+                    <QtyInput
                       value={row.qty}
-                      onChange={(e) =>
-                        updateRow(l2ToL3Rows, setL2ToL3Rows, index, 'qty', e.target.value)
-                      }
+                      unit={getUnit(row.childId)}
                       placeholder="Qty per batch"
-                      className="rounded-xl border px-3 py-2"
+                      onChange={(value) =>
+                        updateRow(l2ToL3Rows, setL2ToL3Rows, index, 'qty', value)
+                      }
                     />
 
                     <button
@@ -555,15 +555,13 @@ export default function BomPage() {
               </div>
             </section>
 
-            <div>
-              <button
-                type="button"
-                onClick={saveL2}
-                className="rounded-xl bg-slate-900 px-5 py-3 text-white"
-              >
-                Save L2 BOM
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={saveL2}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-white"
+            >
+              Save L2 BOM
+            </button>
           </div>
         ) : null}
       </div>
