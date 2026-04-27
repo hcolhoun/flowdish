@@ -33,14 +33,14 @@ export async function GET(req: Request) {
         item,
         instructions: sop?.instructions ?? '',
         directComponents: [],
-        directIngredients: directIngredients.map((row) => ({
+        directIngredients: directIngredients.map((row: any) => ({
           itemId: row.l3.id,
           sku: row.l3.sku,
           name: row.l3.name,
           qty: row.qty,
           unitType: row.l3.unitType,
         })),
-        expandedIngredients: directIngredients.map((row) => ({
+        expandedIngredients: directIngredients.map((row: any) => ({
           parentSku: item.sku,
           parentName: item.name,
           sku: row.l3.sku,
@@ -73,14 +73,14 @@ export async function GET(req: Request) {
         unitType: string
       }> = []
 
-      for (const component of directComponents) {
+      for (const component of directComponents as any[]) {
         const nested = await prisma.bomL2L3.findMany({
           where: { l2ItemId: component.l2.id },
           include: { l3: true },
           orderBy: { id: 'asc' },
         })
 
-        for (const row of nested) {
+        for (const row of nested as any[]) {
           expandedIngredients.push({
             parentSku: component.l2.sku,
             parentName: component.l2.name,
@@ -92,7 +92,7 @@ export async function GET(req: Request) {
         }
       }
 
-      for (const row of directIngredients) {
+      for (const row of directIngredients as any[]) {
         expandedIngredients.push({
           parentSku: item.sku,
           parentName: item.name,
@@ -106,14 +106,14 @@ export async function GET(req: Request) {
       return NextResponse.json({
         item,
         instructions: sop?.instructions ?? '',
-        directComponents: directComponents.map((row) => ({
+        directComponents: directComponents.map((row: any) => ({
           itemId: row.l2.id,
           sku: row.l2.sku,
           name: row.l2.name,
           qty: row.qty,
           unitType: row.l2.unitType,
         })),
-        directIngredients: directIngredients.map((row) => ({
+        directIngredients: directIngredients.map((row: any) => ({
           itemId: row.l3.id,
           sku: row.l3.sku,
           name: row.l3.name,
@@ -162,13 +162,8 @@ export async function POST(req: Request) {
 
     const sop = await prisma.sopDocument.upsert({
       where: { itemId },
-      update: {
-        instructions,
-      },
-      create: {
-        itemId,
-        instructions,
-      },
+      update: { instructions },
+      create: { itemId, instructions },
     })
 
     return NextResponse.json(sop)
