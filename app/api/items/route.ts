@@ -15,17 +15,8 @@ function slugifyName(name: string) {
     .replace(/^-+|-+$/g, '')
 }
 
-async function generateSku(itemType: string, name: string) {
-  const baseSku = `${makeSkuPrefix(itemType)}-${slugifyName(name)}`
-  let sku = baseSku
-  let counter = 2
-
-  while (await prisma.item.findUnique({ where: { sku } })) {
-    sku = `${baseSku}-${counter}`
-    counter++
-  }
-
-  return sku
+function generateSuggestedSku(itemType: string, name: string) {
+  return `${makeSkuPrefix(itemType)}-${slugifyName(name)}`
 }
 
 export async function GET() {
@@ -49,6 +40,28 @@ export async function POST(req: Request) {
     const itemType = body.itemType
     const unitType = itemType === 'L1' ? 'each' : body.unitType
 
+    let sku = String(body.sku || '').trim()
+
+    if (!name) {
+      return NextResponse.json({ error: 'Name is required' }, { status: 400 })
+    }
+
+    if (!['L1', 'L2', 'L3'].includes(itemType)) {
+      return NextResponse.json({ error: 'Valid item type is required' }, { status: 400 })
+    }
+
+    if (!sku && (itemType === 'L1' || itemType === 'L2')) {
+      sku = generateSuggestedSku(itemType, name)
+    }
+
+    if (!sku) {
+      return NextResponse.json({ error: 'SKU is required' }, { status: 400 })
+    }
+
+    if (!['g', 'ml', 'each'].includes(unitType)) {
+      return NextResponse.json({ error: 'Valid unit type is required' }, { status: 400 })
+    }
+
     const shelfLifeDays =
       body.shelfLifeDays === null || body.shelfLifeDays === ''
         ? null
@@ -64,57 +77,27 @@ export async function POST(req: Request) {
         ? null
         : Number(body.standardBatchOutput)
 
-    if (!name) {
-      return NextResponse.json({ error: 'Name is required' }, { status: 400 })
-    }
-
-    if (!['L1', 'L2', 'L3'].includes(itemType)) {
-      return NextResponse.json({ error: 'Valid item type is required' }, { status: 400 })
-    }
-
-    if (!['g', 'ml', 'each'].includes(unitType)) {
-      return NextResponse.json({ error: 'Valid unit type is required' }, { status: 400 })
-    }
-
     if (itemType === 'L1') {
       if (sellingPrice === null || sellingPrice <= 0 || Number.isNaN(sellingPrice)) {
-        return NextResponse.json(
-          { error: 'Selling price is required for L1 items' },
-          { status: 400 }
-        )
+        return NextResponse.json({ error: 'Selling price is required for L1 items' }, { status: 400 })
       }
     }
 
     if (itemType === 'L2') {
       if (shelfLifeDays === null || shelfLifeDays <= 0 || Number.isNaN(shelfLifeDays)) {
-        return NextResponse.json(
-          { error: 'Shelf life days is required for L2 items' },
-          { status: 400 }
-        )
+        return NextResponse.json({ error: 'Shelf life days is required for L2 items' }, { status: 400 })
       }
 
-      if (
-        standardBatchOutput === null ||
-        standardBatchOutput <= 0 ||
-        Number.isNaN(standardBatchOutput)
-      ) {
-        return NextResponse.json(
-          { error: 'Standard batch output is required for L2 items' },
-          { status: 400 }
-        )
+      if (standardBatchOutput === null || standardBatchOutput <= 0 || Number.isNaN(standardBatchOutput)) {
+        return NextResponse.json({ error: 'Standard batch output is required for L2 items' }, { status: 400 })
       }
     }
 
     if (itemType === 'L3') {
       if (shelfLifeDays === null || shelfLifeDays <= 0 || Number.isNaN(shelfLifeDays)) {
-        return NextResponse.json(
-          { error: 'Shelf life days is required for L3 items' },
-          { status: 400 }
-        )
+        return NextResponse.json({ error: 'Shelf life days is required for L3 items' }, { status: 400 })
       }
     }
-
-    const sku = await generateSku(itemType, name)
 
     const item = await prisma.item.create({
       data: {
@@ -149,9 +132,7 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: 'Missing item id' }, { status: 400 })
     }
 
-    const item = await prisma.item.findUnique({
-      where: { id },
-    })
+    const item = await prisma.item.findUnique({ where: { id } })
 
     if (!item) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 })
@@ -201,17 +182,12 @@ export async function DELETE(req: Request) {
 
     if (usageCount > 0) {
       return NextResponse.json(
-        {
-          error:
-            'Cannot delete this item because it is already used in BOMs or stock/activity records.',
-        },
+        { error: 'Cannot delete this item because it is already used in BOMs or stock/activity records.' },
         { status: 400 }
       )
     }
 
-    await prisma.item.delete({
-      where: { id },
-    })
+    await prisma.item.delete({ where: { id } })
 
     return NextResponse.json({ success: true })
   } catch (error) {

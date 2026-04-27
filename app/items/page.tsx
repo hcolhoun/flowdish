@@ -13,10 +13,25 @@ type Item = {
   standardBatchOutput: number | null
 }
 
+function slugifyName(name: string) {
+  return name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function suggestedSku(itemType: 'L1' | 'L2' | 'L3', name: string) {
+  if (!name.trim()) return ''
+  return `${itemType}-${slugifyName(name)}`
+}
+
 export default function ItemsPage() {
   const messageRef = useRef<HTMLDivElement | null>(null)
 
   const [items, setItems] = useState<Item[]>([])
+  const [sku, setSku] = useState('')
+  const [skuEdited, setSkuEdited] = useState(false)
   const [name, setName] = useState('')
   const [itemType, setItemType] = useState<'L1' | 'L2' | 'L3'>('L3')
   const [unitType, setUnitType] = useState<'g' | 'ml' | 'each'>('g')
@@ -58,26 +73,42 @@ export default function ItemsPage() {
     loadItems()
   }, [])
 
+  function updateSuggestedSku(nextType: 'L1' | 'L2' | 'L3', nextName: string, force = false) {
+    if (nextType === 'L3') return
+    if (!skuEdited || force) {
+      setSku(suggestedSku(nextType, nextName))
+    }
+  }
+
+  function handleNameChange(nextName: string) {
+    setName(nextName)
+    updateSuggestedSku(itemType, nextName)
+  }
+
   function handleItemTypeChange(nextType: 'L1' | 'L2' | 'L3') {
     setItemType(nextType)
     setError('')
     setMessage('')
+    setSkuEdited(false)
 
     if (nextType === 'L1') {
       setUnitType('each')
       setShelfLifeDays('')
       setStandardBatchOutput('')
+      setSku(suggestedSku(nextType, name))
     }
 
     if (nextType === 'L2') {
       setSellingPrice('')
       if (unitType === 'each') setUnitType('g')
+      setSku(suggestedSku(nextType, name))
     }
 
     if (nextType === 'L3') {
       setSellingPrice('')
       setStandardBatchOutput('')
       if (unitType === 'each') setUnitType('g')
+      setSku('')
     }
   }
 
@@ -90,6 +121,7 @@ export default function ItemsPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        sku,
         name,
         itemType,
         unitType: itemType === 'L1' ? 'each' : unitType,
@@ -117,13 +149,15 @@ export default function ItemsPage() {
       return
     }
 
+    setSku('')
+    setSkuEdited(false)
     setName('')
     setItemType('L3')
     setUnitType('g')
     setShelfLifeDays('')
     setSellingPrice('')
     setStandardBatchOutput('')
-    setMessage(`Item saved. SKU generated: ${data.sku}`)
+    setMessage(`Item saved. SKU: ${data.sku}`)
     scrollToMessage()
     loadItems()
   }
@@ -135,10 +169,7 @@ export default function ItemsPage() {
     const confirmed = window.confirm(`Delete item: ${label}?`)
     if (!confirmed) return
 
-    const res = await fetch(`/api/items?id=${id}`, {
-      method: 'DELETE',
-    })
-
+    const res = await fetch(`/api/items?id=${id}`, { method: 'DELETE' })
     const data = await safeJson(res)
 
     if (!res.ok) {
@@ -160,9 +191,7 @@ export default function ItemsPage() {
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-6xl">
         <h1 className="text-3xl font-semibold text-slate-900">Items</h1>
-        <p className="mt-2 text-slate-800">
-          Create and view L1, L2, and L3 items.
-        </p>
+        <p className="mt-2 text-slate-800">Create and view L1, L2, and L3 items.</p>
 
         <div ref={messageRef}>
           {error ? (
@@ -178,14 +207,9 @@ export default function ItemsPage() {
           ) : null}
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="mt-8 grid gap-4 rounded-2xl border bg-white p-6 shadow-sm md:grid-cols-3"
-        >
+        <form onSubmit={handleSubmit} className="mt-8 grid gap-4 rounded-2xl border bg-white p-6 shadow-sm md:grid-cols-3">
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-900">
-              Item Type
-            </label>
+            <label className="mb-1 block text-sm font-medium text-slate-900">Item Type</label>
             <select
               value={itemType}
               onChange={(e) => handleItemTypeChange(e.target.value as 'L1' | 'L2' | 'L3')}
@@ -198,22 +222,34 @@ export default function ItemsPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-900">
-              Name
-            </label>
+            <label className="mb-1 block text-sm font-medium text-slate-900">Name</label>
             <input
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => handleNameChange(e.target.value)}
               className="w-full rounded-xl border px-3 py-2"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-900">
+              {itemType === 'L3' ? 'Supplier SKU' : 'SKU'}
+            </label>
+            <input
+              value={sku}
+              onChange={(e) => {
+                setSku(e.target.value)
+                setSkuEdited(true)
+              }}
+              className="w-full rounded-xl border px-3 py-2"
+              placeholder={itemType === 'L3' ? 'Enter supplier SKU' : 'Auto-suggested, editable'}
               required
             />
           </div>
 
           {itemType !== 'L1' ? (
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-900">
-                Unit Type
-              </label>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Unit Type</label>
               <select
                 value={unitType}
                 onChange={(e) => setUnitType(e.target.value as 'g' | 'ml' | 'each')}
@@ -228,9 +264,7 @@ export default function ItemsPage() {
 
           {itemType === 'L1' ? (
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-900">
-                Selling Price
-              </label>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Selling Price</label>
               <input
                 type="number"
                 step="0.01"
@@ -242,11 +276,9 @@ export default function ItemsPage() {
             </div>
           ) : null}
 
-          {itemType === 'L2' || itemType === 'L3' ? (
+          {(itemType === 'L2' || itemType === 'L3') ? (
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-900">
-                Shelf Life Days
-              </label>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Shelf Life Days</label>
               <input
                 type="number"
                 step="1"
@@ -260,9 +292,7 @@ export default function ItemsPage() {
 
           {itemType === 'L2' ? (
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-900">
-                Standard Batch Output
-              </label>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Standard Batch Output</label>
               <input
                 type="number"
                 step="0.001"
@@ -275,10 +305,7 @@ export default function ItemsPage() {
           ) : null}
 
           <div className="flex items-end">
-            <button
-              type="submit"
-              className="rounded-xl bg-slate-900 px-4 py-2 text-white"
-            >
+            <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-white">
               Save Item
             </button>
           </div>
@@ -305,21 +332,15 @@ export default function ItemsPage() {
                   <td className="px-4 py-3 text-slate-800">{item.sku}</td>
                   <td className="px-4 py-3 text-slate-800">{item.name}</td>
                   <td className="px-4 py-3 text-slate-800">{item.itemType}</td>
+                  <td className="px-4 py-3 text-slate-800">{item.itemType === 'L1' ? 'N/A' : item.unitType}</td>
                   <td className="px-4 py-3 text-slate-800">
-                    {item.itemType === 'L1' ? 'N/A' : item.unitType}
-                  </td>
-                  <td className="px-4 py-3 text-slate-800">
-                    {item.itemType === 'L2' || item.itemType === 'L3'
-                      ? displayValue(item.shelfLifeDays)
-                      : 'N/A'}
+                    {item.itemType === 'L2' || item.itemType === 'L3' ? displayValue(item.shelfLifeDays) : 'N/A'}
                   </td>
                   <td className="px-4 py-3 text-slate-800">
                     {item.itemType === 'L1' ? displayValue(item.sellingPrice) : 'N/A'}
                   </td>
                   <td className="px-4 py-3 text-slate-800">
-                    {item.itemType === 'L2'
-                      ? displayValue(item.standardBatchOutput)
-                      : 'N/A'}
+                    {item.itemType === 'L2' ? displayValue(item.standardBatchOutput) : 'N/A'}
                   </td>
                   <td className="px-4 py-3">
                     <button
