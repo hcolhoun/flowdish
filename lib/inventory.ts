@@ -1,9 +1,4 @@
 import { prisma } from '@/lib/prisma'
-import { Prisma } from '@prisma/client'
-
-function dec(value: number | string) {
-  return new Prisma.Decimal(value)
-}
 
 export async function addInventoryLot({
   itemId,
@@ -31,6 +26,80 @@ export async function addInventoryLot({
       unitCost,
     },
   })
+}
+
+export async function getInventorySummary() {
+  const lots = await prisma.inventoryLot.findMany({
+    where: {
+      qtyRemaining: { gt: 0 },
+    },
+    include: { item: true },
+    orderBy: [
+      { expiryAt: 'asc' },
+      { createdAt: 'asc' },
+    ],
+  })
+
+  const map = new Map<
+    string,
+    {
+      itemId: string
+      sku: string
+      name: string
+      unitType: string
+      totalQty: number
+      nextExpiry: Date | null
+      stockValue: number
+    }
+  >()
+
+  for (const lot of lots as any[]) {
+    const existing = map.get(lot.itemId)
+    const lotValue = lot.qtyRemaining * (lot.unitCost ?? 0)
+
+    if (!existing) {
+      map.set(lot.itemId, {
+        itemId: lot.itemId,
+        sku: lot.item.sku,
+        name: lot.item.name,
+        unitType: lot.unitType,
+        totalQty: lot.qtyRemaining,
+        nextExpiry: lot.expiryAt,
+        stockValue: lotValue,
+      })
+    } else {
+      existing.totalQty += lot.qtyRemaining
+      existing.stockValue += lotValue
+
+      if (
+        lot.expiryAt &&
+        (!existing.nextExpiry || lot.expiryAt < existing.nextExpiry)
+      ) {
+        existing.nextExpiry = lot.expiryAt
+      }
+    }
+  }
+
+  return Array.from(map.values())
+}
+
+export async function getStockByItemId(itemId: string) {
+  const result = await prisma.inventoryLot.aggregate({
+    where: {
+      itemId,
+      qtyRemaining: { gt: 0 },
+    },
+    _sum: {
+      qtyRemaining: true,
+    },
+  })
+
+  return result._sum.qtyRemaining ?? 0
+}
+
+export async function ensureEnoughStock(itemId: string, qtyNeeded: number) {
+  const stock = await getStockByItemId(itemId)
+  return stock >= qtyNeeded
 }
 
 export async function consumeInventory({
@@ -78,8 +147,18 @@ export async function consumeInventory({
   return totalCost
 }
 
+export async function consumeInventoryFifo(itemId: string, qtyNeeded: number) {
+  await consumeInventory({ itemId, qtyNeeded })
+}
+
 export async function getItemById(itemId: string) {
   return prisma.item.findUnique({
     where: { id: itemId },
+  })
+}
+
+export async function getItemBySku(sku: string) {
+  return prisma.item.findUnique({
+    where: { sku },
   })
 }
