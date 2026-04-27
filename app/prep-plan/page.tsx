@@ -23,11 +23,17 @@ type L2PlanRow = {
   sku: string
   name: string
   requiredQty: number
-  currentStock: number
+  totalStock: number
+  usableStock: number
+  expiringBeforeForecastEnd: number
+  expiredStock: number
   shortfallQty: number
   standardBatchOutput: number | null
   batchesToPrep: number
   shelfLifeDays: number | null
+  nextExpiry: string | null
+  daysToNextExpiry: number | null
+  expiryStatus: string
 }
 
 type PlanResponse = {
@@ -49,6 +55,11 @@ export default function PrepPlanPage() {
     } catch {
       throw new Error(text.slice(0, 500))
     }
+  }
+
+  function formatDate(value: string | null) {
+    if (!value) return ''
+    return new Date(value).toLocaleDateString('en-GB')
   }
 
   async function loadForecasts() {
@@ -93,7 +104,7 @@ export default function PrepPlanPage() {
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-7xl">
-        <h1 className="text-3xl font-semibold">Prep Plan</h1>
+        <h1 className="text-3xl font-semibold text-slate-900">Prep Plan</h1>
 
         {error ? (
           <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 whitespace-pre-wrap">
@@ -102,7 +113,10 @@ export default function PrepPlanPage() {
         ) : null}
 
         <div className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-          <label className="mb-2 block text-sm font-medium">Forecast</label>
+          <label className="mb-2 block text-sm font-medium text-slate-900">
+            Forecast
+          </label>
+
           <div className="flex gap-3">
             <select
               value={forecastId}
@@ -112,7 +126,7 @@ export default function PrepPlanPage() {
               <option value="">Select forecast</option>
               {forecasts.map((forecast) => (
                 <option key={forecast.id} value={forecast.id}>
-                  {forecast.name} ({new Date(forecast.startDate).toLocaleDateString('en-GB')} - {new Date(forecast.endDate).toLocaleDateString('en-GB')})
+                  {forecast.name} ({formatDate(forecast.startDate)} - {formatDate(forecast.endDate)})
                 </option>
               ))}
             </select>
@@ -131,28 +145,31 @@ export default function PrepPlanPage() {
           <div className="mt-8 space-y-8">
             <section className="rounded-2xl border bg-white shadow-sm">
               <div className="border-b px-6 py-4">
-                <h2 className="text-xl font-semibold">L1 Forecast Summary</h2>
+                <h2 className="text-xl font-semibold text-slate-900">
+                  L1 Forecast Summary
+                </h2>
               </div>
 
-              <div className="overflow-hidden">
+              <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead className="bg-slate-100 text-sm">
                     <tr>
-                      <th className="px-4 py-3">SKU</th>
-                      <th className="px-4 py-3">Name</th>
-                      <th className="px-4 py-3">Forecast</th>
-                      <th className="px-4 py-3">Makeable</th>
-                      <th className="px-4 py-3">Shortfall</th>
+                      <th className="px-4 py-3 text-slate-800">SKU</th>
+                      <th className="px-4 py-3 text-slate-800">Name</th>
+                      <th className="px-4 py-3 text-slate-800">Forecast</th>
+                      <th className="px-4 py-3 text-slate-800">Makeable</th>
+                      <th className="px-4 py-3 text-slate-800">Shortfall</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {plan.l1Plan.map((row) => (
                       <tr key={row.itemId} className="border-t">
-                        <td className="px-4 py-3">{row.sku}</td>
-                        <td className="px-4 py-3">{row.name}</td>
-                        <td className="px-4 py-3">{row.forecastQty}</td>
-                        <td className="px-4 py-3">{row.makeableQty}</td>
-                        <td className="px-4 py-3">{row.shortfallQty}</td>
+                        <td className="px-4 py-3 text-slate-800">{row.sku}</td>
+                        <td className="px-4 py-3 text-slate-800">{row.name}</td>
+                        <td className="px-4 py-3 text-slate-800">{row.forecastQty}</td>
+                        <td className="px-4 py-3 text-slate-800">{row.makeableQty}</td>
+                        <td className="px-4 py-3 text-slate-800">{row.shortfallQty}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -162,36 +179,71 @@ export default function PrepPlanPage() {
 
             <section className="rounded-2xl border bg-white shadow-sm">
               <div className="border-b px-6 py-4">
-                <h2 className="text-xl font-semibold">L2 Prep List</h2>
+                <h2 className="text-xl font-semibold text-slate-900">
+                  L2 Prep List
+                </h2>
               </div>
 
-              <div className="overflow-hidden">
+              <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead className="bg-slate-100 text-sm">
                     <tr>
-                      <th className="px-4 py-3">SKU</th>
-                      <th className="px-4 py-3">Name</th>
-                      <th className="px-4 py-3">Required</th>
-                      <th className="px-4 py-3">Current Stock</th>
-                      <th className="px-4 py-3">Shortfall</th>
-                      <th className="px-4 py-3">Std Batch Output</th>
-                      <th className="px-4 py-3">Batches to Prep</th>
-                      <th className="px-4 py-3">Shelf Life Days</th>
+                      <th className="px-4 py-3 text-slate-800">SKU</th>
+                      <th className="px-4 py-3 text-slate-800">Name</th>
+                      <th className="px-4 py-3 text-slate-800">Required</th>
+                      <th className="px-4 py-3 text-slate-800">Total Stock</th>
+                      <th className="px-4 py-3 text-slate-800">Usable Stock</th>
+                      <th className="px-4 py-3 text-slate-800">Expiring Before End</th>
+                      <th className="px-4 py-3 text-slate-800">Expired</th>
+                      <th className="px-4 py-3 text-slate-800">Shortfall</th>
+                      <th className="px-4 py-3 text-slate-800">Std Batch Output</th>
+                      <th className="px-4 py-3 text-slate-800">Batches</th>
+                      <th className="px-4 py-3 text-slate-800">Shelf Life</th>
+                      <th className="px-4 py-3 text-slate-800">Next Expiry</th>
+                      <th className="px-4 py-3 text-slate-800">Days Left</th>
+                      <th className="px-4 py-3 text-slate-800">Status</th>
                     </tr>
                   </thead>
+
                   <tbody>
-                    {plan.l2Plan.map((row) => (
-                      <tr key={row.itemId} className="border-t">
-                        <td className="px-4 py-3">{row.sku}</td>
-                        <td className="px-4 py-3">{row.name}</td>
-                        <td className="px-4 py-3">{row.requiredQty}</td>
-                        <td className="px-4 py-3">{row.currentStock}</td>
-                        <td className="px-4 py-3">{row.shortfallQty}</td>
-                        <td className="px-4 py-3">{row.standardBatchOutput ?? ''}</td>
-                        <td className="px-4 py-3">{row.batchesToPrep}</td>
-                        <td className="px-4 py-3">{row.shelfLifeDays ?? ''}</td>
+                    {plan.l2Plan.length === 0 ? (
+                      <tr className="border-t">
+                        <td className="px-4 py-3 text-slate-700" colSpan={14}>
+                          No L2 prep required.
+                        </td>
                       </tr>
-                    ))}
+                    ) : (
+                      plan.l2Plan.map((row) => (
+                        <tr key={row.itemId} className="border-t">
+                          <td className="px-4 py-3 text-slate-800">{row.sku}</td>
+                          <td className="px-4 py-3 text-slate-800">{row.name}</td>
+                          <td className="px-4 py-3 text-slate-800">{row.requiredQty}</td>
+                          <td className="px-4 py-3 text-slate-800">{row.totalStock}</td>
+                          <td className="px-4 py-3 text-slate-800">{row.usableStock}</td>
+                          <td className="px-4 py-3 text-slate-800">
+                            {row.expiringBeforeForecastEnd}
+                          </td>
+                          <td className="px-4 py-3 text-slate-800">{row.expiredStock}</td>
+                          <td className="px-4 py-3 text-slate-800">{row.shortfallQty}</td>
+                          <td className="px-4 py-3 text-slate-800">
+                            {row.standardBatchOutput ?? ''}
+                          </td>
+                          <td className="px-4 py-3 text-slate-800">{row.batchesToPrep}</td>
+                          <td className="px-4 py-3 text-slate-800">
+                            {row.shelfLifeDays ?? ''}
+                          </td>
+                          <td className="px-4 py-3 text-slate-800">
+                            {row.nextExpiry ? formatDate(row.nextExpiry) : ''}
+                          </td>
+                          <td className="px-4 py-3 text-slate-800">
+                            {row.daysToNextExpiry ?? ''}
+                          </td>
+                          <td className="px-4 py-3 text-slate-800">
+                            {row.expiryStatus}
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
