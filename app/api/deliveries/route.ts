@@ -36,11 +36,20 @@ export async function POST(req: Request) {
 
     const deliveredAt = new Date(body.deliveredAt)
     const qty = Number(body.qty)
-    const price = body.price ? Number(body.price) : null
+    const totalCost = Number(body.totalCost)
 
     if (!qty || qty <= 0) {
       return NextResponse.json({ error: 'Quantity must be greater than 0' }, { status: 400 })
     }
+
+    if (!totalCost || totalCost <= 0) {
+      return NextResponse.json(
+        { error: 'Total delivery cost must be greater than 0' },
+        { status: 400 }
+      )
+    }
+
+    const unitCost = totalCost / qty
 
     const expiryAt =
       item.shelfLifeDays != null
@@ -54,7 +63,7 @@ export async function POST(req: Request) {
         qty,
         unitType: item.unitType,
         supplier: body.supplier || null,
-        price,
+        price: totalCost,
         expiryAt,
       },
       include: { item: true },
@@ -68,7 +77,7 @@ export async function POST(req: Request) {
         unitType: item.unitType,
         expiryAt,
         sourceType: 'DELIVERY',
-        unitCost: price ?? 0,
+        unitCost,
       },
     })
 
@@ -101,7 +110,6 @@ export async function DELETE(req: Request) {
         itemId: delivery.itemId,
         sourceType: 'DELIVERY',
         qtyInitial: delivery.qty,
-        unitCost: delivery.price ?? 0,
       },
     })
 

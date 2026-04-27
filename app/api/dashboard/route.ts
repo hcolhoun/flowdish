@@ -56,8 +56,6 @@ export async function GET() {
       prisma.waste.findMany(),
     ])
 
-    // ===== FINANCIALS =====
-
     const totalRevenue = sales.reduce(
       (sum: number, sale: any) =>
         sum + sale.qty * (sale.item?.sellingPrice ?? 0),
@@ -74,8 +72,9 @@ export async function GET() {
     const grossMarginPercent =
       totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
 
+    // Delivery.price now means TOTAL DELIVERY COST, not unit price.
     const totalSpend = deliveries.reduce(
-      (sum: number, d: any) => sum + d.qty * (d.price ?? 0),
+      (sum: number, d: any) => sum + (d.price ?? 0),
       0
     )
 
@@ -103,8 +102,6 @@ export async function GET() {
           )
         : 0
 
-    // ===== EXPIRY =====
-
     const expiringSoon = inventoryLots
       .filter((lot: any) => lot.expiryAt && lot.expiryAt <= in7Days)
       .slice(0, 10)
@@ -122,8 +119,6 @@ export async function GET() {
       (sum: number, lot: any) => sum + lot.value,
       0
     )
-
-    // ===== LOW STOCK =====
 
     const lowStockL2 = l2Items
       .map((item: any) => {
@@ -147,13 +142,10 @@ export async function GET() {
       .filter((item: any) => item.totalQty <= 0)
       .slice(0, 10)
 
-    // ===== PROFIT BY ITEM =====
-
     const profitMap = new Map()
 
     for (const sale of sales as any[]) {
-      const revenue =
-        sale.qty * (sale.item?.sellingPrice ?? 0)
+      const revenue = sale.qty * (sale.item?.sellingPrice ?? 0)
       const cogs = sale.cost ?? 0
 
       const existing = profitMap.get(sale.itemId)
