@@ -34,14 +34,14 @@ model Item {
   standardBatchOutput Float?
   createdAt           DateTime @default(now())
 
-  bomL1AsParent BomL1L2[] @relation("BomL1L2_L1")
-  bomL2AsChild  BomL1L2[] @relation("BomL1L2_L2")
+  bomL1L2Parents BomL1L2[] @relation("BomL1L2_L1")
+  bomL1L2Children BomL1L2[] @relation("BomL1L2_L2")
 
-  bomL1AsParentL3 BomL1L3[] @relation("BomL1L3_L1")
-  bomL3AsChildL1  BomL1L3[] @relation("BomL1L3_L3")
+  bomL1L3Parents BomL1L3[] @relation("BomL1L3_L1")
+  bomL1L3Children BomL1L3[] @relation("BomL1L3_L3")
 
-  bomL2AsParentL3 BomL2L3[] @relation("BomL2L3_L2")
-  bomL3AsChildL2  BomL2L3[] @relation("BomL2L3_L3")
+  bomL2L3Parents BomL2L3[] @relation("BomL2L3_L2")
+  bomL2L3Children BomL2L3[] @relation("BomL2L3_L3")
 
   deliveries    Delivery[]
   inventoryLots InventoryLot[]
@@ -49,8 +49,9 @@ model Item {
   sales         Sale[]
   wastes        Waste[]
   forecastLines ForecastLine[]
+  sopDocument   SopDocument?
 
-  sopDocument SopDocument?
+  supplierProducts SupplierProduct[] @relation("SupplierProduct_LinkedItem")
 }
 
 model BomL1L2 {
@@ -135,36 +136,52 @@ model Waste {
   date   DateTime
   itemId String
   qty    Float
+  reason String?
 
   item Item @relation(fields: [itemId], references: [id])
 }
 
 model Forecast {
-  id        String         @id @default(cuid())
+  id        String   @id @default(cuid())
   name      String
   startDate DateTime
   endDate   DateTime
-  createdAt DateTime       @default(now())
+  createdAt DateTime @default(now())
 
   lines ForecastLine[]
 }
 
 model ForecastLine {
-  id         String   @id @default(cuid())
+  id         String @id @default(cuid())
   forecastId String
   itemId     String
   qty        Float
 
-  forecast Forecast @relation(fields: [forecastId], references: [id], onDelete: Cascade)
+  forecast Forecast @relation(fields: [forecastId], references: [id])
   item     Item     @relation(fields: [itemId], references: [id])
 }
 
 model SopDocument {
   id           String   @id @default(cuid())
-  itemId        String   @unique
-  instructions  String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  itemId       String   @unique
+  instructions String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  item Item @relation(fields: [itemId], references: [id])
+}
+
+model SupplierProduct {
+  id          String   @id @default(cuid())
+  supplier    String
+  supplierSku String?
+  name        String
+  packSize    String?
+  weight      String?
+  packPrice   Float?
+  unitPrice   Float?
+  createdAt   DateTime @default(now())
+
+  linkedItemId String?
+  linkedItem   Item?   @relation("SupplierProduct_LinkedItem", fields: [linkedItemId], references: [id])
 }
