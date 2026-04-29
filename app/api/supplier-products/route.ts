@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 export async function GET() {
   try {
     const products = await prisma.supplierProduct.findMany({
+      include: { linkedItem: true },
       orderBy: { createdAt: 'desc' },
     })
 
@@ -49,6 +50,33 @@ export async function POST(req: Request) {
     console.error('POST /api/supplier-products failed:', error)
     return NextResponse.json(
       { error: 'Failed to save supplier products' },
+      { status: 500 }
+    )
+  }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const body = await req.json()
+
+    const id = String(body.id || '')
+    const linkedItemId = body.linkedItemId ? String(body.linkedItemId) : null
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing supplier product id' }, { status: 400 })
+    }
+
+    const product = await prisma.supplierProduct.update({
+      where: { id },
+      data: { linkedItemId },
+      include: { linkedItem: true },
+    })
+
+    return NextResponse.json(product)
+  } catch (error) {
+    console.error('PATCH /api/supplier-products failed:', error)
+    return NextResponse.json(
+      { error: 'Failed to update supplier product link' },
       { status: 500 }
     )
   }
