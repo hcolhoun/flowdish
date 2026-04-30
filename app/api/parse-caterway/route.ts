@@ -2,6 +2,9 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
+import { createRequire } from 'module'
+
+const require = createRequire(import.meta.url)
 
 function parseMoney(value: string) {
   const cleaned = value.replace('€', '').replace(',', '').trim()
@@ -11,8 +14,9 @@ function parseMoney(value: string) {
 
 export async function POST(req: Request) {
   try {
-    const pdfParseModule = await import('pdf-parse')
-    const pdf = pdfParseModule.default
+    // Important: use the internal parser, not the package root.
+    // The package root tries to load test PDFs on Vercel.
+    const pdf = require('pdf-parse/lib/pdf-parse.js')
 
     const formData = await req.formData()
     const file = formData.get('file')
@@ -23,7 +27,7 @@ export async function POST(req: Request) {
 
     const buffer = Buffer.from(await file.arrayBuffer())
     const parsed = await pdf(buffer)
-    const text = parsed.text
+    const text = parsed.text || ''
 
     const lines = text
       .split('\n')
