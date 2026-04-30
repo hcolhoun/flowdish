@@ -2,7 +2,6 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
-import pdf from 'pdf-parse'
 
 function parseMoney(value: string) {
   const cleaned = value.replace('€', '').replace(',', '').trim()
@@ -12,6 +11,9 @@ function parseMoney(value: string) {
 
 export async function POST(req: Request) {
   try {
+    const pdfParseModule = await import('pdf-parse')
+    const pdf = pdfParseModule.default
+
     const formData = await req.formData()
     const file = formData.get('file')
 
