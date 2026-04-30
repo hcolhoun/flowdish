@@ -2,6 +2,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
+import pdf from 'pdf-parse'
 
 function parseMoney(value: string) {
   const cleaned = value.replace('€', '').replace(',', '').trim()
@@ -11,14 +12,6 @@ function parseMoney(value: string) {
 
 export async function POST(req: Request) {
   try {
-    const canvas = await import('@napi-rs/canvas')
-
-    ;(globalThis as any).DOMMatrix = canvas.DOMMatrix
-    ;(globalThis as any).ImageData = canvas.ImageData
-    ;(globalThis as any).Path2D = canvas.Path2D
-
-    const { PDFParse } = await import('pdf-parse')
-
     const formData = await req.formData()
     const file = formData.get('file')
 
@@ -27,9 +20,7 @@ export async function POST(req: Request) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer())
-
-    const parser = new PDFParse({ data: buffer })
-    const parsed = await parser.getText()
+    const parsed = await pdf(buffer)
     const text = parsed.text
 
     const lines = text
