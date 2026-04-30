@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import pdf from 'pdf-parse'
+import { PDFParse } from 'pdf-parse'
 
 function parseMoney(value: string) {
   const cleaned = value.replace('€', '').replace(',', '').trim()
@@ -17,13 +17,15 @@ export async function POST(req: Request) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer())
-    const parsed = await pdf(buffer)
+
+    const parser = new PDFParse({ data: buffer })
+    const parsed = await parser.getText()
     const text = parsed.text
 
     const lines = text
       .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
+      .map((line: string) => line.trim())
+      .filter((line: string) => Boolean(line))
 
     const products: any[] = []
 
@@ -42,18 +44,22 @@ export async function POST(req: Request) {
       const beforeFirstPrice = line.split(moneyMatches[0])[0].trim()
       const afterLastPrice = line.split(moneyMatches[moneyMatches.length - 1])[1]?.trim() || ''
 
-      const parts = beforeFirstPrice.split(/\s+/)
       const supplierSku = afterLastPrice.split(/\s+/).pop() || null
 
-      if (parts.length < 3 || !packPrice) continue
+      if (!packPrice) continue
 
-      const possibleWeightMatch = beforeFirstPrice.match(/(\d+(?:\.\d+)?\s?(kg|g|ml|l|KG|G|ML|L))$/)
+      const possibleWeightMatch = beforeFirstPrice.match(
+        /(\d+(?:\.\d+)?\s?(kg|g|ml|l|KG|G|ML|L))$/
+      )
+
       const weight = possibleWeightMatch ? possibleWeightMatch[1] : null
 
       const name = beforeFirstPrice
         .replace(weight ?? '', '')
         .replace(/\s+/g, ' ')
         .trim()
+
+      if (!name) continue
 
       products.push({
         supplier: 'Caterway',
@@ -69,6 +75,9 @@ export async function POST(req: Request) {
     return NextResponse.json(products)
   } catch (error) {
     console.error('POST /api/parse-caterway failed:', error)
-    return NextResponse.json({ error: 'Failed to parse Caterway PDF' }, { status: 500 })
+    return NextResponse.json(
+      { error: 'Failed to parse Caterway PDF' },
+      { status: 500 }
+    )
   }
 }
