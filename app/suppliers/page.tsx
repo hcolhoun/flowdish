@@ -4,7 +4,7 @@ import { useState } from 'react'
 
 export default function SuppliersPage() {
   const [supplier, setSupplier] = useState('Caterway')
-  const [fileText, setFileText] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<any[]>([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -20,25 +20,18 @@ export default function SuppliersPage() {
   }
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    try {
-      setError('')
-      setMessage('')
-      setPreview([])
-      setFileText('')
-      setFileName('')
+    setError('')
+    setMessage('')
+    setPreview([])
+    setSelectedFile(null)
+    setFileName('')
 
-      const file = e.target.files?.[0]
-      if (!file) return
+    const file = e.target.files?.[0]
+    if (!file) return
 
-      setFileName(file.name)
-
-      const text = await file.text()
-      setFileText(text)
-
-      setMessage(`File selected: ${file.name}. Click "Parse Price File" next.`)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
-    }
+    setSelectedFile(file)
+    setFileName(file.name)
+    setMessage(`File selected: ${file.name}. Click "Parse Price File" next.`)
   }
 
   async function handleParse() {
@@ -47,7 +40,7 @@ export default function SuppliersPage() {
       setMessage('')
       setPreview([])
 
-      if (!fileText) {
+      if (!selectedFile) {
         setError('Choose a file first.')
         return
       }
@@ -57,10 +50,12 @@ export default function SuppliersPage() {
         return
       }
 
+      const formData = new FormData()
+      formData.append('file', selectedFile)
+
       const res = await fetch('/api/parse-caterway', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: fileText }),
+        body: formData,
       })
 
       const data = await safeJson(res)
@@ -72,9 +67,7 @@ export default function SuppliersPage() {
       setPreview(data)
 
       if (data.length === 0) {
-        setError(
-          'No rows were parsed. If this is a PDF, the current importer cannot read it properly yet. Use a text/CSV export for now, or we need to build server-side PDF parsing.'
-        )
+        setError('No rows were parsed from the PDF.')
         return
       }
 
@@ -112,7 +105,7 @@ export default function SuppliersPage() {
 
       setMessage(`${preview.length} supplier products imported and auto-linked.`)
       setPreview([])
-      setFileText('')
+      setSelectedFile(null)
       setFileName('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -158,7 +151,12 @@ export default function SuppliersPage() {
               </label>
               <select
                 value={supplier}
-                onChange={(e) => setSupplier(e.target.value)}
+                onChange={(e) => {
+                  setSupplier(e.target.value)
+                  setPreview([])
+                  setMessage('')
+                  setError('')
+                }}
                 className="w-full rounded-xl border px-3 py-2 text-slate-900"
               >
                 <option value="Caterway">Caterway</option>
