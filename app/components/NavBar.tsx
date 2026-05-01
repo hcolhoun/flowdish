@@ -9,7 +9,7 @@ const links = [
   { href: '/items', label: 'Items' },
   { href: '/bom', label: 'BOM' },
   { href: '/sops', label: 'SOPs' },
-  { href: '/suppliers', label: 'Supplier Prices' },
+  { href: '/suppliers', label: 'Supplier Products' },
   { href: '/deliveries', label: 'Deliveries' },
   { href: '/inventory', label: 'Inventory' },
   { href: '/prep', label: 'Prep' },

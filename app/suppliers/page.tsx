@@ -1,11 +1,39 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+
+type Item = {
+  id: string
+  sku: string
+  name: string
+  itemType: 'L1' | 'L2' | 'L3'
+  unitType: 'g' | 'ml' | 'each'
+  shelfLifeDays: number | null
+}
+
+type SupplierProduct = {
+  id: string
+  supplier: string
+  supplierSku: string | null
+  name: string
+  packSize: string | null
+  weight: string | null
+  packPrice: number | null
+  unitPrice: number | null
+  createdAt: string
+  linkedItemId: string | null
+  linkedItem?: Item | null
+}
 
 export default function SuppliersPage() {
   const [supplier, setSupplier] = useState('Caterway')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<any[]>([])
+  const [products, setProducts] = useState<SupplierProduct[]>([])
+  const [items, setItems] = useState<Item[]>([])
+  const [search, setSearch] = useState('')
+  const [supplierFilter, setSupplierFilter] = useState('ALL')
+  const [linkFilter, setLinkFilter] = useState('ALL')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [fileName, setFileName] = useState('')
@@ -18,6 +46,59 @@ export default function SuppliersPage() {
       throw new Error(text.slice(0, 500))
     }
   }
+
+  async function loadData() {
+    try {
+      setError('')
+
+      const [productsRes, itemsRes] = await Promise.all([
+        fetch('/api/supplier-products', { cache: 'no-store' }),
+        fetch('/api/items', { cache: 'no-store' }),
+      ])
+
+      const productsData = await safeJson(productsRes)
+      const itemsData = await safeJson(itemsRes)
+
+      if (!productsRes.ok) throw new Error(productsData?.error || 'Failed to load supplier products')
+      if (!itemsRes.ok) throw new Error(itemsData?.error || 'Failed to load items')
+
+      setProducts(productsData)
+      setItems(itemsData.filter((item: Item) => item.itemType === 'L3'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    }
+  }
+
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  const suppliers = useMemo(() => {
+    return Array.from(new Set(products.map((p) => p.supplier))).sort()
+  }, [products])
+
+  const filteredProducts = useMemo(() => {
+    const q = search.toLowerCase().trim()
+
+    return products.filter((product) => {
+      const matchesSearch =
+        !q ||
+        product.name.toLowerCase().includes(q) ||
+        (product.supplierSku || '').toLowerCase().includes(q) ||
+        (product.linkedItem?.name || '').toLowerCase().includes(q) ||
+        (product.linkedItem?.sku || '').toLowerCase().includes(q)
+
+      const matchesSupplier =
+        supplierFilter === 'ALL' || product.supplier === supplierFilter
+
+      const matchesLink =
+        linkFilter === 'ALL' ||
+        (linkFilter === 'LINKED' && product.linkedItemId) ||
+        (linkFilter === 'UNLINKED' && !product.linkedItemId)
+
+      return matchesSearch && matchesSupplier && matchesLink
+    })
+  }, [products, search, supplierFilter, linkFilter])
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     setError('')
@@ -99,14 +180,39 @@ export default function SuppliersPage() {
         throw new Error(data?.error || 'Failed to save supplier products')
       }
 
-      await fetch('/api/supplier-products/auto-link', {
-        method: 'POST',
-      })
+      setMessage(
+        `${preview.length} supplier products saved. ${data.linkedCount ?? 0} linked to L3 items. ${data.createdCount ?? 0} new supplier rows created.`
+      )
 
-      setMessage(`${preview.length} supplier products imported and auto-linked.`)
       setPreview([])
       setSelectedFile(null)
       setFileName('')
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    }
+  }
+
+  async function linkProduct(productId: string, linkedItemId: string | null) {
+    try {
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/supplier-products', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: productId,
+          linkedItemId,
+        }),
+      })
+
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to link supplier product')
+
+      setMessage('Supplier product link updated.')
+      await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     }
@@ -124,11 +230,11 @@ export default function SuppliersPage() {
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-7xl">
         <h1 className="text-3xl font-semibold text-slate-900">
-          Supplier Price Upload
+          Supplier Products
         </h1>
 
         <p className="mt-2 text-slate-800">
-          Upload supplier price files so Flowdish can compare supplier products and prices.
+          Upload supplier price lists, automatically create L3 items, and link supplier products to kitchen ingredients.
         </p>
 
         {error ? (
@@ -144,7 +250,9 @@ export default function SuppliersPage() {
         ) : null}
 
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="grid gap-4 md:grid-cols-2">
+          <h2 className="text-xl font-semibold text-slate-900">Upload Price List</h2>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-900">
                 Supplier
@@ -199,7 +307,7 @@ export default function SuppliersPage() {
                   : 'bg-green-700'
               }`}
             >
-              Save Products
+              Save Products + Create L3s
             </button>
           </div>
         </section>
@@ -238,26 +346,138 @@ export default function SuppliersPage() {
                 ) : (
                   preview.slice(0, 100).map((product, index) => (
                     <tr key={index} className="border-t">
-                      <td className="px-4 py-3 text-slate-800">
-                        {product.supplier}
-                      </td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {product.name}
-                      </td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {product.packSize ?? ''}
-                      </td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {product.weight ?? ''}
-                      </td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {money(product.packPrice)}
-                      </td>
+                      <td className="px-4 py-3 text-slate-800">{product.supplier}</td>
+                      <td className="px-4 py-3 text-slate-800">{product.name}</td>
+                      <td className="px-4 py-3 text-slate-800">{product.packSize ?? ''}</td>
+                      <td className="px-4 py-3 text-slate-800">{product.weight ?? ''}</td>
+                      <td className="px-4 py-3 text-slate-800">{money(product.packPrice)}</td>
                       <td className="px-4 py-3 text-slate-800">
                         {product.unitPrice ? money(product.unitPrice) : ''}
                       </td>
+                      <td className="px-4 py-3 text-slate-800">{product.supplierSku ?? ''}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-slate-900">Saved Supplier Products</h2>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search product, SKU, L3..."
+              className="rounded-xl border px-3 py-2 text-slate-900"
+            />
+
+            <select
+              value={supplierFilter}
+              onChange={(e) => setSupplierFilter(e.target.value)}
+              className="rounded-xl border px-3 py-2 text-slate-900"
+            >
+              <option value="ALL">All suppliers</option>
+              {suppliers.map((supplierName) => (
+                <option key={supplierName} value={supplierName}>
+                  {supplierName}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={linkFilter}
+              onChange={(e) => setLinkFilter(e.target.value)}
+              className="rounded-xl border px-3 py-2 text-slate-900"
+            >
+              <option value="ALL">All</option>
+              <option value="LINKED">Linked</option>
+              <option value="UNLINKED">Unlinked</option>
+            </select>
+          </div>
+        </section>
+
+        <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
+          <div className="border-b px-6 py-4">
+            <h2 className="text-xl font-semibold text-slate-900">
+              Product Catalogue
+            </h2>
+            <p className="mt-1 text-sm text-slate-700">
+              Showing {filteredProducts.length} of {products.length}.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-slate-100 text-sm">
+                <tr>
+                  <th className="px-4 py-3 text-slate-800">Supplier Product</th>
+                  <th className="px-4 py-3 text-slate-800">Supplier SKU</th>
+                  <th className="px-4 py-3 text-slate-800">Pack</th>
+                  <th className="px-4 py-3 text-slate-800">Pack Price</th>
+                  <th className="px-4 py-3 text-slate-800">Unit Price</th>
+                  <th className="px-4 py-3 text-slate-800">Linked L3</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredProducts.length === 0 ? (
+                  <tr className="border-t">
+                    <td className="px-4 py-3 text-slate-700" colSpan={6}>
+                      No supplier products found.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredProducts.map((product) => (
+                    <tr key={product.id} className="border-t align-top">
+                      <td className="px-4 py-3 text-slate-800">
+                        <div className="font-medium">{product.name}</div>
+                        <div className="text-xs text-slate-600">{product.supplier}</div>
+                      </td>
+
                       <td className="px-4 py-3 text-slate-800">
                         {product.supplierSku ?? ''}
+                      </td>
+
+                      <td className="px-4 py-3 text-slate-800">
+                        {[product.packSize, product.weight].filter(Boolean).join(' / ')}
+                      </td>
+
+                      <td className="px-4 py-3 text-slate-800">
+                        {money(product.packPrice)}
+                      </td>
+
+                      <td className="px-4 py-3 text-slate-800">
+                        {product.unitPrice ? money(product.unitPrice) : ''}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <select
+                          value={product.linkedItemId ?? ''}
+                          onChange={(e) =>
+                            linkProduct(product.id, e.target.value || null)
+                          }
+                          className="w-full min-w-[260px] rounded-xl border px-3 py-2 text-slate-900"
+                        >
+                          <option value="">Not linked</option>
+                          {items.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name} [{item.sku}]
+                            </option>
+                          ))}
+                        </select>
+
+                        {product.linkedItem ? (
+                          <div className="mt-1 text-xs text-green-700">
+                            Linked to {product.linkedItem.name}
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-xs text-red-700">
+                            Not linked
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))
