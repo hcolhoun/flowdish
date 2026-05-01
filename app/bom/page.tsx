@@ -26,6 +26,207 @@ type ChildRow = {
   qty: string
 }
 
+function QtyInput({
+  value,
+  unit,
+  onChange,
+  placeholder,
+}: {
+  value: string
+  unit: string
+  onChange: (value: string) => void
+  placeholder: string
+}) {
+  return (
+    <div className="flex rounded-xl border bg-white">
+      <input
+        type="text"
+        inputMode="decimal"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="min-w-0 flex-1 rounded-l-xl px-3 py-2 outline-none"
+      />
+      <div className="flex min-w-[60px] items-center justify-center rounded-r-xl border-l bg-slate-100 px-3 text-sm font-medium text-slate-800">
+        {unit || 'unit'}
+      </div>
+    </div>
+  )
+}
+
+function L2Picker({
+  selectedId,
+  l2Items,
+  onSelect,
+}: {
+  selectedId: string
+  l2Items: Item[]
+  onSelect: (id: string) => void
+}) {
+  return (
+    <select
+      value={selectedId}
+      onChange={(e) => onSelect(e.target.value)}
+      className="rounded-xl border px-3 py-2"
+    >
+      <option value="">Select L2</option>
+      {l2Items.map((item) => (
+        <option key={item.id} value={item.id}>
+          {item.name} [{item.sku}]
+        </option>
+      ))}
+    </select>
+  )
+}
+
+function L3SearchPicker({
+  selectedId,
+  l3Items,
+  onSelect,
+  onError,
+}: {
+  selectedId: string
+  l3Items: Item[]
+  onSelect: (id: string) => void
+  onError: (message: string) => void
+}) {
+  const selected = l3Items.find((item) => item.id === selectedId)
+  const [query, setQuery] = useState(selected ? `${selected.name} [${selected.sku}]` : '')
+  const [open, setOpen] = useState(false)
+  const [l3Results, setL3Results] = useState<Item[]>([])
+  const [supplierResults, setSupplierResults] = useState<SupplierProduct[]>([])
+
+  useEffect(() => {
+    const item = l3Items.find((i) => i.id === selectedId)
+    if (item) setQuery(`${item.name} [${item.sku}]`)
+  }, [selectedId, l3Items])
+
+  async function safeJson(res: Response) {
+    const text = await res.text()
+    try {
+      return JSON.parse(text)
+    } catch {
+      throw new Error(text.slice(0, 1000))
+    }
+  }
+
+  async function search(value: string) {
+    setQuery(value)
+    setOpen(true)
+
+    if (value.trim().length < 2) {
+      setL3Results([])
+      setSupplierResults([])
+      return
+    }
+
+    try {
+      const res = await fetch(`/api/ingredient-search?q=${encodeURIComponent(value)}`, {
+        cache: 'no-store',
+      })
+
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Search failed')
+
+      setL3Results(data.items ?? [])
+      setSupplierResults(data.supplierProducts ?? [])
+    } catch {
+      setL3Results([])
+      setSupplierResults([])
+    }
+  }
+
+  function money(value: number | null | undefined) {
+    if (value === null || value === undefined) return ''
+    return new Intl.NumberFormat('en-IE', {
+      style: 'currency',
+      currency: 'EUR',
+      maximumFractionDigits: 4,
+    }).format(value)
+  }
+
+  function selectSupplierProduct(product: SupplierProduct) {
+    const matchedItem =
+      l3Items.find((item) => product.supplierSku && item.sku === product.supplierSku) ||
+      l3Items.find((item) => item.name.toLowerCase().includes(product.name.toLowerCase())) ||
+      l3Items.find((item) => product.name.toLowerCase().includes(item.name.toLowerCase()))
+
+    if (!matchedItem) {
+      onError(
+        `Supplier product "${product.name}" is not linked to an L3 item yet. Save/import supplier products first so L3s are created.`
+      )
+      return
+    }
+
+    onSelect(matchedItem.id)
+    setQuery(`${matchedItem.name} [${matchedItem.sku}]`)
+    setOpen(false)
+  }
+
+  return (
+    <div className="relative">
+      <input
+        value={query}
+        onChange={(e) => search(e.target.value)}
+        onFocus={() => setOpen(true)}
+        className="w-full rounded-xl border px-3 py-2"
+        placeholder="Search L3 ingredient or supplier product"
+      />
+
+      {open && (l3Results.length > 0 || supplierResults.length > 0) ? (
+        <div className="absolute z-20 mt-1 max-h-80 w-full overflow-auto rounded-xl border bg-white shadow-lg">
+          {l3Results.length > 0 ? (
+            <div className="border-b px-3 py-2 text-xs font-semibold uppercase text-slate-500">
+              Flowdish L3 Items
+            </div>
+          ) : null}
+
+          {l3Results.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => {
+                onSelect(item.id)
+                setQuery(`${item.name} [${item.sku}]`)
+                setOpen(false)
+              }}
+              className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-100"
+            >
+              <div className="font-medium text-slate-900">
+                {item.name} [{item.sku}]
+              </div>
+              <div className="text-xs text-slate-600">Unit: {item.unitType}</div>
+            </button>
+          ))}
+
+          {supplierResults.length > 0 ? (
+            <div className="border-y px-3 py-2 text-xs font-semibold uppercase text-slate-500">
+              Supplier Price Options
+            </div>
+          ) : null}
+
+          {supplierResults.map((product) => (
+            <button
+              key={product.id}
+              type="button"
+              onClick={() => selectSupplierProduct(product)}
+              className="block w-full px-3 py-2 text-left text-sm hover:bg-green-50"
+            >
+              <div className="font-medium text-slate-900">{product.name}</div>
+              <div className="text-xs text-slate-700">
+                {product.supplier} · SKU {product.supplierSku || 'N/A'} · Pack{' '}
+                {product.packSize || 'N/A'} · Weight {product.weight || 'N/A'} · Pack Price{' '}
+                {money(product.packPrice)} · Unit Price {money(product.unitPrice)}
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export default function BomPage() {
   const [items, setItems] = useState<Item[]>([])
   const [parentId, setParentId] = useState('')
@@ -125,6 +326,7 @@ export default function BomPage() {
           const res = await fetch(`/api/bom/l2-l3?parentId=${parentItem.id}`, {
             cache: 'no-store',
           })
+
           const data = await safeJson(res)
 
           if (!res.ok) throw new Error(data?.error || 'Failed to load L2 → L3 BOM')
@@ -295,199 +497,6 @@ export default function BomPage() {
     }
   }
 
-  function QtyInput({
-    value,
-    unit,
-    onChange,
-    placeholder,
-  }: {
-    value: string
-    unit: string
-    onChange: (value: string) => void
-    placeholder: string
-  }) {
-    return (
-      <div className="flex rounded-xl border bg-white">
-        <input
-          type="text"
-          inputMode="decimal"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          className="min-w-0 flex-1 rounded-l-xl px-3 py-2 outline-none"
-        />
-        <div className="flex min-w-[60px] items-center justify-center rounded-r-xl border-l bg-slate-100 px-3 text-sm font-medium text-slate-800">
-          {unit || 'unit'}
-        </div>
-      </div>
-    )
-  }
-
-  function L3SearchPicker({
-    selectedId,
-    onSelect,
-  }: {
-    selectedId: string
-    onSelect: (id: string) => void
-  }) {
-    const selected = l3Items.find((item) => item.id === selectedId)
-    const [query, setQuery] = useState(selected ? `${selected.name} [${selected.sku}]` : '')
-    const [open, setOpen] = useState(false)
-    const [l3Results, setL3Results] = useState<Item[]>([])
-    const [supplierResults, setSupplierResults] = useState<SupplierProduct[]>([])
-
-    useEffect(() => {
-      const item = l3Items.find((i) => i.id === selectedId)
-      if (item) {
-        setQuery(`${item.name} [${item.sku}]`)
-      }
-    }, [selectedId])
-
-    async function search(value: string) {
-      setQuery(value)
-      setOpen(true)
-
-      if (value.trim().length < 2) {
-        setL3Results([])
-        setSupplierResults([])
-        return
-      }
-
-      try {
-        const res = await fetch(`/api/ingredient-search?q=${encodeURIComponent(value)}`, {
-          cache: 'no-store',
-        })
-        const data = await safeJson(res)
-
-        if (!res.ok) throw new Error(data?.error || 'Search failed')
-
-        setL3Results(data.items ?? [])
-        setSupplierResults(data.supplierProducts ?? [])
-      } catch {
-        setL3Results([])
-        setSupplierResults([])
-      }
-    }
-
-    function selectSupplierProduct(product: SupplierProduct) {
-      const matchedItem =
-        l3Items.find((item) => product.supplierSku && item.sku === product.supplierSku) ||
-        l3Items.find((item) =>
-          item.name.toLowerCase().includes(product.name.toLowerCase())
-        ) ||
-        l3Items.find((item) =>
-          product.name.toLowerCase().includes(item.name.toLowerCase())
-        )
-
-      if (!matchedItem) {
-        setError(
-          `Supplier product "${product.name}" is not linked to an L3 item yet. Create/link the L3 item first.`
-        )
-        return
-      }
-
-      onSelect(matchedItem.id)
-      setQuery(`${matchedItem.name} [${matchedItem.sku}]`)
-      setOpen(false)
-    }
-
-    function money(value: number | null | undefined) {
-      if (value === null || value === undefined) return ''
-      return new Intl.NumberFormat('en-IE', {
-        style: 'currency',
-        currency: 'EUR',
-        maximumFractionDigits: 4,
-      }).format(value)
-    }
-
-    return (
-      <div className="relative">
-        <input
-          value={query}
-          onChange={(e) => search(e.target.value)}
-          onFocus={() => setOpen(true)}
-          className="w-full rounded-xl border px-3 py-2"
-          placeholder="Search L3 ingredient or supplier product"
-        />
-
-        {open && (l3Results.length > 0 || supplierResults.length > 0) ? (
-          <div className="absolute z-20 mt-1 max-h-80 w-full overflow-auto rounded-xl border bg-white shadow-lg">
-            {l3Results.length > 0 ? (
-              <div className="border-b px-3 py-2 text-xs font-semibold uppercase text-slate-500">
-                Flowdish L3 Items
-              </div>
-            ) : null}
-
-            {l3Results.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => {
-                  onSelect(item.id)
-                  setQuery(`${item.name} [${item.sku}]`)
-                  setOpen(false)
-                }}
-                className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-100"
-              >
-                <div className="font-medium text-slate-900">
-                  {item.name} [{item.sku}]
-                </div>
-                <div className="text-xs text-slate-600">Unit: {item.unitType}</div>
-              </button>
-            ))}
-
-            {supplierResults.length > 0 ? (
-              <div className="border-y px-3 py-2 text-xs font-semibold uppercase text-slate-500">
-                Supplier Price Options
-              </div>
-            ) : null}
-
-            {supplierResults.map((product) => (
-              <button
-                key={product.id}
-                type="button"
-                onClick={() => selectSupplierProduct(product)}
-                className="block w-full px-3 py-2 text-left text-sm hover:bg-green-50"
-              >
-                <div className="font-medium text-slate-900">
-                  {product.name}
-                </div>
-                <div className="text-xs text-slate-700">
-                  {product.supplier} · SKU {product.supplierSku || 'N/A'} · Pack{' '}
-                  {product.packSize || 'N/A'} · Weight {product.weight || 'N/A'} · Pack Price{' '}
-                  {money(product.packPrice)} · Unit Price {money(product.unitPrice)}
-                </div>
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    )
-  }
-
-  function L2Picker({
-    selectedId,
-    onSelect,
-  }: {
-    selectedId: string
-    onSelect: (id: string) => void
-  }) {
-    return (
-      <select
-        value={selectedId}
-        onChange={(e) => onSelect(e.target.value)}
-        className="rounded-xl border px-3 py-2"
-      >
-        <option value="">Select L2</option>
-        {l2Items.map((item) => (
-          <option key={item.id} value={item.id}>
-            {item.name} [{item.sku}]
-          </option>
-        ))}
-      </select>
-    )
-  }
-
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-6xl">
@@ -551,6 +560,7 @@ export default function BomPage() {
                   <div key={index} className="grid gap-3 md:grid-cols-[1fr_220px_100px]">
                     <L2Picker
                       selectedId={row.childId}
+                      l2Items={l2Items}
                       onSelect={(id) =>
                         updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'childId', id)
                       }
@@ -594,6 +604,8 @@ export default function BomPage() {
                   <div key={index} className="grid gap-3 md:grid-cols-[1fr_220px_100px]">
                     <L3SearchPicker
                       selectedId={row.childId}
+                      l3Items={l3Items}
+                      onError={setError}
                       onSelect={(id) =>
                         updateRow(l1ToL3Rows, setL1ToL3Rows, index, 'childId', id)
                       }
@@ -649,6 +661,8 @@ export default function BomPage() {
                   <div key={index} className="grid gap-3 md:grid-cols-[1fr_220px_100px]">
                     <L3SearchPicker
                       selectedId={row.childId}
+                      l3Items={l3Items}
+                      onError={setError}
                       onSelect={(id) =>
                         updateRow(l2ToL3Rows, setL2ToL3Rows, index, 'childId', id)
                       }
