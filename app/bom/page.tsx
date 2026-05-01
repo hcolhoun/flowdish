@@ -309,8 +309,8 @@ export default function BomPage() {
     return (
       <div className="flex rounded-xl border bg-white">
         <input
-          type="number"
-          step="0.001"
+          type="text"
+          inputMode="decimal"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
