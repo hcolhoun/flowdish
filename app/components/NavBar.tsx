@@ -15,8 +15,7 @@ const links = [
   { href: '/prep', label: 'Prep' },
   { href: '/sales', label: 'Sales' },
   { href: '/waste', label: 'Waste' },
-  { href: '/forecasts', label: 'Forecasts' },
-  { href: '/prep-plan', label: 'Prep Plan' },
+  { href: '/planning', label: 'Planning' },
 ]
 
 export default function NavBar() {
