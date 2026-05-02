@@ -30,13 +30,14 @@ export default function SuppliersPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<any[]>([])
   const [products, setProducts] = useState<SupplierProduct[]>([])
-  const [items, setItems] = useState<Item[]>([])
   const [search, setSearch] = useState('')
   const [supplierFilter, setSupplierFilter] = useState('ALL')
   const [linkFilter, setLinkFilter] = useState('ALL')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [fileName, setFileName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [parsing, setParsing] = useState(false)
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -47,30 +48,23 @@ export default function SuppliersPage() {
     }
   }
 
-  async function loadData() {
+  async function loadProducts() {
     try {
       setError('')
 
-      const [productsRes, itemsRes] = await Promise.all([
-        fetch('/api/supplier-products', { cache: 'no-store' }),
-        fetch('/api/items', { cache: 'no-store' }),
-      ])
+      const res = await fetch('/api/supplier-products', { cache: 'no-store' })
+      const data = await safeJson(res)
 
-      const productsData = await safeJson(productsRes)
-      const itemsData = await safeJson(itemsRes)
+      if (!res.ok) throw new Error(data?.error || 'Failed to load supplier products')
 
-      if (!productsRes.ok) throw new Error(productsData?.error || 'Failed to load supplier products')
-      if (!itemsRes.ok) throw new Error(itemsData?.error || 'Failed to load items')
-
-      setProducts(productsData)
-      setItems(itemsData.filter((item: Item) => item.itemType === 'L3'))
+      setProducts(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     }
   }
 
   useEffect(() => {
-    loadData()
+    loadProducts()
   }, [])
 
   const suppliers = useMemo(() => {
@@ -120,6 +114,7 @@ export default function SuppliersPage() {
       setError('')
       setMessage('')
       setPreview([])
+      setParsing(true)
 
       if (!selectedFile) {
         setError('Choose a file first.')
@@ -155,6 +150,8 @@ export default function SuppliersPage() {
       setMessage(`${data.length} products parsed. Review below, then click Save Products.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setParsing(false)
     }
   }
 
@@ -162,11 +159,14 @@ export default function SuppliersPage() {
     try {
       setError('')
       setMessage('')
+      setSaving(true)
 
       if (preview.length === 0) {
         setError('No parsed products to save. Parse the file first.')
         return
       }
+
+      setMessage('Saving supplier products and creating L3 items. This may take a moment...')
 
       const res = await fetch('/api/supplier-products', {
         method: 'POST',
@@ -181,40 +181,17 @@ export default function SuppliersPage() {
       }
 
       setMessage(
-        `${preview.length} supplier products saved. ${data.linkedCount ?? 0} linked to L3 items. ${data.createdCount ?? 0} new supplier rows created.`
+        `${preview.length} supplier products saved. ${data.linkedCount ?? 0} linked to L3 items.`
       )
 
       setPreview([])
       setSelectedFile(null)
       setFileName('')
-      await loadData()
+      await loadProducts()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
-    }
-  }
-
-  async function linkProduct(productId: string, linkedItemId: string | null) {
-    try {
-      setError('')
-      setMessage('')
-
-      const res = await fetch('/api/supplier-products', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: productId,
-          linkedItemId,
-        }),
-      })
-
-      const data = await safeJson(res)
-
-      if (!res.ok) throw new Error(data?.error || 'Failed to link supplier product')
-
-      setMessage('Supplier product link updated.')
-      await loadData()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -226,15 +203,15 @@ export default function SuppliersPage() {
     }).format(value ?? 0)
   }
 
+  const visibleProducts = filteredProducts.slice(0, 100)
+
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-7xl">
-        <h1 className="text-3xl font-semibold text-slate-900">
-          Supplier Products
-        </h1>
+        <h1 className="text-3xl font-semibold text-slate-900">Supplier Products</h1>
 
         <p className="mt-2 text-slate-800">
-          Upload supplier price lists, automatically create L3 items, and link supplier products to kitchen ingredients.
+          Upload supplier price lists, create L3 items, and link supplier products to kitchen ingredients.
         </p>
 
         {error ? (
@@ -249,22 +226,21 @@ export default function SuppliersPage() {
           </div>
         ) : null}
 
+        {saving ? (
+          <div className="mt-4 rounded-xl border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+            Creating L3 items and linking supplier products. Please wait...
+          </div>
+        ) : null}
+
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Price List</h2>
 
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-900">
-                Supplier
-              </label>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Supplier</label>
               <select
                 value={supplier}
-                onChange={(e) => {
-                  setSupplier(e.target.value)
-                  setPreview([])
-                  setMessage('')
-                  setError('')
-                }}
+                onChange={(e) => setSupplier(e.target.value)}
                 className="w-full rounded-xl border px-3 py-2 text-slate-900"
               >
                 <option value="Caterway">Caterway</option>
@@ -273,9 +249,7 @@ export default function SuppliersPage() {
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-900">
-                Price File
-              </label>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Price File</label>
               <input
                 type="file"
                 accept=".pdf,.csv,.txt"
@@ -292,31 +266,26 @@ export default function SuppliersPage() {
             <button
               type="button"
               onClick={handleParse}
-              className="rounded-xl bg-slate-900 px-5 py-3 text-white"
+              disabled={parsing || saving}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:bg-slate-400"
             >
-              Parse Price File
+              {parsing ? 'Parsing...' : 'Parse Price File'}
             </button>
 
             <button
               type="button"
               onClick={handleSave}
-              disabled={preview.length === 0}
-              className={`rounded-xl px-5 py-3 text-white ${
-                preview.length === 0
-                  ? 'cursor-not-allowed bg-slate-400'
-                  : 'bg-green-700'
-              }`}
+              disabled={preview.length === 0 || saving}
+              className="rounded-xl bg-green-700 px-5 py-3 text-white disabled:bg-slate-400"
             >
-              Save Products + Create L3s
+              {saving ? 'Creating L3s...' : 'Save Products + Create L3s'}
             </button>
           </div>
         </section>
 
         <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div className="border-b px-6 py-4">
-            <h2 className="text-xl font-semibold text-slate-900">
-              Import Preview
-            </h2>
+            <h2 className="text-xl font-semibold text-slate-900">Import Preview</h2>
             <p className="mt-1 text-sm text-slate-700">
               Parsed rows: {preview.length}. Showing first 100 rows.
             </p>
@@ -328,7 +297,6 @@ export default function SuppliersPage() {
                 <tr>
                   <th className="px-4 py-3 text-slate-800">Supplier</th>
                   <th className="px-4 py-3 text-slate-800">Name</th>
-                  <th className="px-4 py-3 text-slate-800">Pack Size</th>
                   <th className="px-4 py-3 text-slate-800">Weight</th>
                   <th className="px-4 py-3 text-slate-800">Pack Price</th>
                   <th className="px-4 py-3 text-slate-800">Unit Price</th>
@@ -337,27 +305,18 @@ export default function SuppliersPage() {
               </thead>
 
               <tbody>
-                {preview.length === 0 ? (
-                  <tr className="border-t">
-                    <td className="px-4 py-3 text-slate-700" colSpan={7}>
-                      No parsed products yet.
+                {preview.slice(0, 100).map((product, index) => (
+                  <tr key={index} className="border-t">
+                    <td className="px-4 py-3 text-slate-800">{product.supplier}</td>
+                    <td className="px-4 py-3 text-slate-800">{product.name}</td>
+                    <td className="px-4 py-3 text-slate-800">{product.weight ?? ''}</td>
+                    <td className="px-4 py-3 text-slate-800">{money(product.packPrice)}</td>
+                    <td className="px-4 py-3 text-slate-800">
+                      {product.unitPrice ? money(product.unitPrice) : ''}
                     </td>
+                    <td className="px-4 py-3 text-slate-800">{product.supplierSku ?? ''}</td>
                   </tr>
-                ) : (
-                  preview.slice(0, 100).map((product, index) => (
-                    <tr key={index} className="border-t">
-                      <td className="px-4 py-3 text-slate-800">{product.supplier}</td>
-                      <td className="px-4 py-3 text-slate-800">{product.name}</td>
-                      <td className="px-4 py-3 text-slate-800">{product.packSize ?? ''}</td>
-                      <td className="px-4 py-3 text-slate-800">{product.weight ?? ''}</td>
-                      <td className="px-4 py-3 text-slate-800">{money(product.packPrice)}</td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {product.unitPrice ? money(product.unitPrice) : ''}
-                      </td>
-                      <td className="px-4 py-3 text-slate-800">{product.supplierSku ?? ''}</td>
-                    </tr>
-                  ))
-                )}
+                ))}
               </tbody>
             </table>
           </div>
@@ -401,11 +360,9 @@ export default function SuppliersPage() {
 
         <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div className="border-b px-6 py-4">
-            <h2 className="text-xl font-semibold text-slate-900">
-              Product Catalogue
-            </h2>
+            <h2 className="text-xl font-semibold text-slate-900">Product Catalogue</h2>
             <p className="mt-1 text-sm text-slate-700">
-              Showing {filteredProducts.length} of {products.length}.
+              Showing {visibleProducts.length} of {filteredProducts.length} filtered products.
             </p>
           </div>
 
@@ -414,74 +371,36 @@ export default function SuppliersPage() {
               <thead className="bg-slate-100 text-sm">
                 <tr>
                   <th className="px-4 py-3 text-slate-800">Supplier Product</th>
-                  <th className="px-4 py-3 text-slate-800">Supplier SKU</th>
+                  <th className="px-4 py-3 text-slate-800">SKU</th>
                   <th className="px-4 py-3 text-slate-800">Pack</th>
-                  <th className="px-4 py-3 text-slate-800">Pack Price</th>
-                  <th className="px-4 py-3 text-slate-800">Unit Price</th>
+                  <th className="px-4 py-3 text-slate-800">Price</th>
                   <th className="px-4 py-3 text-slate-800">Linked L3</th>
                 </tr>
               </thead>
 
               <tbody>
-                {filteredProducts.length === 0 ? (
-                  <tr className="border-t">
-                    <td className="px-4 py-3 text-slate-700" colSpan={6}>
-                      No supplier products found.
+                {visibleProducts.map((product) => (
+                  <tr key={product.id} className="border-t">
+                    <td className="px-4 py-3 text-slate-800">
+                      <div className="font-medium">{product.name}</div>
+                      <div className="text-xs text-slate-600">{product.supplier}</div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-800">{product.supplierSku ?? ''}</td>
+                    <td className="px-4 py-3 text-slate-800">
+                      {[product.packSize, product.weight].filter(Boolean).join(' / ')}
+                    </td>
+                    <td className="px-4 py-3 text-slate-800">{money(product.packPrice)}</td>
+                    <td className="px-4 py-3 text-slate-800">
+                      {product.linkedItem ? (
+                        <span className="text-green-700">
+                          {product.linkedItem.name} [{product.linkedItem.sku}]
+                        </span>
+                      ) : (
+                        <span className="text-red-700">Not linked</span>
+                      )}
                     </td>
                   </tr>
-                ) : (
-                  filteredProducts.map((product) => (
-                    <tr key={product.id} className="border-t align-top">
-                      <td className="px-4 py-3 text-slate-800">
-                        <div className="font-medium">{product.name}</div>
-                        <div className="text-xs text-slate-600">{product.supplier}</div>
-                      </td>
-
-                      <td className="px-4 py-3 text-slate-800">
-                        {product.supplierSku ?? ''}
-                      </td>
-
-                      <td className="px-4 py-3 text-slate-800">
-                        {[product.packSize, product.weight].filter(Boolean).join(' / ')}
-                      </td>
-
-                      <td className="px-4 py-3 text-slate-800">
-                        {money(product.packPrice)}
-                      </td>
-
-                      <td className="px-4 py-3 text-slate-800">
-                        {product.unitPrice ? money(product.unitPrice) : ''}
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <select
-                          value={product.linkedItemId ?? ''}
-                          onChange={(e) =>
-                            linkProduct(product.id, e.target.value || null)
-                          }
-                          className="w-full min-w-[260px] rounded-xl border px-3 py-2 text-slate-900"
-                        >
-                          <option value="">Not linked</option>
-                          {items.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.name} [{item.sku}]
-                            </option>
-                          ))}
-                        </select>
-
-                        {product.linkedItem ? (
-                          <div className="mt-1 text-xs text-green-700">
-                            Linked to {product.linkedItem.name}
-                          </div>
-                        ) : (
-                          <div className="mt-1 text-xs text-red-700">
-                            Not linked
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
+                ))}
               </tbody>
             </table>
           </div>
