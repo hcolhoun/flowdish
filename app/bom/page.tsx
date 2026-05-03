@@ -2,12 +2,23 @@
 
 import { useEffect, useMemo, useState } from 'react'
 
+type BestSupplierPrice = {
+  supplier: string
+  supplierSku: string | null
+  productName: string
+  packSize: string | null
+  weight: string | null
+  packPrice: number | null
+  unitPrice: number | null
+}
+
 type Item = {
   id: string
   sku: string
   name: string
   itemType: 'L1' | 'L2' | 'L3'
   unitType: 'g' | 'ml' | 'each'
+  bestSupplierPrice?: BestSupplierPrice | null
 }
 
 type SupplierProduct = {
@@ -19,6 +30,8 @@ type SupplierProduct = {
   weight: string | null
   packPrice: number | null
   unitPrice: number | null
+  linkedItemId?: string | null
+  linkedItem?: Item | null
 }
 
 type ChildRow = {
@@ -137,17 +150,51 @@ function L3SearchPicker({
     }
   }
 
-  function money(value: number | null | undefined) {
+  function money(value: number | null | undefined, maximumFractionDigits = 4) {
     if (value === null || value === undefined) return ''
+
     return new Intl.NumberFormat('en-IE', {
       style: 'currency',
       currency: 'EUR',
-      maximumFractionDigits: 4,
+      maximumFractionDigits,
     }).format(value)
+  }
+
+  function unitPriceLabel(item: Item) {
+    const best = item.bestSupplierPrice
+
+    if (!best || best.unitPrice === null || best.unitPrice === undefined) {
+      return 'No supplier price'
+    }
+
+    return `${money(best.unitPrice, 4)} / ${item.unitType}`
+  }
+
+  function supplierPriceDetails(item: Item) {
+    const best = item.bestSupplierPrice
+
+    if (!best) return 'No linked supplier price found'
+
+    const packParts = [best.packSize, best.weight].filter(Boolean).join(' / ')
+
+    return [
+      best.supplier,
+      best.supplierSku ? `SKU ${best.supplierSku}` : null,
+      packParts ? `Pack ${packParts}` : null,
+      best.packPrice !== null && best.packPrice !== undefined
+        ? `Pack price ${money(best.packPrice, 2)}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(' · ')
   }
 
   function selectSupplierProduct(product: SupplierProduct) {
     const matchedItem =
+      product.linkedItem ||
+      (product.linkedItemId
+        ? l3Items.find((item) => item.id === product.linkedItemId)
+        : null) ||
       l3Items.find((item) => product.supplierSku && item.sku === product.supplierSku) ||
       l3Items.find((item) => item.name.toLowerCase().includes(product.name.toLowerCase())) ||
       l3Items.find((item) => product.name.toLowerCase().includes(item.name.toLowerCase()))
@@ -175,7 +222,7 @@ function L3SearchPicker({
       />
 
       {open && (l3Results.length > 0 || supplierResults.length > 0) ? (
-        <div className="absolute z-20 mt-1 max-h-80 w-full overflow-auto rounded-xl border bg-white shadow-lg">
+        <div className="absolute z-20 mt-1 max-h-96 w-full overflow-auto rounded-xl border bg-white shadow-lg">
           {l3Results.length > 0 ? (
             <div className="border-b px-3 py-2 text-xs font-semibold uppercase text-slate-500">
               Flowdish L3 Items
@@ -191,12 +238,28 @@ function L3SearchPicker({
                 setQuery(`${item.name} [${item.sku}]`)
                 setOpen(false)
               }}
-              className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-100"
+              className="block w-full border-b px-3 py-2 text-left text-sm hover:bg-slate-100 last:border-b-0"
             >
-              <div className="font-medium text-slate-900">
-                {item.name} [{item.sku}]
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-medium text-slate-900">
+                    {item.name} [{item.sku}]
+                  </div>
+                  <div className="text-xs text-slate-600">
+                    Unit: {item.unitType} · {supplierPriceDetails(item)}
+                  </div>
+                </div>
+
+                <div
+                  className={`shrink-0 rounded-lg px-2 py-1 text-xs font-semibold ${
+                    item.bestSupplierPrice?.unitPrice
+                      ? 'bg-green-50 text-green-700'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  {unitPriceLabel(item)}
+                </div>
               </div>
-              <div className="text-xs text-slate-600">Unit: {item.unitType}</div>
             </button>
           ))}
 
@@ -211,13 +274,24 @@ function L3SearchPicker({
               key={product.id}
               type="button"
               onClick={() => selectSupplierProduct(product)}
-              className="block w-full px-3 py-2 text-left text-sm hover:bg-green-50"
+              className="block w-full border-b px-3 py-2 text-left text-sm hover:bg-green-50 last:border-b-0"
             >
-              <div className="font-medium text-slate-900">{product.name}</div>
-              <div className="text-xs text-slate-700">
-                {product.supplier} · SKU {product.supplierSku || 'N/A'} · Pack{' '}
-                {product.packSize || 'N/A'} · Weight {product.weight || 'N/A'} · Pack Price{' '}
-                {money(product.packPrice)} · Unit Price {money(product.unitPrice)}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-medium text-slate-900">{product.name}</div>
+                  <div className="text-xs text-slate-700">
+                    {product.supplier} · SKU {product.supplierSku || 'N/A'} · Pack{' '}
+                    {product.packSize || 'N/A'} · Weight {product.weight || 'N/A'} · Pack Price{' '}
+                    {money(product.packPrice, 2)}
+                    {product.linkedItem ? (
+                      <> · Linked to {product.linkedItem.name} [{product.linkedItem.sku}]</>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="shrink-0 rounded-lg bg-green-50 px-2 py-1 text-xs font-semibold text-green-700">
+                  {product.unitPrice ? `${money(product.unitPrice, 4)} / supplier unit` : 'No unit price'}
+                </div>
               </div>
             </button>
           ))}
@@ -506,13 +580,13 @@ export default function BomPage() {
         </p>
 
         {error ? (
-          <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 whitespace-pre-wrap">
+          <div className="mt-4 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>
         ) : null}
 
         {message ? (
-          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700 whitespace-pre-wrap">
+          <div className="mt-4 whitespace-pre-wrap rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
             {message}
           </div>
         ) : null}
@@ -599,6 +673,10 @@ export default function BomPage() {
                 </button>
               </div>
 
+              <p className="mt-2 text-sm text-slate-600">
+                Search results show the best linked supplier price beside each L3 item.
+              </p>
+
               <div className="mt-4 space-y-3">
                 {l1ToL3Rows.map((row, index) => (
                   <div key={index} className="grid gap-3 md:grid-cols-[1fr_220px_100px]">
@@ -655,6 +733,10 @@ export default function BomPage() {
                   Add L3 Row
                 </button>
               </div>
+
+              <p className="mt-2 text-sm text-slate-600">
+                Search results show the best linked supplier price beside each L3 item, so chefs can choose cost-effective ingredients.
+              </p>
 
               <div className="mt-4 space-y-3">
                 {l2ToL3Rows.map((row, index) => (
