@@ -34,13 +34,13 @@ model Item {
   standardBatchOutput Float?
   createdAt           DateTime @default(now())
 
-  bomL1L2Parents BomL1L2[] @relation("BomL1L2_L1")
+  bomL1L2Parents  BomL1L2[] @relation("BomL1L2_L1")
   bomL1L2Children BomL1L2[] @relation("BomL1L2_L2")
 
-  bomL1L3Parents BomL1L3[] @relation("BomL1L3_L1")
+  bomL1L3Parents  BomL1L3[] @relation("BomL1L3_L1")
   bomL1L3Children BomL1L3[] @relation("BomL1L3_L3")
 
-  bomL2L3Parents BomL2L3[] @relation("BomL2L3_L2")
+  bomL2L3Parents  BomL2L3[] @relation("BomL2L3_L2")
   bomL2L3Children BomL2L3[] @relation("BomL2L3_L3")
 
   deliveries    Delivery[]
@@ -85,7 +85,7 @@ model BomL2L3 {
 }
 
 model Delivery {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   deliveredAt DateTime
   itemId      String
   qty         Float
@@ -94,7 +94,8 @@ model Delivery {
   price       Float?
   expiryAt    DateTime?
 
-  item Item @relation(fields: [itemId], references: [id])
+  item          Item           @relation(fields: [itemId], references: [id])
+  inventoryLots InventoryLot[]
 }
 
 model InventoryLot {
@@ -108,11 +109,16 @@ model InventoryLot {
   unitCost     Float               @default(0)
   createdAt    DateTime            @default(now())
 
+  deliveryId String?
+  delivery   Delivery? @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
+
   item Item @relation(fields: [itemId], references: [id])
+
+  @@index([deliveryId])
 }
 
 model PrepBatch {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   preparedAt DateTime
   itemId     String
   qtyOutput  Float

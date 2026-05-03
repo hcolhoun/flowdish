@@ -1,59 +1,259 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
-type InventoryRow = {
+type InventoryLotRow = {
+  id: string
   itemId: string
   sku: string
   name: string
-  unitType: string
-  totalQty: number
-  nextExpiry: string | null
+  unitType: 'g' | 'ml' | 'each'
+  qtyInitial: number
+  qtyRemaining: number
+  expiryAt: string | null
+  sourceType: 'DELIVERY' | 'PREP'
+  unitCost: number
+  createdAt: string
+  deliveryId: string | null
+  delivery: {
+    id: string
+    deliveredAt: string
+    supplier: string | null
+    price: number | null
+  } | null
 }
 
 export default function InventoryPage() {
-  const [rows, setRows] = useState<InventoryRow[]>([])
+  const [rows, setRows] = useState<InventoryLotRow[]>([])
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const totals = useMemo(() => {
+    const totalLots = rows.length
+    const totalValue = rows.reduce(
+      (sum, row) => sum + row.qtyRemaining * (row.unitCost ?? 0),
+      0
+    )
+
+    return { totalLots, totalValue }
+  }, [rows])
+
+  async function safeJson(res: Response) {
+    const text = await res.text()
+
+    try {
+      return JSON.parse(text)
+    } catch {
+      throw new Error(text.slice(0, 500))
+    }
+  }
+
+  function formatDate(value: string | null) {
+    if (!value) return ''
+    return new Date(value).toLocaleDateString('en-GB')
+  }
+
+  function formatQty(value: number) {
+    return Number.isInteger(value) ? String(value) : value.toFixed(3)
+  }
+
+  function money(value: number | null | undefined) {
+    return new Intl.NumberFormat('en-IE', {
+      style: 'currency',
+      currency: 'EUR',
+      maximumFractionDigits: 2,
+    }).format(value ?? 0)
+  }
 
   async function loadRows() {
-    const res = await fetch('/api/inventory')
-    const data = await res.json()
-    setRows(data)
+    try {
+      setLoading(true)
+      setError('')
+
+      const res = await fetch('/api/inventory', { cache: 'no-store' })
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to load inventory')
+      }
+
+      setRows(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
     loadRows()
   }, [])
 
+  async function handleDelete(row: InventoryLotRow) {
+    setError('')
+    setMessage('')
+
+    const deliveryLabel = row.delivery
+      ? `Delivery date: ${formatDate(row.delivery.deliveredAt)}`
+      : 'No linked delivery'
+
+    const confirmed = window.confirm(
+      `Delete this inventory lot?\n\n${row.name} [${row.sku}]\nQty: ${formatQty(
+        row.qtyRemaining
+      )} ${row.unitType}\n${deliveryLabel}\n\nThis removes stock from inventory only.`
+    )
+
+    if (!confirmed) return
+
+    try {
+      setDeletingId(row.id)
+
+      const res = await fetch(`/api/inventory?id=${row.id}`, {
+        method: 'DELETE',
+      })
+
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to delete inventory lot')
+      }
+
+      setMessage(`Inventory lot deleted for ${row.name}.`)
+      await loadRows()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 p-8">
-      <div className="mx-auto max-w-6xl">
-        <h1 className="text-3xl font-semibold">Inventory</h1>
+      <div className="mx-auto max-w-7xl">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-semibold text-slate-900">Inventory</h1>
+            <p className="mt-2 text-sm text-slate-600">
+              Lot-level stock created from deliveries and prep batches.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border bg-white px-5 py-3 text-sm text-slate-700 shadow-sm">
+            <div>
+              Lots: <span className="font-semibold text-slate-900">{totals.totalLots}</span>
+            </div>
+            <div>
+              Value:{' '}
+              <span className="font-semibold text-slate-900">{money(totals.totalValue)}</span>
+            </div>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="mt-4 rounded-xl border bg-white px-4 py-3 text-sm text-slate-600">
+            Loading inventory…
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className="mt-4 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        {message ? (
+          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        ) : null}
 
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <table className="w-full text-left">
-            <thead className="bg-slate-100 text-sm">
-              <tr>
-                <th className="px-4 py-3">SKU</th>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Qty On Hand</th>
-                <th className="px-4 py-3">Unit</th>
-                <th className="px-4 py-3">Next Expiry</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.itemId} className="border-t">
-                  <td className="px-4 py-3">{row.sku}</td>
-                  <td className="px-4 py-3">{row.name}</td>
-                  <td className="px-4 py-3">{row.totalQty}</td>
-                  <td className="px-4 py-3">{row.unitType}</td>
-                  <td className="px-4 py-3">
-                    {row.nextExpiry ? new Date(row.nextExpiry).toLocaleDateString('en-GB') : ''}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-slate-100 text-sm">
+                <tr>
+                  <th className="px-4 py-3 text-slate-800">SKU</th>
+                  <th className="px-4 py-3 text-slate-800">Name</th>
+                  <th className="px-4 py-3 text-slate-800">Qty Remaining</th>
+                  <th className="px-4 py-3 text-slate-800">Qty Initial</th>
+                  <th className="px-4 py-3 text-slate-800">Unit</th>
+                  <th className="px-4 py-3 text-slate-800">Source</th>
+                  <th className="px-4 py-3 text-slate-800">Delivery Date</th>
+                  <th className="px-4 py-3 text-slate-800">Supplier</th>
+                  <th className="px-4 py-3 text-slate-800">Expiry</th>
+                  <th className="px-4 py-3 text-slate-800">Unit Cost</th>
+                  <th className="px-4 py-3 text-slate-800">Lot Value</th>
+                  <th className="px-4 py-3 text-slate-800">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr className="border-t">
+                    <td className="px-4 py-3 text-slate-700" colSpan={12}>
+                      No inventory yet.
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map((row) => {
+                    const canDelete = row.qtyRemaining === row.qtyInitial
+
+                    return (
+                      <tr key={row.id} className="border-t">
+                        <td className="px-4 py-3 text-slate-800">{row.sku}</td>
+                        <td className="px-4 py-3 text-slate-800">{row.name}</td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {formatQty(row.qtyRemaining)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {formatQty(row.qtyInitial)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-800">{row.unitType}</td>
+                        <td className="px-4 py-3 text-slate-800">{row.sourceType}</td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {row.delivery ? formatDate(row.delivery.deliveredAt) : ''}
+                        </td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {row.delivery?.supplier ?? ''}
+                        </td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {formatDate(row.expiryAt)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {money(row.unitCost)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {money(row.qtyRemaining * row.unitCost)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(row)}
+                            disabled={!canDelete || deletingId === row.id}
+                            title={
+                              canDelete
+                                ? 'Delete this inventory lot'
+                                : 'Cannot delete because some stock from this lot has already been used'
+                            }
+                            className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {deletingId === row.id ? 'Deleting…' : 'Delete'}
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Inventory lots can only be deleted while none of their stock has been consumed. Deleting
+          inventory here does not delete the delivery record.
         </div>
       </div>
     </main>

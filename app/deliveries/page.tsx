@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 type Item = {
   id: string
@@ -26,6 +26,9 @@ export default function DeliveriesPage() {
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
 
   const [itemId, setItemId] = useState('')
+  const [itemSearch, setItemSearch] = useState('')
+  const [itemDropdownOpen, setItemDropdownOpen] = useState(false)
+
   const [deliveredAt, setDeliveredAt] = useState('')
   const [qty, setQty] = useState('')
   const [supplier, setSupplier] = useState('')
@@ -34,7 +37,22 @@ export default function DeliveriesPage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
+  const itemPickerRef = useRef<HTMLDivElement | null>(null)
+
   const selectedItem = items.find((item) => item.id === itemId)
+
+  const filteredItems = useMemo(() => {
+    const query = itemSearch.trim().toLowerCase()
+
+    if (!query) return items.slice(0, 50)
+
+    return items
+      .filter((item) => {
+        const haystack = `${item.name} ${item.sku}`.toLowerCase()
+        return haystack.includes(query)
+      })
+      .slice(0, 50)
+  }, [items, itemSearch])
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -89,12 +107,41 @@ export default function DeliveriesPage() {
     loadData()
   }, [])
 
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (!itemPickerRef.current) return
+
+      if (!itemPickerRef.current.contains(event.target as Node)) {
+        setItemDropdownOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  function selectItem(item: Item) {
+    setItemId(item.id)
+    setItemSearch(`${item.name} [${item.sku}]`)
+    setItemDropdownOpen(false)
+  }
+
+  function clearSelectedItem() {
+    setItemId('')
+    setItemSearch('')
+    setItemDropdownOpen(false)
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
 
     try {
       setError('')
       setMessage('')
+
+      if (!itemId) {
+        throw new Error('Select an L3 item.')
+      }
 
       const res = await fetch('/api/deliveries', {
         method: 'POST',
@@ -115,6 +162,7 @@ export default function DeliveriesPage() {
       }
 
       setItemId('')
+      setItemSearch('')
       setDeliveredAt(todayInputValue())
       setQty('')
       setSupplier('')
@@ -174,23 +222,74 @@ export default function DeliveriesPage() {
           onSubmit={handleSubmit}
           className="mt-8 grid gap-4 rounded-2xl border bg-white p-6 shadow-sm md:grid-cols-2"
         >
-          <div>
+          <div ref={itemPickerRef} className="relative">
             <label className="mb-1 block text-sm font-medium text-slate-900">
               L3 Item
             </label>
-            <select
-              value={itemId}
-              onChange={(e) => setItemId(e.target.value)}
-              className="w-full rounded-xl border px-3 py-2"
-              required
-            >
-              <option value="">Select L3 item</option>
-              {items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} [{item.sku}]
-                </option>
-              ))}
-            </select>
+
+            <div className="flex gap-2">
+              <input
+                value={itemSearch}
+                onChange={(e) => {
+                  setItemSearch(e.target.value)
+                  setItemId('')
+                  setItemDropdownOpen(true)
+                }}
+                onFocus={() => setItemDropdownOpen(true)}
+                className="w-full rounded-xl border px-3 py-2"
+                placeholder="Search by item name or SKU..."
+                autoComplete="off"
+                required
+              />
+
+              {itemId ? (
+                <button
+                  type="button"
+                  onClick={clearSelectedItem}
+                  className="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50"
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
+
+            <input type="hidden" value={itemId} required />
+
+            {itemDropdownOpen ? (
+              <div className="absolute z-20 mt-2 max-h-72 w-full overflow-y-auto rounded-xl border bg-white shadow-lg">
+                {filteredItems.length === 0 ? (
+                  <div className="px-4 py-3 text-sm text-slate-600">
+                    No matching L3 items found.
+                  </div>
+                ) : (
+                  filteredItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => selectItem(item)}
+                      className="block w-full border-b px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
+                    >
+                      <div className="font-medium text-slate-900">{item.name}</div>
+                      <div className="text-xs text-slate-500">
+                        {item.sku} · {item.unitType}
+                      </div>
+                    </button>
+                  ))
+                )}
+
+                {items.length > 50 && !itemSearch.trim() ? (
+                  <div className="border-t bg-slate-50 px-4 py-2 text-xs text-slate-500">
+                    Showing first 50 items. Type to search the full list.
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {selectedItem ? (
+              <p className="mt-2 text-sm text-slate-700">
+                Selected: {selectedItem.name} [{selectedItem.sku}]
+              </p>
+            ) : null}
           </div>
 
           <div>

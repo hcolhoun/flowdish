@@ -7,6 +7,7 @@ export async function addInventoryLot({
   expiryAt,
   sourceType,
   unitCost,
+  deliveryId = null,
 }: {
   itemId: string
   qty: number
@@ -14,6 +15,7 @@ export async function addInventoryLot({
   expiryAt: Date | null
   sourceType: 'DELIVERY' | 'PREP'
   unitCost: number
+  deliveryId?: string | null
 }) {
   return prisma.inventoryLot.create({
     data: {
@@ -24,7 +26,8 @@ export async function addInventoryLot({
       expiryAt,
       sourceType,
       unitCost,
-    },
+      deliveryId,
+    } as any,
   })
 }
 
@@ -33,7 +36,9 @@ export async function getInventorySummary() {
     where: {
       qtyRemaining: { gt: 0 },
     },
-    include: { item: true },
+    include: {
+      item: true,
+    },
     orderBy: [
       { expiryAt: 'asc' },
       { createdAt: 'asc' },
@@ -81,6 +86,69 @@ export async function getInventorySummary() {
   }
 
   return Array.from(map.values())
+}
+
+export async function getInventoryLots() {
+  const lots = (await prisma.inventoryLot.findMany({
+    where: {
+      qtyRemaining: { gt: 0 },
+    },
+    include: {
+      item: true,
+    },
+    orderBy: [
+      { expiryAt: 'asc' },
+      { createdAt: 'desc' },
+    ],
+  })) as any[]
+
+  const deliveryIds = Array.from(
+    new Set(
+      lots
+        .map((lot) => lot.deliveryId)
+        .filter((deliveryId): deliveryId is string => Boolean(deliveryId))
+    )
+  )
+
+  const deliveries =
+    deliveryIds.length > 0
+      ? await prisma.delivery.findMany({
+          where: {
+            id: {
+              in: deliveryIds,
+            },
+          },
+        })
+      : []
+
+  const deliveryMap = new Map(deliveries.map((delivery) => [delivery.id, delivery]))
+
+  return lots.map((lot) => {
+    const delivery = lot.deliveryId ? deliveryMap.get(lot.deliveryId) ?? null : null
+
+    return {
+      id: lot.id,
+      itemId: lot.itemId,
+      sku: lot.item.sku,
+      name: lot.item.name,
+      unitType: lot.unitType,
+      qtyInitial: lot.qtyInitial,
+      qtyRemaining: lot.qtyRemaining,
+      expiryAt: lot.expiryAt,
+      sourceType: lot.sourceType,
+      unitCost: lot.unitCost,
+      createdAt: lot.createdAt,
+      deliveryId: lot.deliveryId ?? null,
+      delivery: delivery
+        ? {
+            id: delivery.id,
+            deliveredAt: delivery.deliveredAt,
+            supplier: delivery.supplier,
+            price: delivery.price,
+          }
+        : null,
+    }
+  })
 }
 
 export async function getStockByItemId(itemId: string) {
