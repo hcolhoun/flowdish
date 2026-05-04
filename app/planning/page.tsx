@@ -39,6 +39,7 @@ type L2PlanRow = {
   itemId: string
   sku: string
   name: string
+  unitType: 'g' | 'ml' | 'each'
   requiredQty: number
   totalStock: number
   usableStock: number
@@ -98,7 +99,15 @@ export default function PlanningPage() {
   }
 
   function formatNumber(value: number) {
-    return Number.isInteger(value) ? String(value) : value.toFixed(2)
+    return Number.isInteger(value) ? String(value) : value.toFixed(3)
+  }
+
+  function statusClass(status: string) {
+    if (status === 'PREP REQUIRED') return 'bg-red-50 text-red-700'
+    if (status === 'EXPIRED STOCK') return 'bg-red-50 text-red-700'
+    if (status === 'EXPIRING BEFORE FORECAST ENDS') return 'bg-amber-50 text-amber-700'
+    if (status === 'USE SOON') return 'bg-amber-50 text-amber-700'
+    return 'bg-green-50 text-green-700'
   }
 
   async function loadData() {
@@ -291,12 +300,7 @@ export default function PlanningPage() {
         ) : null}
 
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-xl font-semibold text-slate-900">New Forecast</h2>
-            <p className="text-sm text-slate-600">
-              Forecast L1 dish demand, then use it to calculate L2 prep requirements.
-            </p>
-          </div>
+          <h2 className="text-xl font-semibold text-slate-900">New Forecast</h2>
 
           <form onSubmit={saveForecast} className="mt-6">
             <div className="grid gap-4 md:grid-cols-3">
@@ -405,12 +409,7 @@ export default function PlanningPage() {
         </section>
 
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-xl font-semibold text-slate-900">Generate Prep Plan</h2>
-            <p className="text-sm text-slate-600">
-              Select an existing forecast to calculate makeable L1 quantities and L2 prep shortfalls.
-            </p>
-          </div>
+          <h2 className="text-xl font-semibold text-slate-900">Generate Prep Plan</h2>
 
           <div className="mt-6 flex flex-col gap-3 md:flex-row">
             <select
@@ -483,6 +482,9 @@ export default function PlanningPage() {
             <section className="rounded-2xl border bg-white shadow-sm">
               <div className="border-b px-6 py-4">
                 <h2 className="text-xl font-semibold text-slate-900">L2 Prep List</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Required and shortfall quantities are shown in each L2 item’s base unit.
+                </p>
               </div>
 
               <div className="overflow-x-auto">
@@ -492,16 +494,11 @@ export default function PlanningPage() {
                       <th className="px-4 py-3 text-slate-800">SKU</th>
                       <th className="px-4 py-3 text-slate-800">Name</th>
                       <th className="px-4 py-3 text-slate-800">Required</th>
-                      <th className="px-4 py-3 text-slate-800">Total Stock</th>
                       <th className="px-4 py-3 text-slate-800">Usable Stock</th>
-                      <th className="px-4 py-3 text-slate-800">Expiring Before End</th>
-                      <th className="px-4 py-3 text-slate-800">Expired</th>
                       <th className="px-4 py-3 text-slate-800">Shortfall</th>
                       <th className="px-4 py-3 text-slate-800">Std Batch Output</th>
                       <th className="px-4 py-3 text-slate-800">Batches</th>
-                      <th className="px-4 py-3 text-slate-800">Shelf Life</th>
                       <th className="px-4 py-3 text-slate-800">Next Expiry</th>
-                      <th className="px-4 py-3 text-slate-800">Days Left</th>
                       <th className="px-4 py-3 text-slate-800">Status</th>
                     </tr>
                   </thead>
@@ -509,7 +506,7 @@ export default function PlanningPage() {
                   <tbody>
                     {plan.l2Plan.length === 0 ? (
                       <tr className="border-t">
-                        <td className="px-4 py-3 text-slate-700" colSpan={14}>
+                        <td className="px-4 py-3 text-slate-700" colSpan={9}>
                           No L2 prep required.
                         </td>
                       </tr>
@@ -518,24 +515,31 @@ export default function PlanningPage() {
                         <tr key={row.itemId} className="border-t">
                           <td className="px-4 py-3 text-slate-800">{row.sku}</td>
                           <td className="px-4 py-3 text-slate-800">{row.name}</td>
-                          <td className="px-4 py-3 text-slate-800">{formatNumber(row.requiredQty)}</td>
-                          <td className="px-4 py-3 text-slate-800">{formatNumber(row.totalStock)}</td>
-                          <td className="px-4 py-3 text-slate-800">{formatNumber(row.usableStock)}</td>
                           <td className="px-4 py-3 text-slate-800">
-                            {formatNumber(row.expiringBeforeForecastEnd)}
+                            {formatNumber(row.requiredQty)} {row.unitType}
                           </td>
-                          <td className="px-4 py-3 text-slate-800">{formatNumber(row.expiredStock)}</td>
-                          <td className="px-4 py-3 text-slate-800">{formatNumber(row.shortfallQty)}</td>
                           <td className="px-4 py-3 text-slate-800">
-                            {row.standardBatchOutput === null ? '' : formatNumber(row.standardBatchOutput)}
+                            {formatNumber(row.usableStock)} {row.unitType}
+                          </td>
+                          <td className="px-4 py-3 text-slate-800">
+                            {formatNumber(row.shortfallQty)} {row.unitType}
+                          </td>
+                          <td className="px-4 py-3 text-slate-800">
+                            {row.standardBatchOutput === null
+                              ? ''
+                              : `${formatNumber(row.standardBatchOutput)} ${row.unitType}`}
                           </td>
                           <td className="px-4 py-3 text-slate-800">{row.batchesToPrep}</td>
-                          <td className="px-4 py-3 text-slate-800">{row.shelfLifeDays ?? ''}</td>
                           <td className="px-4 py-3 text-slate-800">
                             {row.nextExpiry ? formatDate(row.nextExpiry) : ''}
                           </td>
-                          <td className="px-4 py-3 text-slate-800">{row.daysToNextExpiry ?? ''}</td>
-                          <td className="px-4 py-3 text-slate-800">{row.expiryStatus}</td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`rounded-lg px-2 py-1 text-sm font-semibold ${statusClass(row.expiryStatus)}`}
+                            >
+                              {row.expiryStatus}
+                            </span>
+                          </td>
                         </tr>
                       ))
                     )}

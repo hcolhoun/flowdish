@@ -21,6 +21,17 @@ type Delivery = {
   item: Item
 }
 
+type LatestSupplierProduct = {
+  id: string
+  supplier: string
+  supplierSku: string | null
+  name: string
+  packSize: string | null
+  weight: string | null
+  packPrice: number | null
+  unitPrice: number | null
+}
+
 export default function DeliveriesPage() {
   const [items, setItems] = useState<Item[]>([])
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
@@ -33,9 +44,13 @@ export default function DeliveriesPage() {
   const [qty, setQty] = useState('')
   const [supplier, setSupplier] = useState('')
   const [totalCost, setTotalCost] = useState('')
+  const [latestSupplierProduct, setLatestSupplierProduct] = useState<LatestSupplierProduct | null>(null)
+  const [priceManuallyEdited, setPriceManuallyEdited] = useState(false)
+  const [supplierManuallyEdited, setSupplierManuallyEdited] = useState(false)
 
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [loadingPrice, setLoadingPrice] = useState(false)
 
   const itemPickerRef = useRef<HTMLDivElement | null>(null)
 
@@ -53,6 +68,11 @@ export default function DeliveriesPage() {
       })
       .slice(0, 50)
   }, [items, itemSearch])
+
+  const calculatedUnitCost =
+    Number(qty) > 0 && Number(totalCost) > 0
+      ? Number(totalCost) / Number(qty)
+      : null
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -72,12 +92,17 @@ export default function DeliveriesPage() {
     return new Date(value).toLocaleDateString('en-GB')
   }
 
-  function money(value: number | null | undefined) {
+  function money(value: number | null | undefined, maximumFractionDigits = 2) {
     return new Intl.NumberFormat('en-IE', {
       style: 'currency',
       currency: 'EUR',
-      maximumFractionDigits: 2,
+      maximumFractionDigits,
     }).format(value ?? 0)
+  }
+
+  function formatUnitPrice(value: number | null | undefined, unitType?: string) {
+    if (value === null || value === undefined) return ''
+    return `${money(value, 5)} / ${unitType || 'unit'}`
   }
 
   async function loadData() {
@@ -120,16 +145,67 @@ export default function DeliveriesPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  useEffect(() => {
+    if (!latestSupplierProduct?.unitPrice) return
+    if (priceManuallyEdited) return
+    if (!qty || Number(qty) <= 0) return
+
+    const calculated = latestSupplierProduct.unitPrice * Number(qty)
+    setTotalCost(calculated.toFixed(2))
+  }, [qty, latestSupplierProduct?.unitPrice, priceManuallyEdited])
+
+  async function loadLatestSupplierPrice(nextItemId: string) {
+    try {
+      setLoadingPrice(true)
+      setLatestSupplierProduct(null)
+
+      const res = await fetch(`/api/supplier-products/latest?itemId=${nextItemId}`, {
+        cache: 'no-store',
+      })
+
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to load latest supplier price')
+      }
+
+      const product = data.supplierProduct as LatestSupplierProduct | null
+      setLatestSupplierProduct(product)
+
+      if (product) {
+        if (!supplierManuallyEdited) {
+          setSupplier(product.supplier)
+        }
+
+        if (!priceManuallyEdited && qty && Number(qty) > 0 && product.unitPrice) {
+          setTotalCost((Number(qty) * product.unitPrice).toFixed(2))
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoadingPrice(false)
+    }
+  }
+
   function selectItem(item: Item) {
     setItemId(item.id)
     setItemSearch(`${item.name} [${item.sku}]`)
     setItemDropdownOpen(false)
+    setPriceManuallyEdited(false)
+    setSupplierManuallyEdited(false)
+    loadLatestSupplierPrice(item.id)
   }
 
   function clearSelectedItem() {
     setItemId('')
     setItemSearch('')
     setItemDropdownOpen(false)
+    setLatestSupplierProduct(null)
+    setSupplier('')
+    setTotalCost('')
+    setPriceManuallyEdited(false)
+    setSupplierManuallyEdited(false)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -167,6 +243,9 @@ export default function DeliveriesPage() {
       setQty('')
       setSupplier('')
       setTotalCost('')
+      setLatestSupplierProduct(null)
+      setPriceManuallyEdited(false)
+      setSupplierManuallyEdited(false)
       setMessage('Delivery saved.')
       loadData()
     } catch (err) {
@@ -195,11 +274,6 @@ export default function DeliveriesPage() {
     setMessage('Delivery deleted.')
     loadData()
   }
-
-  const calculatedUnitCost =
-    Number(qty) > 0 && Number(totalCost) > 0
-      ? Number(totalCost) / Number(qty)
-      : null
 
   return (
     <main className="min-h-screen bg-slate-50 p-8">
@@ -233,6 +307,7 @@ export default function DeliveriesPage() {
                 onChange={(e) => {
                   setItemSearch(e.target.value)
                   setItemId('')
+                  setLatestSupplierProduct(null)
                   setItemDropdownOpen(true)
                 }}
                 onFocus={() => setItemDropdownOpen(true)}
@@ -290,6 +365,24 @@ export default function DeliveriesPage() {
                 Selected: {selectedItem.name} [{selectedItem.sku}]
               </p>
             ) : null}
+
+            {loadingPrice ? (
+              <p className="mt-2 text-sm text-slate-600">Loading latest supplier price…</p>
+            ) : null}
+
+            {selectedItem && latestSupplierProduct ? (
+              <div className="mt-2 rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                Latest supplier price: {latestSupplierProduct.supplier} ·{' '}
+                {formatUnitPrice(latestSupplierProduct.unitPrice, selectedItem.unitType)}
+                {latestSupplierProduct.packPrice ? (
+                  <> · Pack {money(latestSupplierProduct.packPrice)}</>
+                ) : null}
+              </div>
+            ) : selectedItem && !loadingPrice ? (
+              <div className="mt-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                No linked supplier price found. Enter supplier and total cost manually.
+              </div>
+            ) : null}
           </div>
 
           <div>
@@ -325,7 +418,10 @@ export default function DeliveriesPage() {
             </label>
             <input
               value={supplier}
-              onChange={(e) => setSupplier(e.target.value)}
+              onChange={(e) => {
+                setSupplier(e.target.value)
+                setSupplierManuallyEdited(true)
+              }}
               className="w-full rounded-xl border px-3 py-2"
             />
           </div>
@@ -338,14 +434,17 @@ export default function DeliveriesPage() {
               type="number"
               step="0.01"
               value={totalCost}
-              onChange={(e) => setTotalCost(e.target.value)}
+              onChange={(e) => {
+                setTotalCost(e.target.value)
+                setPriceManuallyEdited(true)
+              }}
               className="w-full rounded-xl border px-3 py-2"
               required
             />
 
             {selectedItem && calculatedUnitCost !== null ? (
               <p className="mt-2 text-sm text-slate-700">
-                Calculated cost: {money(calculatedUnitCost)} per {selectedItem.unitType}
+                Calculated cost: {money(calculatedUnitCost, 5)} per {selectedItem.unitType}
               </p>
             ) : null}
           </div>
@@ -403,7 +502,7 @@ export default function DeliveriesPage() {
                       <td className="px-4 py-3 text-slate-800">{delivery.supplier ?? ''}</td>
                       <td className="px-4 py-3 text-slate-800">{money(delivery.price)}</td>
                       <td className="px-4 py-3 text-slate-800">
-                        {money(unitCost)} / {delivery.unitType}
+                        {money(unitCost, 5)} / {delivery.unitType}
                       </td>
                       <td className="px-4 py-3 text-slate-800">
                         {formatDate(delivery.expiryAt)}

@@ -173,7 +173,9 @@ export async function GET(req: Request) {
 
       let expiryStatus = 'OK'
 
-      if (stock.expiredStock > 0) {
+      if (shortfallQty > 0) {
+        expiryStatus = 'PREP REQUIRED'
+      } else if (stock.expiredStock > 0) {
         expiryStatus = 'EXPIRED STOCK'
       } else if (stock.expiringBeforeForecastEnd > 0) {
         expiryStatus = 'EXPIRING BEFORE FORECAST ENDS'
@@ -185,6 +187,7 @@ export async function GET(req: Request) {
         itemId: item.id,
         sku: item.sku,
         name: item.name,
+        unitType: item.unitType,
         requiredQty,
         totalStock: stock.totalStock,
         usableStock: stock.usableStock,

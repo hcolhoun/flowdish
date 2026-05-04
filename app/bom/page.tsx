@@ -18,6 +18,8 @@ type Item = {
   name: string
   itemType: 'L1' | 'L2' | 'L3'
   unitType: 'g' | 'ml' | 'each'
+  sellingPrice?: number | null
+  standardBatchOutput?: number | null
   bestSupplierPrice?: BestSupplierPrice | null
 }
 
@@ -37,6 +39,31 @@ type SupplierProduct = {
 type ChildRow = {
   childId: string
   qty: string
+}
+
+type PriceInfo = {
+  unitPrice: number
+  supplier: string
+  supplierSku: string | null
+  productName: string
+  packPrice: number | null
+  weight: string | null
+}
+
+type L2CostInfo = {
+  itemId: string
+  sku: string
+  name: string
+  unitType: string
+  standardBatchOutput: number | null
+  batchCost: number
+  costPerUnit: number | null
+  missingCostCount: number
+}
+
+type BomCostingData = {
+  l3PricesByItemId: Record<string, PriceInfo>
+  l2CostsByItemId: Record<string, L2CostInfo>
 }
 
 function QtyInput({
@@ -167,7 +194,7 @@ function L3SearchPicker({
       return 'No supplier price'
     }
 
-    return `${money(best.unitPrice, 4)} / ${item.unitType}`
+    return `${money(best.unitPrice, 5)} / ${item.unitType}`
   }
 
   function supplierPriceDetails(item: Item) {
@@ -290,7 +317,7 @@ function L3SearchPicker({
                 </div>
 
                 <div className="shrink-0 rounded-lg bg-green-50 px-2 py-1 text-xs font-semibold text-green-700">
-                  {product.unitPrice ? `${money(product.unitPrice, 4)} / supplier unit` : 'No unit price'}
+                  {product.unitPrice ? `${money(product.unitPrice, 5)} / supplier unit` : 'No unit price'}
                 </div>
               </div>
             </button>
@@ -303,8 +330,14 @@ function L3SearchPicker({
 
 export default function BomPage() {
   const [items, setItems] = useState<Item[]>([])
+  const [costingData, setCostingData] = useState<BomCostingData>({
+    l3PricesByItemId: {},
+    l2CostsByItemId: {},
+  })
+
   const [parentId, setParentId] = useState('')
   const [loading, setLoading] = useState(false)
+  const [costingLoading, setCostingLoading] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -321,6 +354,39 @@ export default function BomPage() {
     }
   }
 
+  function money(value: number | null | undefined, maximumFractionDigits = 2) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return '—'
+    }
+
+    return new Intl.NumberFormat('en-IE', {
+      style: 'currency',
+      currency: 'EUR',
+      maximumFractionDigits,
+    }).format(value)
+  }
+
+  function numberLabel(value: number | null | undefined, digits = 3) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return '—'
+    }
+
+    return Number.isInteger(value) ? String(value) : value.toFixed(digits)
+  }
+
+  function percent(value: number | null | undefined) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return '—'
+    }
+
+    return `${value.toFixed(1)}%`
+  }
+
+  function getQty(value: string) {
+    const number = Number(value)
+    return Number.isFinite(number) ? number : 0
+  }
+
   async function loadItems() {
     const res = await fetch('/api/items', { cache: 'no-store' })
     const data = await safeJson(res)
@@ -328,6 +394,34 @@ export default function BomPage() {
     if (!res.ok) throw new Error(data?.error || 'Failed to load items')
     setItems(data)
   }
+
+  async function loadCosting() {
+    try {
+      setCostingLoading(true)
+
+      const res = await fetch('/api/bom-costing', { cache: 'no-store' })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to load BOM costing')
+
+      setCostingData(data)
+    } finally {
+      setCostingLoading(false)
+    }
+  }
+
+  async function loadInitialData() {
+    try {
+      setError('')
+      await Promise.all([loadItems(), loadCosting()])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    }
+  }
+
+  useEffect(() => {
+    loadInitialData()
+  }, [])
 
   const parentItem = useMemo(
     () => items.find((item) => item.id === parentId) ?? null,
@@ -338,20 +432,156 @@ export default function BomPage() {
   const l2Items = items.filter((item) => item.itemType === 'L2')
   const l3Items = items.filter((item) => item.itemType === 'L3')
 
-  function getUnit(itemId: string) {
-    return items.find((item) => item.id === itemId)?.unitType ?? ''
+  function getItem(itemId: string) {
+    return items.find((item) => item.id === itemId) ?? null
   }
 
-  useEffect(() => {
-    ;(async () => {
-      try {
-        setError('')
-        await loadItems()
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error')
+  function getUnit(itemId: string) {
+    return getItem(itemId)?.unitType ?? ''
+  }
+
+  function getL3Price(itemId: string) {
+    return costingData.l3PricesByItemId[itemId] ?? null
+  }
+
+  function getL2Cost(itemId: string) {
+    return costingData.l2CostsByItemId[itemId] ?? null
+  }
+
+  const l2LiveCosting = useMemo(() => {
+    if (!parentItem || parentItem.itemType !== 'L2') {
+      return null
+    }
+
+    let totalBatchCost = 0
+    let missingCostCount = 0
+
+    const rows = l2ToL3Rows.map((row) => {
+      const item = getItem(row.childId)
+      const qty = getQty(row.qty)
+      const price = row.childId ? getL3Price(row.childId) : null
+      const lineCost = price ? qty * price.unitPrice : null
+
+      if (row.childId && !price) {
+        missingCostCount++
       }
-    })()
-  }, [])
+
+      if (lineCost !== null) {
+        totalBatchCost += lineCost
+      }
+
+      return {
+        row,
+        item,
+        qty,
+        price,
+        lineCost,
+      }
+    })
+
+    const standardBatchOutput = parentItem.standardBatchOutput ?? null
+
+    const costPerUnit =
+      standardBatchOutput && standardBatchOutput > 0
+        ? totalBatchCost / standardBatchOutput
+        : null
+
+    if (!standardBatchOutput || standardBatchOutput <= 0) {
+      missingCostCount++
+    }
+
+    return {
+      rows,
+      totalBatchCost,
+      standardBatchOutput,
+      costPerUnit,
+      missingCostCount,
+    }
+  }, [parentItem, l2ToL3Rows, costingData, items])
+
+  const l1LiveCosting = useMemo(() => {
+    if (!parentItem || parentItem.itemType !== 'L1') {
+      return null
+    }
+
+    let totalCogs = 0
+    let missingCostCount = 0
+
+    const directRows = l1ToL3Rows.map((row) => {
+      const item = getItem(row.childId)
+      const qty = getQty(row.qty)
+      const price = row.childId ? getL3Price(row.childId) : null
+      const lineCost = price ? qty * price.unitPrice : null
+
+      if (row.childId && !price) {
+        missingCostCount++
+      }
+
+      if (lineCost !== null) {
+        totalCogs += lineCost
+      }
+
+      return {
+        row,
+        item,
+        qty,
+        price,
+        lineCost,
+      }
+    })
+
+    const prepRows = l1ToL2Rows.map((row) => {
+      const item = getItem(row.childId)
+      const qty = getQty(row.qty)
+      const cost = row.childId ? getL2Cost(row.childId) : null
+      const lineCost = cost?.costPerUnit !== null && cost?.costPerUnit !== undefined
+        ? qty * cost.costPerUnit
+        : null
+
+      if (row.childId && (!cost || cost.costPerUnit === null)) {
+        missingCostCount++
+      }
+
+      if (cost?.missingCostCount) {
+        missingCostCount += cost.missingCostCount
+      }
+
+      if (lineCost !== null) {
+        totalCogs += lineCost
+      }
+
+      return {
+        row,
+        item,
+        qty,
+        cost,
+        lineCost,
+      }
+    })
+
+    const sellingPrice = parentItem.sellingPrice ?? null
+    const grossProfit =
+      sellingPrice !== null && sellingPrice > 0 ? sellingPrice - totalCogs : null
+    const grossMargin =
+      sellingPrice !== null && sellingPrice > 0 && grossProfit !== null
+        ? (grossProfit / sellingPrice) * 100
+        : null
+    const foodCostPercent =
+      sellingPrice !== null && sellingPrice > 0
+        ? (totalCogs / sellingPrice) * 100
+        : null
+
+    return {
+      directRows,
+      prepRows,
+      totalCogs,
+      sellingPrice,
+      grossProfit,
+      grossMargin,
+      foodCostPercent,
+      missingCostCount,
+    }
+  }, [parentItem, l1ToL2Rows, l1ToL3Rows, costingData, items])
 
   useEffect(() => {
     if (!parentItem) {
@@ -520,6 +750,8 @@ export default function BomPage() {
       if (!l1l2Res.ok) throw new Error(l1l2Data?.error || 'Failed to save L1 → L2')
       if (!l1l3Res.ok) throw new Error(l1l3Data?.error || 'Failed to save L1 → L3')
 
+      await loadCosting()
+
       setMessage(
         `BOM saved. Showing ${payloadL1L2.rows.length} L2 row(s) and ${payloadL1L3.rows.length} L3 row(s).`
       )
@@ -564,6 +796,8 @@ export default function BomPage() {
 
       if (!res.ok) throw new Error(data?.error || 'Failed to save L2 → L3')
 
+      await loadCosting()
+
       setMessage(`BOM saved. Showing ${payload.rows.length} L3 row(s).`)
     } catch (err) {
       setMessage('')
@@ -573,11 +807,21 @@ export default function BomPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-8">
-      <div className="mx-auto max-w-6xl">
-        <h1 className="text-3xl font-semibold text-slate-900">BOM Builder</h1>
-        <p className="mt-2 text-slate-800">
-          Select a parent item and manage its child components.
-        </p>
+      <div className="mx-auto max-w-7xl">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="text-3xl font-semibold text-slate-900">BOM Builder</h1>
+            <p className="mt-2 text-slate-800">
+              Build recipes in base units. L3 prices are €/g, €/ml, or €/each.
+            </p>
+          </div>
+
+          {costingLoading ? (
+            <div className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-600">
+              Loading costing…
+            </div>
+          ) : null}
+        </div>
 
         {error ? (
           <div className="mt-4 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -615,11 +859,123 @@ export default function BomPage() {
 
         {loading ? <div className="mt-6 text-sm text-slate-700">Loading BOM…</div> : null}
 
+        {parentItem?.itemType === 'L2' && l2LiveCosting ? (
+          <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-xl font-semibold text-slate-900">
+                L2 Cost Summary — {parentItem.name}
+              </h2>
+              <p className="text-sm text-slate-600">
+                Standard batch output is taken from the L2 item setup.
+              </p>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-4">
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Standard Batch Output</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {numberLabel(l2LiveCosting.standardBatchOutput)} {parentItem.unitType}
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Total Batch Cost</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {money(l2LiveCosting.totalBatchCost)}
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Cost Per {parentItem.unitType}</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {l2LiveCosting.costPerUnit === null
+                    ? '—'
+                    : `${money(l2LiveCosting.costPerUnit, 5)} / ${parentItem.unitType}`}
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Warnings</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {l2LiveCosting.missingCostCount === 0
+                    ? 'Complete'
+                    : `${l2LiveCosting.missingCostCount} missing`}
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {parentItem?.itemType === 'L1' && l1LiveCosting ? (
+          <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-xl font-semibold text-slate-900">
+                L1 COGS & Margin — {parentItem.name}
+              </h2>
+              <p className="text-sm text-slate-600">
+                Uses direct L3 costs plus L2 component costs.
+              </p>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-6">
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Selling Price</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {money(l1LiveCosting.sellingPrice)}
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Total COGS</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {money(l1LiveCosting.totalCogs)}
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Food Cost %</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {percent(l1LiveCosting.foodCostPercent)}
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Gross Profit</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {money(l1LiveCosting.grossProfit)}
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Gross Margin</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {percent(l1LiveCosting.grossMargin)}
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Warnings</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {l1LiveCosting.missingCostCount === 0
+                    ? 'Complete'
+                    : `${l1LiveCosting.missingCostCount} missing`}
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         {parentItem?.itemType === 'L1' ? (
           <div className="mt-8 space-y-8">
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-slate-900">L1 → L2</h2>
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">L1 → L2</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Enter how much of each L2 prep item is used per dish, in the L2 item’s base unit.
+                  </p>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => addRow(setL1ToL2Rows)}
@@ -630,40 +986,69 @@ export default function BomPage() {
               </div>
 
               <div className="mt-4 space-y-3">
-                {l1ToL2Rows.map((row, index) => (
-                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_220px_100px]">
-                    <L2Picker
-                      selectedId={row.childId}
-                      l2Items={l2Items}
-                      onSelect={(id) =>
-                        updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'childId', id)
-                      }
-                    />
+                {l1ToL2Rows.map((row, index) => {
+                  const item = getItem(row.childId)
+                  const cost = getL2Cost(row.childId)
+                  const qty = getQty(row.qty)
+                  const lineCost =
+                    cost?.costPerUnit !== null && cost?.costPerUnit !== undefined
+                      ? qty * cost.costPerUnit
+                      : null
 
-                    <QtyInput
-                      value={row.qty}
-                      unit={getUnit(row.childId)}
-                      placeholder="Qty per portion"
-                      onChange={(value) =>
-                        updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'qty', value)
-                      }
-                    />
-
-                    <button
-                      type="button"
-                      onClick={() => removeRow(l1ToL2Rows, setL1ToL2Rows, index)}
-                      className="rounded-xl border px-3 py-2"
+                  return (
+                    <div
+                      key={index}
+                      className="grid gap-3 md:grid-cols-[1fr_220px_150px_150px_100px]"
                     >
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                      <L2Picker
+                        selectedId={row.childId}
+                        l2Items={l2Items}
+                        onSelect={(id) =>
+                          updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'childId', id)
+                        }
+                      />
+
+                      <QtyInput
+                        value={row.qty}
+                        unit={getUnit(row.childId)}
+                        placeholder="Qty per dish"
+                        onChange={(value) =>
+                          updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'qty', value)
+                        }
+                      />
+
+                      <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                        {cost?.costPerUnit !== null && cost?.costPerUnit !== undefined && item
+                          ? `${money(cost.costPerUnit, 5)} / ${item.unitType}`
+                          : 'Missing cost'}
+                      </div>
+
+                      <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
+                        {money(lineCost)}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => removeRow(l1ToL2Rows, setL1ToL2Rows, index)}
+                        className="rounded-xl border px-3 py-2"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )
+                })}
               </div>
             </section>
 
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-slate-900">L1 → L3</h2>
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">L1 → L3</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Enter direct ingredient quantities per dish.
+                  </p>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => addRow(setL1ToL3Rows)}
@@ -673,40 +1058,54 @@ export default function BomPage() {
                 </button>
               </div>
 
-              <p className="mt-2 text-sm text-slate-600">
-                Search results show the best linked supplier price beside each L3 item.
-              </p>
-
               <div className="mt-4 space-y-3">
-                {l1ToL3Rows.map((row, index) => (
-                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_220px_100px]">
-                    <L3SearchPicker
-                      selectedId={row.childId}
-                      l3Items={l3Items}
-                      onError={setError}
-                      onSelect={(id) =>
-                        updateRow(l1ToL3Rows, setL1ToL3Rows, index, 'childId', id)
-                      }
-                    />
+                {l1ToL3Rows.map((row, index) => {
+                  const item = getItem(row.childId)
+                  const price = getL3Price(row.childId)
+                  const qty = getQty(row.qty)
+                  const lineCost = price ? qty * price.unitPrice : null
 
-                    <QtyInput
-                      value={row.qty}
-                      unit={getUnit(row.childId)}
-                      placeholder="Qty per portion"
-                      onChange={(value) =>
-                        updateRow(l1ToL3Rows, setL1ToL3Rows, index, 'qty', value)
-                      }
-                    />
-
-                    <button
-                      type="button"
-                      onClick={() => removeRow(l1ToL3Rows, setL1ToL3Rows, index)}
-                      className="rounded-xl border px-3 py-2"
+                  return (
+                    <div
+                      key={index}
+                      className="grid gap-3 md:grid-cols-[1fr_220px_150px_150px_100px]"
                     >
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                      <L3SearchPicker
+                        selectedId={row.childId}
+                        l3Items={l3Items}
+                        onError={setError}
+                        onSelect={(id) =>
+                          updateRow(l1ToL3Rows, setL1ToL3Rows, index, 'childId', id)
+                        }
+                      />
+
+                      <QtyInput
+                        value={row.qty}
+                        unit={getUnit(row.childId)}
+                        placeholder="Qty per dish"
+                        onChange={(value) =>
+                          updateRow(l1ToL3Rows, setL1ToL3Rows, index, 'qty', value)
+                        }
+                      />
+
+                      <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                        {price && item ? `${money(price.unitPrice, 5)} / ${item.unitType}` : 'Missing price'}
+                      </div>
+
+                      <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
+                        {money(lineCost)}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => removeRow(l1ToL3Rows, setL1ToL3Rows, index)}
+                        className="rounded-xl border px-3 py-2"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )
+                })}
               </div>
             </section>
 
@@ -724,7 +1123,13 @@ export default function BomPage() {
           <div className="mt-8 space-y-8">
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-slate-900">L2 → L3</h2>
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">L2 → L3</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Enter the ingredients used to make one standard batch.
+                  </p>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => addRow(setL2ToL3Rows)}
@@ -734,40 +1139,54 @@ export default function BomPage() {
                 </button>
               </div>
 
-              <p className="mt-2 text-sm text-slate-600">
-                Search results show the best linked supplier price beside each L3 item, so chefs can choose cost-effective ingredients.
-              </p>
-
               <div className="mt-4 space-y-3">
-                {l2ToL3Rows.map((row, index) => (
-                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_220px_100px]">
-                    <L3SearchPicker
-                      selectedId={row.childId}
-                      l3Items={l3Items}
-                      onError={setError}
-                      onSelect={(id) =>
-                        updateRow(l2ToL3Rows, setL2ToL3Rows, index, 'childId', id)
-                      }
-                    />
+                {l2ToL3Rows.map((row, index) => {
+                  const item = getItem(row.childId)
+                  const price = getL3Price(row.childId)
+                  const qty = getQty(row.qty)
+                  const lineCost = price ? qty * price.unitPrice : null
 
-                    <QtyInput
-                      value={row.qty}
-                      unit={getUnit(row.childId)}
-                      placeholder="Qty per batch"
-                      onChange={(value) =>
-                        updateRow(l2ToL3Rows, setL2ToL3Rows, index, 'qty', value)
-                      }
-                    />
-
-                    <button
-                      type="button"
-                      onClick={() => removeRow(l2ToL3Rows, setL2ToL3Rows, index)}
-                      className="rounded-xl border px-3 py-2"
+                  return (
+                    <div
+                      key={index}
+                      className="grid gap-3 md:grid-cols-[1fr_220px_150px_150px_100px]"
                     >
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                      <L3SearchPicker
+                        selectedId={row.childId}
+                        l3Items={l3Items}
+                        onError={setError}
+                        onSelect={(id) =>
+                          updateRow(l2ToL3Rows, setL2ToL3Rows, index, 'childId', id)
+                        }
+                      />
+
+                      <QtyInput
+                        value={row.qty}
+                        unit={getUnit(row.childId)}
+                        placeholder="Qty per batch"
+                        onChange={(value) =>
+                          updateRow(l2ToL3Rows, setL2ToL3Rows, index, 'qty', value)
+                        }
+                      />
+
+                      <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                        {price && item ? `${money(price.unitPrice, 5)} / ${item.unitType}` : 'Missing price'}
+                      </div>
+
+                      <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
+                        {money(lineCost)}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => removeRow(l2ToL3Rows, setL2ToL3Rows, index)}
+                        className="rounded-xl border px-3 py-2"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )
+                })}
               </div>
             </section>
 
