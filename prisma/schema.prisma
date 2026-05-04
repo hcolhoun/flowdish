@@ -190,4 +190,6 @@ model SupplierProduct {
 
   linkedItemId String?
   linkedItem   Item?   @relation("SupplierProduct_LinkedItem", fields: [linkedItemId], references: [id])
+
+  @@index([supplier, supplierSku])
 }
