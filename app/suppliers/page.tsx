@@ -140,8 +140,16 @@ export default function SuppliersPage() {
 
     const text = `${product.weight || ''} ${product.packSize || ''}`.toLowerCase()
 
-    if (text.includes('kg') || text.includes('g')) return `${money(product.unitPrice, 6)} / g`
-    if (text.includes('ltr') || text.includes('litre') || text.includes('l') || text.includes('ml')) {
+    if (text.includes('kg') || text.includes('g')) {
+      return `${money(product.unitPrice, 6)} / g`
+    }
+
+    if (
+      text.includes('ltr') ||
+      text.includes('litre') ||
+      text.includes('l') ||
+      text.includes('ml')
+    ) {
       return `${money(product.unitPrice, 6)} / ml`
     }
 
@@ -218,7 +226,7 @@ export default function SuppliersPage() {
     if (Array.isArray(data)) {
       return {
         ready: data.map((row) => ({ ...row, status: 'ready' as const })),
-        rejected: [],
+        rejected: [] as ImportRow[],
       }
     }
 
@@ -449,6 +457,43 @@ export default function SuppliersPage() {
 
       setMessage('Supplier product updated.')
       cancelEditProduct()
+      await loadProducts()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    }
+  }
+
+  async function deleteProduct(product: SupplierProduct) {
+    const confirmed = window.confirm(
+      `Delete supplier product?\n\n${product.name}\nSKU: ${
+        product.supplierSku ?? 'N/A'
+      }\nSupplier: ${
+        product.supplier
+      }\n\nThis will delete the supplier product only. It will not delete the linked L3 item.`
+    )
+
+    if (!confirmed) return
+
+    try {
+      setError('')
+      setMessage('')
+
+      const res = await fetch(`/api/supplier-products?id=${product.id}`, {
+        method: 'DELETE',
+      })
+
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to delete supplier product')
+      }
+
+      setMessage('Supplier product deleted.')
+
+      if (editingProductId === product.id) {
+        cancelEditProduct()
+      }
+
       await loadProducts()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -833,7 +878,8 @@ export default function SuppliersPage() {
                 ) : (
                   visibleProducts.map((product) => {
                     const isEditingProduct = editingProductId === product.id
-                    const isEditingL3 = product.linkedItem && editingL3Id === product.linkedItem.id
+                    const isEditingL3 =
+                      Boolean(product.linkedItem) && editingL3Id === product.linkedItem?.id
 
                     return (
                       <tr key={product.id} className="border-t align-top">
@@ -850,7 +896,10 @@ export default function SuppliersPage() {
                               <input
                                 value={editingProduct.supplier}
                                 onChange={(e) =>
-                                  setEditingProduct({ ...editingProduct, supplier: e.target.value })
+                                  setEditingProduct({
+                                    ...editingProduct,
+                                    supplier: e.target.value,
+                                  })
                                 }
                                 className="w-40 rounded-lg border px-2 py-1 text-sm"
                               />
@@ -1042,7 +1091,7 @@ export default function SuppliersPage() {
                                   onClick={cancelEditProduct}
                                   className="rounded-lg border px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
                                 >
-                                  Cancel
+                                  Cancel Product
                                 </button>
                               </>
                             ) : (
@@ -1083,6 +1132,16 @@ export default function SuppliersPage() {
                                   Edit L3
                                 </button>
                               )
+                            ) : null}
+
+                            {!isEditingProduct && !isEditingL3 ? (
+                              <button
+                                type="button"
+                                onClick={() => deleteProduct(product)}
+                                className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                              >
+                                Delete Product
+                              </button>
                             ) : null}
                           </div>
                         </td>
