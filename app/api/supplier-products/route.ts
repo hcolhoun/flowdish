@@ -259,24 +259,90 @@ export async function PATCH(req: Request) {
     const body = await req.json()
 
     const id = String(body.id || '')
-    const linkedItemId = body.linkedItemId ? String(body.linkedItemId) : null
 
     if (!id) {
       return NextResponse.json({ error: 'Missing supplier product id' }, { status: 400 })
     }
 
+    const existing = await prisma.supplierProduct.findUnique({
+      where: { id },
+    })
+
+    if (!existing) {
+      return NextResponse.json({ error: 'Supplier product not found' }, { status: 404 })
+    }
+
+    const updateData: any = {}
+
+    if ('supplier' in body) updateData.supplier = String(body.supplier || '')
+    if ('supplierSku' in body) {
+      updateData.supplierSku = body.supplierSku ? String(body.supplierSku) : null
+    }
+    if ('name' in body) updateData.name = String(body.name || '')
+    if ('packSize' in body) updateData.packSize = body.packSize ? String(body.packSize) : null
+    if ('weight' in body) updateData.weight = body.weight ? String(body.weight) : null
+    if ('packPrice' in body) {
+      updateData.packPrice =
+        body.packPrice === null || body.packPrice === undefined || body.packPrice === ''
+          ? null
+          : Number(body.packPrice)
+    }
+    if ('unitPrice' in body) {
+      updateData.unitPrice =
+        body.unitPrice === null || body.unitPrice === undefined || body.unitPrice === ''
+          ? null
+          : Number(body.unitPrice)
+    }
+
+    // Important:
+    // Only change linkedItemId if the frontend explicitly sends linkedItemId.
+    // Do NOT default it to null, or product edits will unlink the L3.
+    if ('linkedItemId' in body) {
+      updateData.linkedItemId = body.linkedItemId ? String(body.linkedItemId) : null
+    }
+
     const product = await prisma.supplierProduct.update({
       where: { id },
-      data: { linkedItemId },
+      data: updateData,
       include: { linkedItem: true },
     })
 
     return NextResponse.json(product)
   } catch (error) {
     console.error('PATCH /api/supplier-products failed:', error)
-
     return NextResponse.json(
-      { error: 'Failed to update supplier product link' },
+      { error: 'Failed to update supplier product' },
+      { status: 500 }
+    )
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url)
+    const id = searchParams.get('id')
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing supplier product id' }, { status: 400 })
+    }
+
+    const product = await prisma.supplierProduct.findUnique({
+      where: { id },
+    })
+
+    if (!product) {
+      return NextResponse.json({ error: 'Supplier product not found' }, { status: 404 })
+    }
+
+    await prisma.supplierProduct.delete({
+      where: { id },
+    })
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('DELETE /api/supplier-products failed:', error)
+    return NextResponse.json(
+      { error: 'Failed to delete supplier product' },
       { status: 500 }
     )
   }
