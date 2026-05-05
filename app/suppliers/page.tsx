@@ -25,6 +25,14 @@ type SupplierProduct = {
   linkedItem?: Item | null
 }
 
+type SaveStats = {
+  createdCount: number
+  updatedCount: number
+  linkedCount: number
+  skippedCount: number
+  duplicateInUploadCount: number
+}
+
 export default function SuppliersPage() {
   const [supplier, setSupplier] = useState('Caterway')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -38,9 +46,13 @@ export default function SuppliersPage() {
   const [fileName, setFileName] = useState('')
   const [saving, setSaving] = useState(false)
   const [parsing, setParsing] = useState(false)
+  const [parseCount, setParseCount] = useState<number | null>(null)
+  const [parseDuplicateCount, setParseDuplicateCount] = useState<number | null>(null)
+  const [saveStats, setSaveStats] = useState<SaveStats | null>(null)
 
   async function safeJson(res: Response) {
     const text = await res.text()
+
     try {
       return JSON.parse(text)
     } catch {
@@ -66,6 +78,21 @@ export default function SuppliersPage() {
   useEffect(() => {
     loadProducts()
   }, [])
+
+  useEffect(() => {
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      if (!saving && !parsing) return
+
+      e.preventDefault()
+      e.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [saving, parsing])
 
   const suppliers = useMemo(() => {
     return Array.from(new Set(products.map((p) => p.supplier))).sort()
@@ -100,6 +127,9 @@ export default function SuppliersPage() {
     setPreview([])
     setSelectedFile(null)
     setFileName('')
+    setParseCount(null)
+    setParseDuplicateCount(null)
+    setSaveStats(null)
 
     const file = e.target.files?.[0]
     if (!file) return
@@ -114,6 +144,9 @@ export default function SuppliersPage() {
       setError('')
       setMessage('')
       setPreview([])
+      setParseCount(null)
+      setParseDuplicateCount(null)
+      setSaveStats(null)
       setParsing(true)
 
       if (!selectedFile) {
@@ -125,6 +158,8 @@ export default function SuppliersPage() {
         setError('Sysco parser is not built yet.')
         return
       }
+
+      setMessage('Parsing price file. Do not leave this page until parsing is complete.')
 
       const formData = new FormData()
       formData.append('file', selectedFile)
@@ -140,14 +175,20 @@ export default function SuppliersPage() {
         throw new Error(data?.error || 'Failed to parse file')
       }
 
-      setPreview(data)
+      const parsedProducts = Array.isArray(data) ? data : data.products ?? []
 
-      if (data.length === 0) {
+      setPreview(parsedProducts)
+      setParseCount(data.count ?? parsedProducts.length)
+      setParseDuplicateCount(data.duplicateCount ?? 0)
+
+      if (parsedProducts.length === 0) {
         setError('No rows were parsed from the PDF.')
         return
       }
 
-      setMessage(`${data.length} products parsed. Review below, then click Save Products.`)
+      setMessage(
+        `${parsedProducts.length} products parsed. ${data.duplicateCount ?? 0} duplicate SKU row(s) were collapsed. Review below, then click Save Products.`
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -159,6 +200,7 @@ export default function SuppliersPage() {
     try {
       setError('')
       setMessage('')
+      setSaveStats(null)
       setSaving(true)
 
       if (preview.length === 0) {
@@ -166,7 +208,9 @@ export default function SuppliersPage() {
         return
       }
 
-      setMessage('Saving supplier products and creating L3 items. This may take a moment...')
+      setMessage(
+        'Saving supplier products and creating/linking L3 items. Do not leave this page until complete.'
+      )
 
       const res = await fetch('/api/supplier-products', {
         method: 'POST',
@@ -180,13 +224,26 @@ export default function SuppliersPage() {
         throw new Error(data?.error || 'Failed to save supplier products')
       }
 
+      const stats = {
+        createdCount: data.createdCount ?? 0,
+        updatedCount: data.updatedCount ?? 0,
+        linkedCount: data.linkedCount ?? 0,
+        skippedCount: data.skippedCount ?? 0,
+        duplicateInUploadCount: data.duplicateInUploadCount ?? 0,
+      }
+
+      setSaveStats(stats)
+
       setMessage(
-        `${preview.length} supplier products saved. ${data.linkedCount ?? 0} linked to L3 items.`
+        `Import complete. Created ${stats.createdCount}, updated ${stats.updatedCount}, linked ${stats.linkedCount}, skipped ${stats.skippedCount}. ${stats.duplicateInUploadCount} duplicate upload row(s) were collapsed.`
       )
 
       setPreview([])
       setSelectedFile(null)
       setFileName('')
+      setParseCount(null)
+      setParseDuplicateCount(null)
+
       await loadProducts()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -195,12 +252,25 @@ export default function SuppliersPage() {
     }
   }
 
-  function money(value: number | null | undefined) {
+  function money(value: number | null | undefined, maximumFractionDigits = 4) {
     return new Intl.NumberFormat('en-IE', {
       style: 'currency',
       currency: 'EUR',
-      maximumFractionDigits: 4,
+      maximumFractionDigits,
     }).format(value ?? 0)
+  }
+
+  function baseUnitLabel(product: SupplierProduct | any) {
+    const linkedUnit = product.linkedItem?.unitType
+
+    if (linkedUnit) return linkedUnit
+
+    const text = `${product.name || ''} ${product.packSize || ''} ${product.weight || ''}`.toLowerCase()
+
+    if (/\d+(\.\d+)?\s?(kg|g)\b/.test(text)) return 'g'
+    if (/\d+(\.\d+)?\s?(l|ml)\b/.test(text)) return 'ml'
+
+    return 'each'
   }
 
   const visibleProducts = filteredProducts.slice(0, 100)
@@ -215,20 +285,45 @@ export default function SuppliersPage() {
         </p>
 
         {error ? (
-          <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 whitespace-pre-wrap">
+          <div className="mt-4 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>
         ) : null}
 
         {message ? (
-          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+          <div className="mt-4 whitespace-pre-wrap rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
             {message}
+          </div>
+        ) : null}
+
+        {parsing || saving ? (
+          <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Import is running. Do not close or leave this page until it completes.
+          </div>
+        ) : null}
+
+        {parsing ? (
+          <div className="mt-4 rounded-xl border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+            Parsing PDF. This can take a few seconds. Please wait...
           </div>
         ) : null}
 
         {saving ? (
           <div className="mt-4 rounded-xl border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-            Creating L3 items and linking supplier products. Please wait...
+            Saving supplier products and creating/updating L3 items. This can take 20–90 seconds depending on file size.
+          </div>
+        ) : null}
+
+        {parseCount !== null ? (
+          <div className="mt-4 rounded-xl border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+            Parse complete: {parseCount} product(s) found. {parseDuplicateCount ?? 0} duplicate SKU row(s) collapsed.
+          </div>
+        ) : null}
+
+        {saveStats ? (
+          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800">
+            Save complete: {saveStats.createdCount} created, {saveStats.updatedCount} updated,{' '}
+            {saveStats.linkedCount} linked, {saveStats.skippedCount} skipped.
           </div>
         ) : null}
 
@@ -240,8 +335,17 @@ export default function SuppliersPage() {
               <label className="mb-1 block text-sm font-medium text-slate-900">Supplier</label>
               <select
                 value={supplier}
-                onChange={(e) => setSupplier(e.target.value)}
-                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+                onChange={(e) => {
+                  setSupplier(e.target.value)
+                  setPreview([])
+                  setParseCount(null)
+                  setParseDuplicateCount(null)
+                  setSaveStats(null)
+                  setError('')
+                  setMessage('')
+                }}
+                disabled={parsing || saving}
+                className="w-full rounded-xl border px-3 py-2 text-slate-900 disabled:bg-slate-100"
               >
                 <option value="Caterway">Caterway</option>
                 <option value="Sysco">Sysco</option>
@@ -254,7 +358,8 @@ export default function SuppliersPage() {
                 type="file"
                 accept=".pdf,.csv,.txt"
                 onChange={handleFile}
-                className="w-full rounded-xl border bg-white px-3 py-2 text-slate-900 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-white"
+                disabled={parsing || saving}
+                className="w-full rounded-xl border bg-white px-3 py-2 text-slate-900 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-white disabled:bg-slate-100"
               />
               {fileName ? (
                 <p className="mt-2 text-sm text-slate-700">Selected: {fileName}</p>
@@ -266,8 +371,8 @@ export default function SuppliersPage() {
             <button
               type="button"
               onClick={handleParse}
-              disabled={parsing || saving}
-              className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:bg-slate-400"
+              disabled={parsing || saving || !selectedFile}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
             >
               {parsing ? 'Parsing...' : 'Parse Price File'}
             </button>
@@ -275,10 +380,10 @@ export default function SuppliersPage() {
             <button
               type="button"
               onClick={handleSave}
-              disabled={preview.length === 0 || saving}
-              className="rounded-xl bg-green-700 px-5 py-3 text-white disabled:bg-slate-400"
+              disabled={preview.length === 0 || saving || parsing}
+              className="rounded-xl bg-green-700 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
             >
-              {saving ? 'Creating L3s...' : 'Save Products + Create L3s'}
+              {saving ? 'Saving import...' : 'Save Products + Create/Update L3s'}
             </button>
           </div>
         </section>
@@ -305,18 +410,26 @@ export default function SuppliersPage() {
               </thead>
 
               <tbody>
-                {preview.slice(0, 100).map((product, index) => (
-                  <tr key={index} className="border-t">
-                    <td className="px-4 py-3 text-slate-800">{product.supplier}</td>
-                    <td className="px-4 py-3 text-slate-800">{product.name}</td>
-                    <td className="px-4 py-3 text-slate-800">{product.weight ?? ''}</td>
-                    <td className="px-4 py-3 text-slate-800">{money(product.packPrice)}</td>
-                    <td className="px-4 py-3 text-slate-800">
-                      {product.unitPrice ? money(product.unitPrice) : ''}
+                {preview.length === 0 ? (
+                  <tr className="border-t">
+                    <td className="px-4 py-3 text-slate-700" colSpan={6}>
+                      No parsed rows yet.
                     </td>
-                    <td className="px-4 py-3 text-slate-800">{product.supplierSku ?? ''}</td>
                   </tr>
-                ))}
+                ) : (
+                  preview.slice(0, 100).map((product, index) => (
+                    <tr key={`${product.supplierSku || product.name}-${index}`} className="border-t">
+                      <td className="px-4 py-3 text-slate-800">{product.supplier}</td>
+                      <td className="px-4 py-3 text-slate-800">{product.name}</td>
+                      <td className="px-4 py-3 text-slate-800">{product.weight ?? ''}</td>
+                      <td className="px-4 py-3 text-slate-800">{money(product.packPrice, 2)}</td>
+                      <td className="px-4 py-3 text-slate-800">
+                        {product.unitPrice ? `${money(product.unitPrice, 5)} / ${baseUnitLabel(product)}` : ''}
+                      </td>
+                      <td className="px-4 py-3 text-slate-800">{product.supplierSku ?? ''}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -373,34 +486,48 @@ export default function SuppliersPage() {
                   <th className="px-4 py-3 text-slate-800">Supplier Product</th>
                   <th className="px-4 py-3 text-slate-800">SKU</th>
                   <th className="px-4 py-3 text-slate-800">Pack</th>
-                  <th className="px-4 py-3 text-slate-800">Price</th>
+                  <th className="px-4 py-3 text-slate-800">Pack Price</th>
+                  <th className="px-4 py-3 text-slate-800">Unit Price</th>
                   <th className="px-4 py-3 text-slate-800">Linked L3</th>
                 </tr>
               </thead>
 
               <tbody>
-                {visibleProducts.map((product) => (
-                  <tr key={product.id} className="border-t">
-                    <td className="px-4 py-3 text-slate-800">
-                      <div className="font-medium">{product.name}</div>
-                      <div className="text-xs text-slate-600">{product.supplier}</div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-800">{product.supplierSku ?? ''}</td>
-                    <td className="px-4 py-3 text-slate-800">
-                      {[product.packSize, product.weight].filter(Boolean).join(' / ')}
-                    </td>
-                    <td className="px-4 py-3 text-slate-800">{money(product.packPrice)}</td>
-                    <td className="px-4 py-3 text-slate-800">
-                      {product.linkedItem ? (
-                        <span className="text-green-700">
-                          {product.linkedItem.name} [{product.linkedItem.sku}]
-                        </span>
-                      ) : (
-                        <span className="text-red-700">Not linked</span>
-                      )}
+                {visibleProducts.length === 0 ? (
+                  <tr className="border-t">
+                    <td className="px-4 py-3 text-slate-700" colSpan={6}>
+                      No supplier products found.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  visibleProducts.map((product) => (
+                    <tr key={product.id} className="border-t">
+                      <td className="px-4 py-3 text-slate-800">
+                        <div className="font-medium">{product.name}</div>
+                        <div className="text-xs text-slate-600">{product.supplier}</div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-800">{product.supplierSku ?? ''}</td>
+                      <td className="px-4 py-3 text-slate-800">
+                        {[product.packSize, product.weight].filter(Boolean).join(' / ')}
+                      </td>
+                      <td className="px-4 py-3 text-slate-800">{money(product.packPrice, 2)}</td>
+                      <td className="px-4 py-3 text-slate-800">
+                        {product.unitPrice
+                          ? `${money(product.unitPrice, 5)} / ${baseUnitLabel(product)}`
+                          : ''}
+                      </td>
+                      <td className="px-4 py-3 text-slate-800">
+                        {product.linkedItem ? (
+                          <span className="text-green-700">
+                            {product.linkedItem.name} [{product.linkedItem.sku}]
+                          </span>
+                        ) : (
+                          <span className="text-red-700">Not linked</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
