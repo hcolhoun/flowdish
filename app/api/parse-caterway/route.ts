@@ -43,22 +43,59 @@ const PACK_WORDS = [
   'Sack',
 ]
 
-const BAD_TEXT_PATTERNS = [
-  /Product Price List/i,
-  /Product Family/i,
-  /Product Item Description/i,
-  /Pack Size/i,
-  /Order Product Code/i,
-  /Unit or Kilo/i,
-  /The Buyer/i,
-  /Printed\s*:/i,
-  /Page \d+ of \d+/i,
-  /Tel\s*:/i,
-  /Denotes a Product/i,
-  /Please Contact/i,
-  /Sales Office/i,
-  /Further Information/i,
-  /\bst April 2026\b/i,
+const CATEGORY_WORDS = [
+  'Vegetables',
+  'Fruits',
+  'Salads',
+  'Prepared Produce',
+  'Herbs Fresh',
+  'Washed Salads',
+  'Dairy',
+  'Herb & Spice Dried',
+  'Savory Grocery',
+  'Savoury Grocery',
+  'Bakery',
+  'Frozen',
+  'Dry Goods',
+  'Green Cuisine',
+  'Citrus',
+  'Root',
+  'Stone',
+  'Berries',
+  'Apples',
+  'Cress',
+  'Leaf baby',
+  'Lettuce Specialty',
+  'Mushrooms Wild',
+  'Chinese veg',
+  'Exotic',
+  'Cucurbits',
+  'Capsicum',
+  'Brassica',
+  'Beans & Peas',
+  'Baby veg',
+  'Asparagus',
+  'Artichoke',
+  'Fresh Juice',
+  'Prep Fruit',
+  'Prep Veges',
+  'Prep Potato',
+  'Prep Turnip',
+  'Prep Onion',
+  'Prep Parsnip',
+  'Prep Mixes',
+  'Prep Celeriac',
+  'Dried Various',
+  'Dried Bulk',
+  'Oils & Vinegar',
+  'Tinned/Bottled Veg',
+  'Tinned/Bottled',
+  'Mayonaise and Sauces',
+  'Salts & Peppers',
+  '100g Herbs',
+  'g Herbs',
+  'KILO',
+  'Herbs',
 ]
 
 function cleanLine(value: string) {
@@ -68,6 +105,14 @@ function cleanLine(value: string) {
     .replace(/[‘’]/g, "'")
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function cleanPdfText(value: string) {
+  return value
+    .replace(/\u00a0/g, ' ')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\r/g, '\n')
 }
 
 function parseMoney(value: string | null | undefined) {
@@ -83,25 +128,19 @@ function parseMoney(value: string | null | undefined) {
   return Number.isFinite(number) ? number : null
 }
 
-function looksLikeBadBoilerplate(value: string) {
-  return BAD_TEXT_PATTERNS.some((pattern) => pattern.test(value))
-}
-
 function looksLikeDecimalPrice(value: string) {
   return /^\d+\.\d{1,4}$/.test(value.trim())
 }
 
-function looksLikeValidSku(value: string) {
+function looksLikeValidSku(value: string | null | undefined) {
+  if (!value) return false
+
   const cleaned = value.trim()
 
   if (!cleaned) return false
   if (looksLikeDecimalPrice(cleaned)) return false
   if (!/^[A-Z0-9][A-Z0-9./-]{2,}$/i.test(cleaned)) return false
 
-  /*
-    Caterway does have a few numeric SKUs like 7428 / 7744.
-    Allow integer-only codes only when they are at least 4 digits.
-  */
   if (/^\d+$/.test(cleaned)) {
     return cleaned.length >= 4
   }
@@ -161,10 +200,45 @@ function inferPackSize(value: string) {
   return null
 }
 
-function stripKnownPrefixes(value: string) {
+function stripBoilerplate(value: string) {
   return cleanLine(value)
-    .replace(/^(Vegetables|Fruits|Salads|Prepared Produce|Herbs Fresh|Washed Salads|Dairy|Herb & Spice Dried|Savory Grocery|Savoury Grocery|Bakery|Frozen|Dry Goods|Green Cuisine|Citrus|Root|Stone|Berries|Apples|Cress|Leaf baby|Lettuce Specialty|Mushrooms Wild|Chinese veg|Exotic|Cucurbits|Capsicum|Brassica|Beans & Peas|Baby veg|Asparagus|Artichoke|Fresh Juice|Prep Fruit|Prep Veges|Prep Potato|Prep Turnip|Prep Onion|Prep Parsnip|Prep Mixes|Prep Celeriac|Dried Various|Dried Bulk|Oils & Vinegar|Tinned\/Bottled Veg|Tinned\/Bottled|Mayonaise and Sauces|Salts & Peppers|100g Herbs|g Herbs|KILO|Herbs)\s*/i, '')
+    .replace(/Product Price List/gi, ' ')
+    .replace(/Product Family/gi, ' ')
+    .replace(/Product Item Description/gi, ' ')
+    .replace(/Pack Size/gi, ' ')
+    .replace(/Order Product Code/gi, ' ')
+    .replace(/Unit or Kilo/gi, ' ')
+    .replace(/The Buyer[^\n]*/gi, ' ')
+    .replace(/Printed\s*:[^\n]*/gi, ' ')
+    .replace(/Page \d+ of \d+/gi, ' ')
+    .replace(/Tel\s*:[^\n]*/gi, ' ')
+    .replace(/\[A\]\s*Denotes a Product Item that Contains Allergens or is an Allergen/gi, ' ')
+    .replace(/Please Contact the Sales Office if you require Further Information/gi, ' ')
+    .replace(/\d{1,2}(st|nd|rd|th)\s+[A-Za-z]+\s+\d{4}\.?/gi, ' ')
+    .replace(/\s+/g, ' ')
     .trim()
+}
+
+function stripCategoryPrefixes(value: string) {
+  let cleaned = cleanLine(value)
+
+  let changed = true
+
+  while (changed) {
+    changed = false
+
+    for (const category of CATEGORY_WORDS) {
+      const escaped = category.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+      const regex = new RegExp(`^${escaped}\\s*`, 'i')
+
+      if (regex.test(cleaned)) {
+        cleaned = cleanLine(cleaned.replace(regex, ''))
+        changed = true
+      }
+    }
+  }
+
+  return cleaned
 }
 
 function stripAllergenMarker(value: string) {
@@ -194,16 +268,34 @@ function removePackNoiseFromEnd(name: string) {
   return cleaned
 }
 
+function stripEarlierMergedRows(value: string) {
+  let cleaned = cleanLine(value)
+
+  /*
+    If the candidate contains an earlier unpriced row like:
+    "Beans Borlotti Bag25kg DBEABOR1 Beans Haricot BagCoco Blanc5kg"
+    strip everything up to the previous SKU.
+  */
+  cleaned = cleaned.replace(/^.*\b[A-Z][A-Z0-9./-]{2,}\s+(?=[A-Za-z])/, '')
+
+  /*
+    If the prefix is still very long, use the tail. Product descriptions in this file
+    are normally short; very long prefixes usually mean merged PDF text.
+  */
+  if (cleaned.length > 160) {
+    cleaned = cleanLine(cleaned.slice(-160))
+    cleaned = cleaned.replace(/^.*\b[A-Z][A-Z0-9./-]{2,}\s+(?=[A-Za-z])/, '')
+  }
+
+  return cleaned
+}
+
 function hasSkuInsideName(value: string) {
   const tokens = cleanLine(value)
     .split(/\s+/)
     .map((token) => token.replace(/^[^\w]+|[^\w./-]+$/g, ''))
     .filter(Boolean)
 
-  /*
-    If a parsed name still contains a code like DBEABOR1 or TOMV10,
-    it is almost certainly a merged row.
-  */
   return tokens.some((token) => looksLikeValidSku(token))
 }
 
@@ -217,18 +309,16 @@ function looksLikePackOnlyName(value: string) {
   )
 }
 
-function hasEnoughHumanText(value: string) {
-  const words = cleanLine(value)
-    .split(/\s+/)
-    .filter((word) => /[A-Za-z]{3,}/.test(word))
-
-  return words.length >= 2
+function hasHumanText(value: string) {
+  return /[A-Za-z]{3,}/.test(value)
 }
 
 function cleanProductName(rawName: string, weight: string | null) {
   let name = cleanLine(rawName)
 
-  name = stripKnownPrefixes(name)
+  name = stripBoilerplate(name)
+  name = stripEarlierMergedRows(name)
+  name = stripCategoryPrefixes(name)
   name = stripAllergenMarker(name)
   name = removeWeightFromName(name, weight)
   name = removePackNoiseFromEnd(name)
@@ -248,51 +338,41 @@ function validateParsedProduct(product: ParsedProduct, raw: string): string | nu
   if (!looksLikeValidSku(product.supplierSku)) return 'invalid supplier SKU'
   if (looksLikeDecimalPrice(product.supplierSku)) return 'supplier SKU looks like price'
 
-  if (!product.name || product.name.length < 6) return 'name too short'
+  if (!product.name || product.name.length < 3) return 'name too short'
+  if (!hasHumanText(product.name)) return 'name does not contain product text'
   if (looksLikePackOnlyName(product.name)) return 'name is pack-only'
-  if (!hasEnoughHumanText(product.name)) return 'name does not contain enough product text'
-  if (looksLikeBadBoilerplate(product.name)) return 'name contains boilerplate'
   if (hasSkuInsideName(product.name)) return 'name contains another SKU, likely merged row'
 
   if (!product.packPrice || product.packPrice <= 0) return 'missing pack price'
 
-  /*
-    Reject obvious merged rows where multiple euro signs appear in the raw line.
-    A valid row should have pack price and maybe one unit/kilo price.
-  */
   const euroCount = (raw.match(/€/g) ?? []).length
   if (euroCount > 2) return 'too many prices in candidate row'
 
   return null
 }
 
-function parsePricedLine(rawLine: string): { product: ParsedProduct | null; rejection?: RejectedRow } {
-  const line = cleanLine(rawLine)
+function parseCandidate(rawCandidate: string): { product: ParsedProduct | null; rejection?: RejectedRow } {
+  const candidate = cleanLine(rawCandidate)
 
-  if (!line.includes('€')) {
+  if (!candidate.includes('€')) {
     return { product: null }
   }
 
-  if (looksLikeBadBoilerplate(line)) {
-    return {
-      product: null,
-      rejection: { reason: 'boilerplate/header/footer', raw: line },
-    }
-  }
-
-  const moneyMatches = Array.from(line.matchAll(/€\s?\d+(?:,\d{3})*(?:\.\d{1,2})?/g))
+  const moneyMatches = Array.from(
+    candidate.matchAll(/€\s?\d+(?:,\d{3})*(?:\.\d{1,2})?/g)
+  )
 
   if (moneyMatches.length < 1) {
     return {
       product: null,
-      rejection: { reason: 'no valid price token', raw: line },
+      rejection: { reason: 'no valid price token', raw: candidate },
     }
   }
 
   if (moneyMatches.length > 2) {
     return {
       product: null,
-      rejection: { reason: 'too many price tokens', raw: line },
+      rejection: { reason: 'too many price tokens', raw: candidate },
     }
   }
 
@@ -302,12 +382,12 @@ function parsePricedLine(rawLine: string): { product: ParsedProduct | null; reje
   if (firstMoneyIndex <= 0) {
     return {
       product: null,
-      rejection: { reason: 'price appears before product name', raw: line },
+      rejection: { reason: 'price appears before product name', raw: candidate },
     }
   }
 
-  const beforePriceRaw = line.slice(0, firstMoneyIndex).trim()
-  const afterPriceRaw = line.slice(firstMoneyIndex + firstMoney.length).trim()
+  const beforePriceRaw = candidate.slice(0, firstMoneyIndex).trim()
+  const afterPriceRaw = candidate.slice(firstMoneyIndex + firstMoney.length).trim()
 
   const packPrice = parseMoney(firstMoney)
   const unitPrice = moneyMatches[1] ? parseMoney(moneyMatches[1][0]) : null
@@ -316,25 +396,13 @@ function parsePricedLine(rawLine: string): { product: ParsedProduct | null; reje
   if (!supplierSku) {
     return {
       product: null,
-      rejection: { reason: 'missing final supplier SKU', raw: line },
+      rejection: { reason: 'missing final supplier SKU', raw: candidate },
     }
   }
 
-  /*
-    Reject lines where the supposed SKU occurs before the price as well.
-    That usually means this candidate merged an unpriced previous row with the next priced row.
-  */
-  if (new RegExp(`\\b${supplierSku.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(beforePriceRaw)) {
-    return {
-      product: null,
-      rejection: { reason: 'supplier SKU appears before price, likely merged row', raw: line },
-    }
-  }
-
-  const beforePrice = stripKnownPrefixes(beforePriceRaw)
-  const weight = normaliseWeight(extractWeight(beforePrice))
-  const packSize = inferPackSize(beforePrice)
-  const name = cleanProductName(beforePrice, weight)
+  const weight = normaliseWeight(extractWeight(beforePriceRaw))
+  const packSize = inferPackSize(beforePriceRaw)
+  const name = cleanProductName(beforePriceRaw, weight)
 
   const product: ParsedProduct = {
     supplier: 'Caterway',
@@ -346,29 +414,64 @@ function parsePricedLine(rawLine: string): { product: ParsedProduct | null; reje
     unitPrice,
   }
 
-  const rejectionReason = validateParsedProduct(product, line)
+  const rejectionReason = validateParsedProduct(product, candidate)
 
   if (rejectionReason) {
     return {
       product: null,
-      rejection: { reason: rejectionReason, raw: line },
+      rejection: { reason: rejectionReason, raw: candidate },
     }
   }
 
   return { product }
 }
 
-function buildCandidateLines(text: string) {
-  /*
-    IMPORTANT:
-    We intentionally do NOT join neighbouring lines anymore.
-    Joining caused garbage merged products and polluted L3s.
-    This parser now prefers missing a few products over creating bad L3s.
-  */
+function buildLineCandidates(text: string) {
   return text
     .split(/\r?\n/)
     .map((line: string) => cleanLine(line))
     .filter(Boolean)
+    .filter((line: string) => line.includes('€'))
+}
+
+function buildCompactCandidates(text: string) {
+  const compact = cleanLine(text.replace(/\r?\n/g, ' '))
+  const candidates: string[] = []
+
+  /*
+    Find every "€price optional-unit-price SKU" ending, then take the text
+    between the previous product end and this price as the product description.
+  */
+  const priceSkuRegex =
+    /€\s?\d+(?:,\d{3})*(?:\.\d{1,2})?(?:\s+(?:€\s?\d+(?:,\d{3})*(?:\.\d{1,2})?|---))?\s+([A-Z0-9][A-Z0-9./-]{2,})\b/gi
+
+  let previousEnd = 0
+  let match: RegExpExecArray | null
+
+  while ((match = priceSkuRegex.exec(compact)) !== null) {
+    const priceStart = match.index
+    const priceAndSku = match[0]
+
+    let prefix = compact.slice(previousEnd, priceStart)
+
+    /*
+      Keep only the useful tail. This avoids carrying page/category text
+      forward into the product name.
+    */
+    if (prefix.length > 220) {
+      prefix = prefix.slice(-220)
+    }
+
+    const candidate = cleanLine(`${prefix} ${priceAndSku}`)
+
+    if (candidate.includes('€')) {
+      candidates.push(candidate)
+    }
+
+    previousEnd = match.index + match[0].length
+  }
+
+  return candidates
 }
 
 function dedupeParsedProducts(products: ParsedProduct[]) {
@@ -400,7 +503,9 @@ function dedupeParsedProducts(products: ParsedProduct[]) {
   }
 
   return {
-    products: Array.from(map.values()),
+    products: Array.from(map.values()).sort((a, b) =>
+      String(a.supplierSku || '').localeCompare(String(b.supplierSku || ''))
+    ),
     duplicateCount,
   }
 }
@@ -418,14 +523,17 @@ export async function POST(req: Request) {
 
     const buffer = Buffer.from(await file.arrayBuffer())
     const parsed = await pdf(buffer)
-    const text = String(parsed.text || '')
+    const text = cleanPdfText(String(parsed.text || ''))
 
-    const candidates = buildCandidateLines(text)
+    const candidates = Array.from(
+      new Set([...buildLineCandidates(text), ...buildCompactCandidates(text)])
+    )
+
     const parsedProducts: ParsedProduct[] = []
     const rejectedRows: RejectedRow[] = []
 
-    for (const line of candidates) {
-      const result = parsePricedLine(line)
+    for (const candidate of candidates) {
+      const result = parseCandidate(candidate)
 
       if (result.product) {
         parsedProducts.push(result.product)
