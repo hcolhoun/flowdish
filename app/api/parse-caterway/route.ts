@@ -16,9 +16,10 @@ type ParsedProduct = {
   unitPrice: number | null
 }
 
-type RejectedRow = {
+type RejectedRow = ParsedProduct & {
   reason: string
   raw: string
+  include?: boolean
 }
 
 const PACK_WORDS = [
@@ -55,18 +56,9 @@ function cleanLine(value: string) {
 function parseMoney(value: string | null | undefined) {
   if (!value) return null
 
-  const cleaned = value
-    .replace('€', '')
-    .replaceAll(',', '')
-    .trim()
-
-  const number = Number(cleaned)
+  const number = Number(value.replace('€', '').replaceAll(',', '').trim())
 
   return Number.isFinite(number) ? number : null
-}
-
-function looksLikeDecimalPrice(value: string) {
-  return /^\d+\.\d{1,4}$/.test(value.trim())
 }
 
 function looksLikeValidSku(value: string | null | undefined) {
@@ -75,39 +67,11 @@ function looksLikeValidSku(value: string | null | undefined) {
   const cleaned = value.trim()
 
   if (!cleaned) return false
-  if (looksLikeDecimalPrice(cleaned)) return false
+  if (/^\d+\.\d+$/.test(cleaned)) return false
 
-  if (/^\d+$/.test(cleaned)) {
-    return cleaned.length >= 4
-  }
+  if (/^\d+$/.test(cleaned)) return cleaned.length >= 4
 
-  if (!/^[A-Z0-9][A-Z0-9./-]{1,}$/i.test(cleaned)) return false
-
-  return /[A-Z]/i.test(cleaned)
-}
-
-function looksLikePackToken(value: string) {
-  const token = value.trim()
-
-  return /^(bag|box|carton|pre-pack|pack|net|tin|jar|tub|bottle|tray|bunch|unit|loose|retail|block|bucket|sack)x?\d*/i.test(
-    token
-  )
-}
-
-function hasSkuInsideName(value: string) {
-  const tokens = cleanLine(value)
-    .split(/\s+/)
-    .map((token) => token.replace(/^[^\w]+|[^\w./-]+$/g, ''))
-    .filter(Boolean)
-
-  return tokens.some((token) => {
-    if (looksLikePackToken(token)) return false
-    if (/\d+(kg|g|ml|l|ltr|cl)$/i.test(token)) return false
-    if (/^\d+x\d+/i.test(token)) return false
-    if (/^\d+(mm|cm)$/i.test(token)) return false
-
-    return looksLikeValidSku(token)
-  })
+  return /^[A-Z0-9][A-Z0-9./-]{1,}$/i.test(cleaned) && /[A-Z]/i.test(cleaned)
 }
 
 function extractWeight(value: string) {
@@ -174,6 +138,12 @@ function stripBoilerplate(value: string) {
     .trim()
 }
 
+function stripCategoryNoise(value: string) {
+  return cleanLine(value)
+    .replace(/^(Vegetables|Fruits|Salads|Prepared Produce|Herbs Fresh|Washed Salads|Dairy|Herb & Spice Dried|Savory Grocery|Savoury Grocery|Dried Bulk|Dried Various|Green Cuisine|Fresh Juice|Citrus|Root|Stone|Berries|Apples|Cress|Leaf baby|Lettuce Specialty|Mushrooms Wild|Chinese veg|Exotic|Cucurbits|Capsicum|Brassica|Beans & Peas|Baby veg|Asparagus|Artichoke|100g Herbs|g Herbs|KILO|Herbs)\s*/i, '')
+    .trim()
+}
+
 function stripAllergenMarker(value: string) {
   return cleanLine(value)
     .replace(/\[A\]/gi, '')
@@ -181,10 +151,8 @@ function stripAllergenMarker(value: string) {
     .trim()
 }
 
-function stripCategoryNoise(value: string) {
-  return cleanLine(value)
-    .replace(/^(Vegetables|Fruits|Salads|Prepared Produce|Herbs Fresh|Washed Salads|Dairy|Herb & Spice Dried|Savory Grocery|Savoury Grocery|Dried Bulk|Dried Various|Green Cuisine|Fresh Juice|Citrus|Root|Stone|Berries|Apples|Cress|Leaf baby|Lettuce Specialty|Mushrooms Wild|Chinese veg|Exotic|Cucurbits|Capsicum|Brassica|Beans & Peas|Baby veg|Asparagus|Artichoke|100g Herbs|g Herbs|KILO|Herbs)\s*/i, '')
-    .trim()
+function cleanRepeatedCategoryPrefix(value: string) {
+  return cleanLine(value.replace(/^([A-Z][a-z]+)\1\b/, '$1 '))
 }
 
 function removeWeightFromName(name: string, weight: string | null) {
@@ -196,95 +164,123 @@ function removeWeightFromName(name: string, weight: string | null) {
   return cleanLine(name.replace(new RegExp(flexible, 'i'), ''))
 }
 
-function removePackNoiseFromEnd(name: string) {
+function removeTrailingPackOnly(name: string) {
   let cleaned = cleanLine(name)
 
   for (const word of PACK_WORDS) {
     const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+
     cleaned = cleanLine(cleaned.replace(new RegExp(`\\b${escaped}\\s*$`, 'i'), ''))
   }
 
   return cleaned
 }
 
-function cleanRepeatedCategoryPrefix(value: string) {
-  /*
-    Fix examples like:
-    ArtichokeArtichoke Baby...
-    AsparagusAsparagus Green...
-    TomatoTomato Beef...
-  */
-  return cleanLine(value.replace(/^([A-Z][a-z]+)\1\b/, '$1 '))
-}
-
 function cleanProductName(rawName: string, weight: string | null) {
-  let name = cleanLine(rawName)
-
-  name = stripBoilerplate(name)
-  name = stripCategoryNoise(name)
-  name = stripAllergenMarker(name)
-  name = cleanRepeatedCategoryPrefix(name)
-  name = removeWeightFromName(name, weight)
-  name = removePackNoiseFromEnd(name)
-
-  name = name
-    .replace(/\bProduct\s*Code\b/gi, '')
-    .replace(/\bPackSize\b/gi, '')
-    .replace(/\bOrderProduct\b/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  return name
-}
-
-function looksLikePackOnlyName(value: string) {
-  const cleaned = cleanLine(value)
-
-  if (!cleaned) return true
-
-  return /^(bag|bagx|box|boxx|carton|cartonx|pre-pack|pre-packx|pack|packx|tin|tinx|jar|jarx|tub|tubx|bottle|bottlex|tray|trayx|net|netx|unit|unitx|bunch|bunchx)(\s|$|x|\d)/i.test(
-    cleaned
+  return removeTrailingPackOnly(
+    removeWeightFromName(
+      cleanRepeatedCategoryPrefix(
+        stripAllergenMarker(stripCategoryNoise(stripBoilerplate(rawName)))
+      ),
+      weight
+    )
   )
 }
 
-function hasHumanText(value: string) {
-  return /[A-Za-z]{3,}/.test(value)
+function looksLikePackOnlyName(value: string) {
+  return /^(bag|bagx|box|boxx|carton|cartonx|pre-pack|pre-packx|pack|packx|tin|tinx|jar|jarx|tub|tubx|bottle|bottlex|tray|trayx|net|netx|unit|unitx|bunch|bunchx)(\s|$|x|\d)/i.test(
+    cleanLine(value)
+  )
 }
 
-function validateParsedProduct(product: ParsedProduct, raw: string): string | null {
-  if (!product.supplierSku) return 'missing supplier SKU'
-  if (!looksLikeValidSku(product.supplierSku)) return `invalid supplier SKU: ${product.supplierSku}`
-  if (looksLikeDecimalPrice(product.supplierSku)) return 'supplier SKU looks like price'
-
-  if (!product.name || product.name.length < 3) return `name too short: ${product.name}`
-  if (!hasHumanText(product.name)) return `name does not contain product text: ${product.name}`
-  if (looksLikePackOnlyName(product.name)) return `name is pack-only: ${product.name}`
-  if (hasSkuInsideName(product.name)) return `name contains another SKU, likely merged row: ${product.name}`
-
-  if (!product.packPrice || product.packPrice <= 0) return 'missing pack price'
-
-  const euroCount = (raw.match(/€/g) ?? []).length
-  if (euroCount > 2) return 'too many prices in candidate row'
-
-  return null
+function containsObviousBoilerplate(value: string) {
+  return (
+    /Denotes a Product/i.test(value) ||
+    /Please Contact/i.test(value) ||
+    /Sales Office/i.test(value) ||
+    /Further Information/i.test(value) ||
+    /Product Family/i.test(value) ||
+    /Product Item Description/i.test(value) ||
+    /OrderProduct Code/i.test(value) ||
+    /Order Product Code/i.test(value)
+  )
 }
 
-function parseCandidate(rawCandidate: string): { product: ParsedProduct | null; rejection?: RejectedRow } {
-  const candidate = cleanLine(rawCandidate)
+function containsMergedSku(value: string, ownSku: string | null) {
+  const tokens = cleanLine(value)
+    .split(/\s+/)
+    .map((token) => token.replace(/^[^\w]+|[^\w./-]+$/g, ''))
+    .filter(Boolean)
 
-  if (!candidate.includes('€')) {
-    return { product: null }
+  return tokens.some((token) => {
+    if (!looksLikeValidSku(token)) return false
+    if (ownSku && token.toLowerCase() === ownSku.toLowerCase()) return false
+    if (/^(box|bag|pack|carton|tin|jar|tub|bottle|tray|net|unit|bunch)x?\d*/i.test(token)) return false
+    if (/\d+(kg|g|ml|l|ltr|cl)$/i.test(token)) return false
+    if (/^\d+x\d+/i.test(token)) return false
+
+    return true
+  })
+}
+
+function getRejectionReason(product: ParsedProduct, raw: string) {
+  if (!product.supplierSku || !looksLikeValidSku(product.supplierSku)) {
+    return 'Invalid or missing supplier SKU'
   }
+
+  if (!product.name || product.name.length < 3) {
+    return 'Missing product name'
+  }
+
+  if (!/[A-Za-z]{3,}/.test(product.name)) {
+    return 'Product name does not contain enough text'
+  }
+
+  if (looksLikePackOnlyName(product.name)) {
+    return 'Product name looks like pack text only'
+  }
+
+  if (!product.packPrice || product.packPrice <= 0) {
+    return 'Missing pack price'
+  }
+
+  if (containsObviousBoilerplate(product.name) || containsObviousBoilerplate(raw)) {
+    return 'Contains PDF header/footer text'
+  }
+
+  if (containsMergedSku(product.name, product.supplierSku)) {
+    return 'Name appears to contain another SKU, likely merged PDF row'
+  }
+
+  return ''
+}
+
+function parseCandidate(candidate: string): {
+  product: ParsedProduct | null
+  rejected: RejectedRow | null
+} {
+  const row = cleanLine(candidate)
 
   const rowRegex =
     /^(.*?)\s+€\s?(\d+(?:,\d{3})*(?:\.\d{1,2})?)(?:\s+(?:€\s?(\d+(?:,\d{3})*(?:\.\d{1,2})?)|---))?\s+([A-Z0-9][A-Z0-9./-]{1,})\b/i
 
-  const match = candidate.match(rowRegex)
+  const match = row.match(rowRegex)
 
   if (!match) {
     return {
       product: null,
-      rejection: { reason: 'candidate did not match Caterway compact row pattern', raw: candidate },
+      rejected: {
+        supplier: 'Caterway',
+        supplierSku: null,
+        name: '',
+        packSize: null,
+        weight: null,
+        packPrice: null,
+        unitPrice: null,
+        reason: 'Could not match Caterway row format',
+        raw: row,
+        include: false,
+      },
     }
   }
 
@@ -307,30 +303,27 @@ function parseCandidate(rawCandidate: string): { product: ParsedProduct | null; 
     unitPrice,
   }
 
-  const rejectionReason = validateParsedProduct(product, candidate)
+  const rejectionReason = getRejectionReason(product, row)
 
   if (rejectionReason) {
     return {
       product: null,
-      rejection: { reason: rejectionReason, raw: candidate },
+      rejected: {
+        ...product,
+        reason: rejectionReason,
+        raw: row,
+        include: false,
+      },
     }
   }
 
-  return { product }
+  return { product, rejected: null }
 }
 
 function buildCompactCandidates(text: string) {
   const compact = cleanLine(text.replace(/\r?\n/g, ' '))
   const candidates: string[] = []
 
-  /*
-    Match rows ending in:
-    €packPrice €unitPrice SKU
-    or
-    €packPrice --- SKU
-
-    Then use the text since the previous row as the product description.
-  */
   const priceSkuRegex =
     /€\s?\d+(?:,\d{3})*(?:\.\d{1,2})?(?:\s*(?:€\s?\d+(?:,\d{3})*(?:\.\d{1,2})?|---))?\s*([A-Z0-9][A-Z0-9./-]{1,})\b/gi
 
@@ -343,10 +336,6 @@ function buildCompactCandidates(text: string) {
 
     let prefix = compact.slice(previousEnd, priceStart)
 
-    /*
-      Keep only the useful tail. Long prefixes are usually page headers,
-      category headings, or text from a previous row.
-    */
     if (prefix.length > 260) {
       prefix = prefix.slice(-260)
     }
@@ -363,14 +352,12 @@ function buildCompactCandidates(text: string) {
   return candidates
 }
 
-function dedupeParsedProducts(products: ParsedProduct[]) {
+function dedupeProducts(products: ParsedProduct[]) {
   const map = new Map<string, ParsedProduct>()
   let duplicateCount = 0
 
   for (const product of products) {
-    const key = product.supplierSku
-      ? `${product.supplier.toLowerCase()}::${product.supplierSku.toLowerCase()}`
-      : `${product.supplier.toLowerCase()}::${product.name.toLowerCase()}`
+    const key = `${product.supplier.toLowerCase()}::${String(product.supplierSku || '').toLowerCase()}`
 
     const existing = map.get(key)
 
@@ -414,46 +401,31 @@ export async function POST(req: Request) {
     const parsed = await pdf(buffer)
     const text = String(parsed.text || '')
 
-    const compactCandidates = buildCompactCandidates(text)
+    const candidates = buildCompactCandidates(text)
 
     const parsedProducts: ParsedProduct[] = []
     const rejectedRows: RejectedRow[] = []
 
-    for (const candidate of compactCandidates) {
+    for (const candidate of candidates) {
       const result = parseCandidate(candidate)
 
-      if (result.product) {
-        parsedProducts.push(result.product)
-      }
-
-      if (result.rejection) {
-        rejectedRows.push(result.rejection)
-      }
+      if (result.product) parsedProducts.push(result.product)
+      if (result.rejected) rejectedRows.push(result.rejected)
     }
 
-    const { products, duplicateCount } = dedupeParsedProducts(parsedProducts)
-
-    if (products.length === 0) {
-      return NextResponse.json(
-        {
-          error: 'No valid Caterway rows were parsed.',
-          debug: {
-            textLength: text.length,
-            compactCandidateCount: compactCandidates.length,
-            sampleCompactCandidates: compactCandidates.slice(0, 30),
-            rejectedRows: rejectedRows.slice(0, 30),
-          },
-        },
-        { status: 422 }
-      )
-    }
+    const { products, duplicateCount } = dedupeProducts(parsedProducts)
 
     return NextResponse.json({
       products,
       count: products.length,
       duplicateCount,
       rejectedCount: rejectedRows.length,
-      rejectedRows: rejectedRows.slice(0, 100),
+      rejectedRows: rejectedRows.slice(0, 300),
+      debug: {
+        textLength: text.length,
+        candidateCount: candidates.length,
+        sampleCandidates: candidates.slice(0, 10),
+      },
     })
   } catch (error) {
     console.error('POST /api/parse-caterway failed:', error)
