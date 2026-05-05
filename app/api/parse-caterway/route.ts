@@ -6,430 +6,422 @@ import { createRequire } from 'module'
 
 const require = createRequire(import.meta.url)
 
-type ParsedProduct = {
+type ParsedRow = {
   supplier: string
-  supplierSku: string
+  supplierSku: string | null
   name: string
   packSize: string | null
   weight: string | null
   packPrice: number | null
   unitPrice: number | null
-  rawUnitPrice: number | null
-  baseUnit: 'g' | 'ml' | 'each'
-  pricePerBaseUnit: number | null
-  pricePerSupplierUnit: number | null
-  supplierUnitLabel: string | null
-  warnings: string[]
-  raw: string
+  raw?: string
+  reason?: string
 }
 
 function parseMoney(value: string | undefined | null) {
   if (!value) return null
+  if (value.trim() === '---') return null
 
-  const cleaned = value
-    .replace('€', '')
-    .replace(/,/g, '')
-    .trim()
-
-  if (cleaned === '---') return null
-
+  const cleaned = value.replace('€', '').replace(',', '').trim()
   const number = Number(cleaned)
+
   return Number.isFinite(number) ? number : null
 }
 
-function round(value: number, places = 6) {
-  return Number(value.toFixed(places))
+function moneyRegex() {
+  return /€\s?\d+(?:\.\d{1,4})?|---/g
 }
 
-function normaliseSpace(value: string) {
-  return value.replace(/\s+/g, ' ').trim()
-}
-
-function stripPdfBoilerplate(value: string) {
-  let next = value
-
-  const cutMarkers = [
-    'Product FamilyProduct Item DescriptionPackSizeWeightPrice Unit or Kilo Price OrderProduct Code',
-    'Product Family Product Item Description PackSize Weight Price Unit or Kilo Price OrderProduct Code',
-    'Product Item DescriptionPackSizeWeightPrice Unit or Kilo Price OrderProduct Code',
-    'Product Item Description PackSize Weight Price Unit or Kilo Price OrderProduct Code',
-    'PackSizeWeightPrice Unit or Kilo Price OrderProduct Code',
-    'PackSize Weight Price Unit or Kilo Price OrderProduct Code',
-    'OrderProduct Code',
-    'Order Product Code',
-  ]
-
-  for (const marker of cutMarkers) {
-    const index = next.indexOf(marker)
-    if (index >= 0) {
-      next = next.slice(index + marker.length)
-    }
-  }
-
-  next = next
-    .replace(/Caterway\s+E-Mail\s*:\s*orders@caterway\.ie/gi, ' ')
+function cleanHeaderFooterText(value: string) {
+  return value
+    .replace(/Caterway E-Mail\s*:\s*orders@caterway\.ie/gi, ' ')
     .replace(/orders@caterway\.ie/gi, ' ')
     .replace(/Tel\s*:\s*0035318728000/gi, ' ')
     .replace(/Product Price List/gi, ' ')
-    .replace(/The Buyer at Tenjim Ltd t\/a Magpie Inn/gi, ' ')
-    .replace(/as of [A-Za-z]+,\s*\d{1,2}(st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4}/gi, ' ')
-    .replace(/Denotes a Product Item that Contains Allergens or is an Allergen/gi, ' ')
+    .replace(/The Buyer at Tenjim Ltd t\/a Magpie Inn as of [^.]+/gi, ' ')
+    .replace(/Product Family/gi, ' ')
+    .replace(/Product Item Description/gi, ' ')
+    .replace(/PackSize/gi, ' ')
+    .replace(/Weight/gi, ' ')
+    .replace(/Price/gi, ' ')
+    .replace(/Unit or Kilo/gi, ' ')
+    .replace(/OrderProduct Code/gi, ' ')
+    .replace(/A\]\s*Denotes a Product Item that Contains Allergens or is an Allergen/gi, ' ')
     .replace(/Please Contact the Sales Office if you require Further Information/gi, ' ')
-    .replace(/\[A\]/g, '')
-    .replace(/\bUnit or Kilo\b/gi, ' ')
-    .replace(/\bPackSize\b/gi, ' ')
-    .replace(/\bWeight\b/gi, ' ')
-    .replace(/\bPrice\b/gi, ' ')
-
-  return normaliseSpace(next)
-}
-
-function splitRepeatedLeadingWord(value: string) {
-  return value.replace(/^([A-Z][a-z]+)\1\b/, '$1')
-}
-
-function removeKnownFamilyPrefix(value: string) {
-  return value
-    .replace(/^(Vegetables|Fruits|Dairy|Salads|Herbs Fresh|Herb & Spice Dried|Prepared Produce|Savory Grocery|Savoury Grocery|Washed Salads|Citrus|Root|Brassica|Cucurbits|Mushrooms Wild|Exotic fruit|Baby veg|Cabbage|Capsicum|Potato|Tomato|Onion|Garlic|Artichoke|Asparagus|Beans & Peas|Apples|Berries|Melons)\s*/i, '')
+    .replace(/\s+/g, ' ')
     .trim()
 }
 
-function parseWeightToBaseUnits(weight: string | null) {
+function normaliseName(value: string) {
+  return value
+    .replace(/\[A\]/gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([.,])/g, '$1')
+    .trim()
+}
+
+function titleClean(value: string) {
+  return value
+    .replace(/^(Vegetables|Fruits|Dairy|Herbs Fresh|Herb & Spice Dried|Prepared Produce|Savory Grocery|Frozen|Dried Bulk|Cheese|Eggs|Salads|Lettuce Specialty|Citrus|Root|Brassica|Capsicum|Cucurbits|Exotic|Mushrooms Wild|Chinese veg|Baby veg|Beans & Peas|Stone|Berries|Grapes|Melons|Nut|Apples|Pears|Potato|Onion|Garlic|Herbs|Micro|Fresh Juice|Sea Veg|Prep Veges|Prep Mixes|Washed Salads|Premium Salads|Kit Salads|Salad Bowls|Crunchy Salads)\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function extractSku(value: string) {
+  const match = value.match(/\b[A-Z0-9][A-Z0-9.\-]{2,}\b$/)
+  return match ? match[0] : null
+}
+
+function stripSku(value: string, sku: string | null) {
+  if (!sku) return value.trim()
+
+  return value
+    .replace(new RegExp(`\\s*${escapeRegExp(sku)}\\s*$`), '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function gramsFromWeight(weight: string | null) {
   if (!weight) return null
 
-  const match = weight
-    .replace(/\s+/g, '')
-    .match(/^(\d+(?:\.\d+)?)(kg|g|ml|l|ltr|litre|litres)$/i)
+  const cleaned = weight.toLowerCase().replace(/\s+/g, '')
+  const match = cleaned.match(/^(\d+(?:\.\d+)?)(kg|g|ml|l|ltr|litre|litres)$/)
 
   if (!match) return null
 
-  const qty = Number(match[1])
-  const unit = match[2].toLowerCase()
+  const amount = Number(match[1])
+  const unit = match[2]
 
-  if (!Number.isFinite(qty) || qty <= 0) return null
+  if (!Number.isFinite(amount) || amount <= 0) return null
 
-  if (unit === 'kg') return { amount: qty * 1000, unit: 'g' as const }
-  if (unit === 'g') return { amount: qty, unit: 'g' as const }
-  if (unit === 'l' || unit === 'ltr' || unit === 'litre' || unit === 'litres') {
-    return { amount: qty * 1000, unit: 'ml' as const }
-  }
-  if (unit === 'ml') return { amount: qty, unit: 'ml' as const }
+  if (unit === 'kg') return amount * 1000
+  if (unit === 'g') return amount
+  if (unit === 'l' || unit === 'ltr' || unit === 'litre' || unit === 'litres') return amount * 1000
+  if (unit === 'ml') return amount
 
   return null
 }
 
-function canonicalWeight(value: string) {
-  const cleaned = value.replace(/\s+/g, '')
-  const match = cleaned.match(/^(\d+(?:\.\d+)?)(kg|g|ml|l|ltr|litre|litres)$/i)
-
-  if (!match) return cleaned
-
-  const qty = match[1]
-  const unit = match[2].toLowerCase()
-
-  if (unit === 'ltr' || unit === 'litre' || unit === 'litres') {
-    return `${qty}l`
-  }
-
-  return `${qty}${unit}`
-}
-
-function extractPackAndWeight(description: string) {
-  let working = normaliseSpace(description)
-  let packQuantity: number | null = null
-  let packKind: string | null = null
+function parsePackAndWeight(rawName: string) {
+  let name = normaliseName(titleClean(cleanHeaderFooterText(rawName)))
+  let packSize: string | null = null
   let weight: string | null = null
-  const warnings: string[] = []
 
-  const compoundMatch = working.match(
-    /\b(Box|Bag|Pack|Pre-Pack|Tray|Carton|Bottle|Tin|Tub|Jar|Net)\s*x?\s*(\d{1,3})\s*x?\s*(\d{2,5})\s*(g|G|ml|ML)\b/
+  /*
+    Caterway PDF often fuses pack count + unit weight:
+    - Boxx10250g  => Box x10 / 250g
+    - Boxx6200g   => Box x6 / 200g
+    - Pre-Packx6200g => Pre-Pack x6 / 200g
+    - Boxx121ltr  => Box x12 / 1ltr
+    - Boxx44x500g => Box x4 / 4 x 500g
+  */
+
+  const packWords = [
+    'Pre-Pack',
+    'Vac Pack',
+    'Retail',
+    'Carton',
+    'Bottle',
+    'Block',
+    'Bunch',
+    'Loose',
+    'Tray',
+    'Pack',
+    'Bag',
+    'Box',
+    'Tub',
+    'Tin',
+    'Jar',
+    'Net',
+    'Unit',
+  ]
+
+  const packWordPattern = packWords
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|')
+
+  // Example: Pre-Packx6200g, Boxx10250g, Boxx121ltr, Boxx24400ml
+  const fusedPackWeight = name.match(
+    new RegExp(`\\b(${packWordPattern})\\s*x\\s*(\\d{1,3})(\\d{2,5}(?:\\.\\d+)?\\s*(?:kg|g|ml|l|ltr|litre|litres))\\b`, 'i')
   )
 
-  if (compoundMatch) {
-    packKind = compoundMatch[1]
-    packQuantity = Number(compoundMatch[2])
-    weight = canonicalWeight(`${compoundMatch[3]}${compoundMatch[4]}`)
-    working = normaliseSpace(working.replace(compoundMatch[0], packKind))
-  } else {
-    const spacedCompoundMatch = working.match(
-      /\b(Box|Bag|Pack|Pre-Pack|Tray|Carton|Bottle|Tin|Tub|Jar|Net)\s*x?\s*(\d{1,3})\s+(\d+(?:\.\d+)?)\s*(g|G|kg|KG|ml|ML|l|L|ltr|Ltr|litre|litres)\b/
+  if (fusedPackWeight) {
+    const full = fusedPackWeight[0]
+    const packWord = fusedPackWeight[1]
+    const count = fusedPackWeight[2]
+    const unitWeight = fusedPackWeight[3]
+
+    packSize = `${packWord} x${count}`
+    weight = unitWeight.replace(/\s+/g, '')
+
+    name = name.replace(full, '').trim()
+  }
+
+  // Example: Boxx44x500g => Box x4 / 4 x 500g
+  if (!packSize || !weight) {
+    const doubleX = name.match(
+      new RegExp(`\\b(${packWordPattern})\\s*x\\s*(\\d{1,3})\\s*x\\s*(\\d+(?:\\.\\d+)?\\s*(?:kg|g|ml|l|ltr|litre|litres))\\b`, 'i')
     )
 
-    if (spacedCompoundMatch) {
-      packKind = spacedCompoundMatch[1]
-      packQuantity = Number(spacedCompoundMatch[2])
-      weight = canonicalWeight(`${spacedCompoundMatch[3]}${spacedCompoundMatch[4]}`)
-      working = normaliseSpace(working.replace(spacedCompoundMatch[0], packKind))
+    if (doubleX) {
+      const full = doubleX[0]
+      const packWord = doubleX[1]
+      const count = doubleX[2]
+      const unitWeight = doubleX[3]
+
+      packSize = `${packWord} x${count}`
+      weight = `${count} x ${unitWeight.replace(/\s+/g, '')}`
+
+      name = name.replace(full, '').trim()
     }
   }
 
+  // Example: Box x10 250g, Pre-Pack x6 200g
+  if (!packSize || !weight) {
+    const spacedPackWeight = name.match(
+      new RegExp(`\\b(${packWordPattern})\\s*x\\s*(\\d{1,3})\\s+(\\d+(?:\\.\\d+)?\\s*(?:kg|g|ml|l|ltr|litre|litres))\\b`, 'i')
+    )
+
+    if (spacedPackWeight) {
+      const full = spacedPackWeight[0]
+      const packWord = spacedPackWeight[1]
+      const count = spacedPackWeight[2]
+      const unitWeight = spacedPackWeight[3]
+
+      packSize = `${packWord} x${count}`
+      weight = unitWeight.replace(/\s+/g, '')
+
+      name = name.replace(full, '').trim()
+    }
+  }
+
+  // Example: Bag5kg, Tub500g, Tin2.5kg, Bottle750ml
   if (!weight) {
-    const weightMatches = Array.from(
-      working.matchAll(/\b(\d+(?:\.\d+)?)\s*(kg|KG|g|G|ml|ML|l|L|ltr|Ltr|litre|litres)\b/g)
+    const simplePackWeight = name.match(
+      new RegExp(`\\b(${packWordPattern})\\s*(\\d+(?:\\.\\d+)?\\s*(?:kg|g|ml|l|ltr|litre|litres))\\b`, 'i')
     )
 
-    if (weightMatches.length > 0) {
-      const last = weightMatches[weightMatches.length - 1]
-      weight = canonicalWeight(`${last[1]}${last[2]}`)
-      working = normaliseSpace(working.replace(last[0], ''))
+    if (simplePackWeight) {
+      const full = simplePackWeight[0]
+      const packWord = simplePackWeight[1]
+      const unitWeight = simplePackWeight[2]
+
+      packSize = packSize ?? packWord
+      weight = unitWeight.replace(/\s+/g, '')
+
+      name = name.replace(full, '').trim()
     }
   }
 
-  if (!packQuantity) {
-    const explicitXMatch = working.match(
-      /\b(Box|Bag|Pack|Pre-Pack|Tray|Carton|Bottle|Tin|Tub|Jar|Net)\s*x\s*(\d{1,4})\b/i
+  // Example: Box x12, Boxx12, Unit 40, Box40Unit
+  if (!packSize) {
+    const countPack = name.match(
+      new RegExp(`\\b(${packWordPattern})\\s*x?\\s*(\\d{1,4})\\s*(Bunch|Unit|Pack|Bulbs|each|pcs|pieces)?\\b`, 'i')
     )
 
-    if (explicitXMatch) {
-      packKind = explicitXMatch[1]
-      packQuantity = Number(explicitXMatch[2])
-      working = normaliseSpace(working.replace(explicitXMatch[0], packKind))
+    if (countPack) {
+      const full = countPack[0]
+      const packWord = countPack[1]
+      const count = countPack[2]
+      const countUnit = countPack[3]
+
+      packSize = `${packWord} x${count}${countUnit ? ` ${countUnit}` : ''}`
+
+      name = name.replace(full, '').trim()
     }
   }
 
-  if (!packQuantity) {
-    const eachMatch = working.match(/\b(Box|Unit|Bunch|Pack)\s*(\d{1,4})\s*(Unit|Bunch|Bulbs|Pack|Pcs|Pieces|each)?\b/i)
+  name = name
+    .replace(/\b(Box|Bag|Tub|Tin|Jar|Bottle|Pre-Pack|Pack|Unit|Net|Loose|Bunch|Carton)\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
 
-    if (eachMatch && !/\d+\s*(kg|g|ml|l|ltr|litre|litres)\b/i.test(eachMatch[0])) {
-      packKind = eachMatch[1]
-      packQuantity = Number(eachMatch[2])
-      working = normaliseSpace(working.replace(eachMatch[0], packKind))
-    }
+  name = titleClean(normaliseName(name))
+
+  if (!name) {
+    name = normaliseName(titleClean(cleanHeaderFooterText(rawName)))
   }
-
-  if (!packKind) {
-    const kindMatch = working.match(/\b(Box|Bag|Pack|Pre-Pack|Tray|Carton|Bottle|Tin|Tub|Jar|Net|Bunch|Unit|Loose|Retail|Vac Pack)\b/i)
-    if (kindMatch) {
-      packKind = kindMatch[1]
-    }
-  }
-
-  let packSize: string | null = null
-
-  if (packKind && packQuantity) {
-    packSize = `${packKind} x${packQuantity}`
-  } else if (packKind) {
-    packSize = packKind
-  }
-
-  if (packQuantity && weight) {
-    warnings.push(`Interpreted as ${packSize}, ${weight} each.`)
-  } else if (packQuantity && !weight) {
-    warnings.push(`Interpreted as ${packSize}; no weight found, so costing is per each.`)
-  } else if (!packQuantity && weight) {
-    warnings.push(`Interpreted as ${weight}; no each quantity found, so costing is per g/ml.`)
-  }
-
-  let name = working
-
-  if (packKind) {
-    name = name.replace(new RegExp(`\\b${packKind}\\b`, 'i'), ' ')
-  }
-
-  name = normaliseSpace(name)
 
   return {
     name,
     packSize,
-    packQuantity,
     weight,
-    warnings,
   }
 }
 
-function cleanProductName(value: string) {
-  let next = stripPdfBoilerplate(value)
-  next = splitRepeatedLeadingWord(next)
-  next = removeKnownFamilyPrefix(next)
+function calculateUnitPrice({
+  packPrice,
+  secondPrice,
+  weight,
+  packSize,
+}: {
+  packPrice: number | null
+  secondPrice: number | null
+  weight: string | null
+  packSize: string | null
+}) {
+  if (!packPrice || packPrice <= 0) return null
 
-  next = next
-    .replace(/\b(Box|Bag|Pack|Pre-Pack|Tray|Carton|Bottle|Tin|Tub|Jar|Net|Bunch|Unit|Loose|Retail|Vac Pack)\s*$/i, '')
+  const grams = gramsFromWeight(weight)
+
+  if (grams && grams > 0) {
+    return packPrice / grams
+  }
+
+  const packText = `${packSize || ''}`.toLowerCase()
+  const countMatch = packText.match(/x\s*(\d+)/)
+  const count = countMatch ? Number(countMatch[1]) : null
+
+  if (count && count > 0) {
+    return packPrice / count
+  }
+
+  // Caterway's second price is often €/kg or €/unit.
+  // If we cannot infer weight/count, keep it as the best available supplier unit price.
+  if (secondPrice && secondPrice > 0) return secondPrice
+
+  return packPrice
+}
+
+function makeCandidateRowsFromText(text: string) {
+  const compact = text
+    .replace(/\r/g, '\n')
+    .replace(/\n+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 
-  return next
-}
+  const candidates: string[] = []
 
-function getBaseUnit(weight: string | null, packQuantity: number | null): 'g' | 'ml' | 'each' {
-  const parsedWeight = parseWeightToBaseUnits(weight)
+  /*
+    Match:
+    product text + pack price + unit/kilo price or --- + SKU
+  */
+  const rowRegex =
+    /(.{4,220}?)\s+(€\s?\d+(?:\.\d{1,4})?)\s+(€\s?\d+(?:\.\d{1,4})?|---)\s+([A-Z0-9][A-Z0-9.\-]{2,})\b/g
 
-  if (parsedWeight?.unit === 'g') return 'g'
-  if (parsedWeight?.unit === 'ml') return 'ml'
+  let match: RegExpExecArray | null
 
-  if (packQuantity && packQuantity > 0) return 'each'
+  while ((match = rowRegex.exec(compact)) !== null) {
+    const rawName = match[1].trim()
+    const packPrice = match[2].trim()
+    const unitPrice = match[3].trim()
+    const sku = match[4].trim()
 
-  return 'each'
-}
-
-function calculatePrices({
-  packPrice,
-  rawUnitPrice,
-  weight,
-  packQuantity,
-}: {
-  packPrice: number
-  rawUnitPrice: number | null
-  weight: string | null
-  packQuantity: number | null
-}) {
-  const parsedWeight = parseWeightToBaseUnits(weight)
-  const baseUnit = getBaseUnit(weight, packQuantity)
-
-  let pricePerBaseUnit: number | null = null
-  let pricePerSupplierUnit: number | null = null
-  let supplierUnitLabel: string | null = null
-
-  if (parsedWeight) {
-    if (packQuantity && packQuantity > 0) {
-      const totalBaseAmount = parsedWeight.amount * packQuantity
-
-      if (totalBaseAmount > 0) {
-        pricePerBaseUnit = round(packPrice / totalBaseAmount)
-      }
-
-      pricePerSupplierUnit = rawUnitPrice ?? round(packPrice / packQuantity)
-      supplierUnitLabel = 'each'
-    } else {
-      if (rawUnitPrice !== null) {
-        if (parsedWeight.unit === 'g') {
-          pricePerBaseUnit = round(rawUnitPrice / 1000)
-          supplierUnitLabel = 'kg'
-        } else {
-          pricePerBaseUnit = round(rawUnitPrice / 1000)
-          supplierUnitLabel = 'l'
-        }
-
-        pricePerSupplierUnit = rawUnitPrice
-      } else if (parsedWeight.amount > 0) {
-        pricePerBaseUnit = round(packPrice / parsedWeight.amount)
-        supplierUnitLabel = parsedWeight.unit
-        pricePerSupplierUnit = packPrice
-      }
-    }
-  } else if (packQuantity && packQuantity > 0) {
-    pricePerBaseUnit = rawUnitPrice ?? round(packPrice / packQuantity)
-    pricePerSupplierUnit = pricePerBaseUnit
-    supplierUnitLabel = 'each'
-  } else {
-    pricePerBaseUnit = rawUnitPrice ?? packPrice
-    pricePerSupplierUnit = pricePerBaseUnit
-    supplierUnitLabel = 'supplier unit'
+    candidates.push(`${rawName} ${packPrice} ${unitPrice} ${sku}`)
   }
 
-  return {
-    baseUnit,
-    pricePerBaseUnit,
-    pricePerSupplierUnit,
-    supplierUnitLabel,
-  }
+  return candidates
 }
 
-function looksLikeGarbageName(name: string) {
-  const cleaned = name.toLowerCase().trim()
+function parseCandidate(raw: string): ParsedRow | null {
+  const sku = extractSku(raw)
+  if (!sku) return null
 
-  if (!cleaned) return true
-  if (cleaned.length < 3) return true
+  const withoutSku = stripSku(raw, sku)
+  const prices = Array.from(withoutSku.matchAll(moneyRegex())).map((match) => match[0])
 
-  const badExact = new Set([
-    'box',
-    'boxx',
-    'bag',
-    'bagx',
-    'pack',
-    'packx',
-    'carton',
-    'cartonx',
-    'tray',
-    'trayx',
-    'unit',
-    'bunch',
-    'net',
-  ])
+  const euroPrices = prices.filter((price) => price.includes('€'))
 
-  if (badExact.has(cleaned)) return true
+  if (euroPrices.length < 1) return null
 
-  if (/^(box|bag|pack|carton|tray|unit|bunch|net)x?\d*$/i.test(name)) return true
-  if (/product price list|orderproduct code|packsize|buyer at tenjim|caterway/i.test(name)) return true
+  const packPriceRaw = euroPrices[0]
+  const secondPriceRaw = prices.length > 1 ? prices[1] : null
 
-  return false
-}
+  const packPrice = parseMoney(packPriceRaw)
+  const secondPrice = parseMoney(secondPriceRaw)
 
-function parseCandidate(rawCandidate: string): ParsedProduct | null {
-  const raw = normaliseSpace(rawCandidate)
+  if (!packPrice || packPrice <= 0) return null
 
-  if (!raw.includes('€')) return null
+  const beforePrice = withoutSku.split(packPriceRaw)[0]?.trim() || ''
 
-  const rowMatch = raw.match(
-    /(.+?)\s+(€\s?\d+(?:\.\d{1,2})?)\s+(€\s?\d+(?:\.\d{1,2})|---)\s+([A-Z0-9.]{2,})\b/i
-  )
+  if (!beforePrice) return null
 
-  if (!rowMatch) return null
+  const parsed = parsePackAndWeight(beforePrice)
 
-  const descriptionRaw = rowMatch[1]
-  const packPrice = parseMoney(rowMatch[2])
-  const rawUnitPrice = parseMoney(rowMatch[3])
-  const supplierSku = String(rowMatch[4] || '').trim()
+  if (!parsed.name || parsed.name.length < 2) return null
 
-  if (!supplierSku || !packPrice || packPrice <= 0) return null
-
-  const cleanedDescription = stripPdfBoilerplate(descriptionRaw)
-  const extracted = extractPackAndWeight(cleanedDescription)
-  const name = cleanProductName(extracted.name)
-
-  if (looksLikeGarbageName(name)) return null
-
-  const pricing = calculatePrices({
+  const unitPrice = calculateUnitPrice({
     packPrice,
-    rawUnitPrice,
-    weight: extracted.weight,
-    packQuantity: extracted.packQuantity,
+    secondPrice,
+    weight: parsed.weight,
+    packSize: parsed.packSize,
   })
-
-  const warnings = [...extracted.warnings]
-
-  if (!extracted.weight && !extracted.packQuantity) {
-    warnings.push('No weight or pack quantity found. Costing falls back to supplier unit.')
-  }
 
   return {
     supplier: 'Caterway',
-    supplierSku,
-    name,
-    packSize: extracted.packSize,
-    weight: extracted.weight,
+    supplierSku: sku,
+    name: parsed.name,
+    packSize: parsed.packSize,
+    weight: parsed.weight,
     packPrice,
-    unitPrice: pricing.pricePerBaseUnit,
-    rawUnitPrice,
-    baseUnit: pricing.baseUnit,
-    pricePerBaseUnit: pricing.pricePerBaseUnit,
-    pricePerSupplierUnit: pricing.pricePerSupplierUnit,
-    supplierUnitLabel: pricing.supplierUnitLabel,
-    warnings,
+    unitPrice,
     raw,
   }
 }
 
-function buildCandidates(text: string) {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => normaliseSpace(line))
-    .filter(Boolean)
+function dedupeRows(rows: ParsedRow[]) {
+  const map = new Map<string, ParsedRow>()
 
-  const compact = normaliseSpace(text)
+  for (const row of rows) {
+    const key = `${row.supplier}|${row.supplierSku || ''}`
 
-  const candidates: string[] = []
+    const existing = map.get(key)
 
-  for (const line of lines) {
-    if (line.includes('€')) candidates.push(line)
+    if (!existing) {
+      map.set(key, row)
+      continue
+    }
+
+    // Prefer cleaner names and rows with weight.
+    const existingScore =
+      existing.name.length +
+      (existing.weight ? 100 : 0) +
+      (existing.packSize ? 50 : 0) -
+      (existing.name.includes('Product Price List') ? 500 : 0)
+
+    const rowScore =
+      row.name.length +
+      (row.weight ? 100 : 0) +
+      (row.packSize ? 50 : 0) -
+      (row.name.includes('Product Price List') ? 500 : 0)
+
+    if (rowScore > existingScore) {
+      map.set(key, row)
+    }
   }
 
-  const regex =
-    /[A-Za-z0-9][A-Za-z0-9\s\/\-\.\[\]&'*+()]{2,}?\s+€\s?\d+(?:\.\d{1,2})?\s+(?:€\s?\d+(?:\.\d{1,2})|---)\s+[A-Z0-9.]{2,}\b/g
+  return Array.from(map.values()).sort((a, b) => {
+    const left = a.name.toLowerCase()
+    const right = b.name.toLowerCase()
+    return left.localeCompare(right)
+  })
+}
 
-  const compactMatches = compact.match(regex) ?? []
-  candidates.push(...compactMatches)
+function needsReview(row: ParsedRow) {
+  const reasons: string[] = []
 
-  return Array.from(new Set(candidates))
+  if (!row.supplierSku) reasons.push('Missing supplier SKU')
+  if (!row.name || row.name.length < 2) reasons.push('Missing name')
+  if (!row.packPrice || row.packPrice <= 0) reasons.push('Missing pack price')
+
+  if (
+    row.name.includes('Product Price List') ||
+    row.name.includes('OrderProduct Code') ||
+    row.name.includes('Further Information') ||
+    row.name.includes('Caterway')
+  ) {
+    reasons.push('Contains PDF header/footer text')
+  }
+
+  if (row.name.length > 120) {
+    reasons.push('Name is unusually long; possible merged PDF row')
+  }
+
+  return reasons
 }
 
 export async function POST(req: Request) {
@@ -447,41 +439,35 @@ export async function POST(req: Request) {
     const parsed = await pdf(buffer)
     const text = String(parsed.text || '')
 
-    const candidates = buildCandidates(text)
-    const bySku = new Map<string, ParsedProduct>()
+    const candidates = makeCandidateRowsFromText(text)
+
+    const parsedRows: ParsedRow[] = []
 
     for (const candidate of candidates) {
-      const product = parseCandidate(candidate)
+      const row = parseCandidate(candidate)
+      if (row) parsedRows.push(row)
+    }
 
-      if (!product) continue
+    const deduped = dedupeRows(parsedRows)
 
-      const existing = bySku.get(product.supplierSku)
+    const ready: ParsedRow[] = []
+    const needsReviewRows: ParsedRow[] = []
+    const rejected: ParsedRow[] = []
 
-      if (!existing) {
-        bySku.set(product.supplierSku, product)
-        continue
-      }
+    for (const row of deduped) {
+      const reasons = needsReview(row)
 
-      const existingScore =
-        (existing.weight ? 1 : 0) +
-        (existing.packSize ? 1 : 0) +
-        (existing.name.length > 4 ? 1 : 0)
-
-      const nextScore =
-        (product.weight ? 1 : 0) +
-        (product.packSize ? 1 : 0) +
-        (product.name.length > 4 ? 1 : 0)
-
-      if (nextScore >= existingScore && product.raw.length <= existing.raw.length + 80) {
-        bySku.set(product.supplierSku, product)
+      if (reasons.length === 0) {
+        ready.push(row)
+      } else {
+        needsReviewRows.push({
+          ...row,
+          reason: reasons.join(', '),
+        })
       }
     }
 
-    const products = Array.from(bySku.values()).sort((a, b) =>
-      a.name.localeCompare(b.name)
-    )
-
-    if (products.length === 0) {
+    if (ready.length === 0 && needsReviewRows.length === 0) {
       return NextResponse.json(
         {
           error: 'No valid Caterway rows were parsed.',
@@ -495,9 +481,22 @@ export async function POST(req: Request) {
       )
     }
 
-    return NextResponse.json(products)
+    return NextResponse.json({
+      ready,
+      needsReview: needsReviewRows,
+      rejected,
+      debug: {
+        textLength: text.length,
+        candidateCount: candidates.length,
+        parsedCount: parsedRows.length,
+        dedupedCount: deduped.length,
+        readyCount: ready.length,
+        needsReviewCount: needsReviewRows.length,
+      },
+    })
   } catch (error) {
     console.error('POST /api/parse-caterway failed:', error)
+
     return NextResponse.json(
       { error: 'Failed to parse Caterway PDF' },
       { status: 500 }
