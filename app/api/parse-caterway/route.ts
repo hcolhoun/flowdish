@@ -86,17 +86,28 @@ function looksLikeValidSku(value: string | null | undefined) {
   return /[A-Z]/i.test(cleaned)
 }
 
-function extractFinalSku(value: string) {
+function looksLikePackToken(value: string) {
+  const token = value.trim()
+
+  return /^(bag|box|carton|pre-pack|pack|net|tin|jar|tub|bottle|tray|bunch|unit|loose|retail|block|bucket|sack)x?\d*/i.test(
+    token
+  )
+}
+
+function hasSkuInsideName(value: string) {
   const tokens = cleanLine(value)
     .split(/\s+/)
     .map((token) => token.replace(/^[^\w]+|[^\w./-]+$/g, ''))
     .filter(Boolean)
 
-  for (let i = tokens.length - 1; i >= 0; i--) {
-    if (looksLikeValidSku(tokens[i])) return tokens[i]
-  }
+  return tokens.some((token) => {
+    if (looksLikePackToken(token)) return false
+    if (/\d+(kg|g|ml|l|ltr|cl)$/i.test(token)) return false
+    if (/^\d+x\d+/i.test(token)) return false
+    if (/^\d+(mm|cm)$/i.test(token)) return false
 
-  return null
+    return looksLikeValidSku(token)
+  })
 }
 
 function extractWeight(value: string) {
@@ -140,17 +151,21 @@ function inferPackSize(value: string) {
 
 function stripBoilerplate(value: string) {
   return cleanLine(value)
+    .replace(/^.*?\bOrderProduct Code\b\s*/i, '')
+    .replace(/^.*?\bOrder Product Code\b\s*/i, '')
+    .replace(/^.*?\bUnit or Kilo Price\b\s*/i, '')
     .replace(/Product Price List/gi, ' ')
     .replace(/Product Family/gi, ' ')
     .replace(/Product Item Description/gi, ' ')
     .replace(/Pack Size/gi, ' ')
+    .replace(/PackSize/gi, ' ')
     .replace(/Order Product Code/gi, ' ')
     .replace(/OrderProduct Code/gi, ' ')
     .replace(/Unit or Kilo/gi, ' ')
-    .replace(/The Buyer[^\n]*/gi, ' ')
-    .replace(/Printed\s*:[^\n]*/gi, ' ')
+    .replace(/The Buyer[^.]*\./gi, ' ')
+    .replace(/Printed\s*:[^.]*\./gi, ' ')
     .replace(/Page \d+ of \d+/gi, ' ')
-    .replace(/Tel\s*:[^\n]*/gi, ' ')
+    .replace(/Tel\s*:[^.]*\./gi, ' ')
     .replace(/\[A\]\s*Denotes a Product Item that Contains Allergens or is an Allergen/gi, ' ')
     .replace(/A\]\s*Denotes a Product Item that Contains Allergens or is an Allergen/gi, ' ')
     .replace(/Please Contact the Sales Office if you require Further Information/gi, ' ')
@@ -163,6 +178,12 @@ function stripAllergenMarker(value: string) {
   return cleanLine(value)
     .replace(/\[A\]/gi, '')
     .replace(/\bA\]\s*/gi, '')
+    .trim()
+}
+
+function stripCategoryNoise(value: string) {
+  return cleanLine(value)
+    .replace(/^(Vegetables|Fruits|Salads|Prepared Produce|Herbs Fresh|Washed Salads|Dairy|Herb & Spice Dried|Savory Grocery|Savoury Grocery|Dried Bulk|Dried Various|Green Cuisine|Fresh Juice|Citrus|Root|Stone|Berries|Apples|Cress|Leaf baby|Lettuce Specialty|Mushrooms Wild|Chinese veg|Exotic|Cucurbits|Capsicum|Brassica|Beans & Peas|Baby veg|Asparagus|Artichoke|100g Herbs|g Herbs|KILO|Herbs)\s*/i, '')
     .trim()
 }
 
@@ -186,26 +207,34 @@ function removePackNoiseFromEnd(name: string) {
   return cleaned
 }
 
-function stripEarlierMergedRows(value: string) {
-  let cleaned = cleanLine(value)
-
-  cleaned = cleaned.replace(/^.*\b[A-Z][A-Z0-9./-]{2,}\s+(?=[A-Za-z])/, '')
-
-  if (cleaned.length > 170) {
-    cleaned = cleanLine(cleaned.slice(-170))
-    cleaned = cleaned.replace(/^.*\b[A-Z][A-Z0-9./-]{2,}\s+(?=[A-Za-z])/, '')
-  }
-
-  return cleaned
+function cleanRepeatedCategoryPrefix(value: string) {
+  /*
+    Fix examples like:
+    ArtichokeArtichoke Baby...
+    AsparagusAsparagus Green...
+    TomatoTomato Beef...
+  */
+  return cleanLine(value.replace(/^([A-Z][a-z]+)\1\b/, '$1 '))
 }
 
-function hasSkuInsideName(value: string) {
-  const tokens = cleanLine(value)
-    .split(/\s+/)
-    .map((token) => token.replace(/^[^\w]+|[^\w./-]+$/g, ''))
-    .filter(Boolean)
+function cleanProductName(rawName: string, weight: string | null) {
+  let name = cleanLine(rawName)
 
-  return tokens.some((token) => looksLikeValidSku(token))
+  name = stripBoilerplate(name)
+  name = stripCategoryNoise(name)
+  name = stripAllergenMarker(name)
+  name = cleanRepeatedCategoryPrefix(name)
+  name = removeWeightFromName(name, weight)
+  name = removePackNoiseFromEnd(name)
+
+  name = name
+    .replace(/\bProduct\s*Code\b/gi, '')
+    .replace(/\bPackSize\b/gi, '')
+    .replace(/\bOrderProduct\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return name
 }
 
 function looksLikePackOnlyName(value: string) {
@@ -220,25 +249,6 @@ function looksLikePackOnlyName(value: string) {
 
 function hasHumanText(value: string) {
   return /[A-Za-z]{3,}/.test(value)
-}
-
-function cleanProductName(rawName: string, weight: string | null) {
-  let name = cleanLine(rawName)
-
-  name = stripBoilerplate(name)
-  name = stripEarlierMergedRows(name)
-  name = stripAllergenMarker(name)
-  name = removeWeightFromName(name, weight)
-  name = removePackNoiseFromEnd(name)
-
-  name = name
-    .replace(/\bProduct\s*Code\b/gi, '')
-    .replace(/\bPackSize\b/gi, '')
-    .replace(/\bOrderProduct\b/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  return name
 }
 
 function validateParsedProduct(product: ParsedProduct, raw: string): string | null {
@@ -266,47 +276,22 @@ function parseCandidate(rawCandidate: string): { product: ParsedProduct | null; 
     return { product: null }
   }
 
-  const moneyMatches = Array.from(
-    candidate.matchAll(/€\s?\d+(?:,\d{3})*(?:\.\d{1,2})?/g)
-  )
+  const rowRegex =
+    /^(.*?)\s+€\s?(\d+(?:,\d{3})*(?:\.\d{1,2})?)(?:\s+(?:€\s?(\d+(?:,\d{3})*(?:\.\d{1,2})?)|---))?\s+([A-Z0-9][A-Z0-9./-]{1,})\b/i
 
-  if (moneyMatches.length < 1) {
+  const match = candidate.match(rowRegex)
+
+  if (!match) {
     return {
       product: null,
-      rejection: { reason: 'no valid price token', raw: candidate },
+      rejection: { reason: 'candidate did not match Caterway compact row pattern', raw: candidate },
     }
   }
 
-  if (moneyMatches.length > 2) {
-    return {
-      product: null,
-      rejection: { reason: 'too many price tokens', raw: candidate },
-    }
-  }
-
-  const firstMoney = moneyMatches[0][0]
-  const firstMoneyIndex = moneyMatches[0].index ?? -1
-
-  if (firstMoneyIndex <= 0) {
-    return {
-      product: null,
-      rejection: { reason: 'price appears before product name', raw: candidate },
-    }
-  }
-
-  const beforePriceRaw = candidate.slice(0, firstMoneyIndex).trim()
-  const afterPriceRaw = candidate.slice(firstMoneyIndex + firstMoney.length).trim()
-
-  const packPrice = parseMoney(firstMoney)
-  const unitPrice = moneyMatches[1] ? parseMoney(moneyMatches[1][0]) : null
-  const supplierSku = extractFinalSku(afterPriceRaw)
-
-  if (!supplierSku) {
-    return {
-      product: null,
-      rejection: { reason: `missing final supplier SKU. after price: ${afterPriceRaw.slice(0, 120)}`, raw: candidate },
-    }
-  }
+  const beforePriceRaw = match[1]
+  const packPrice = parseMoney(`€${match[2]}`)
+  const unitPrice = match[3] ? parseMoney(`€${match[3]}`) : null
+  const supplierSku = match[4]?.trim() || null
 
   const weight = normaliseWeight(extractWeight(beforePriceRaw))
   const packSize = inferPackSize(beforePriceRaw)
@@ -334,18 +319,18 @@ function parseCandidate(rawCandidate: string): { product: ParsedProduct | null; 
   return { product }
 }
 
-function buildLineCandidates(text: string) {
-  return text
-    .split(/\r?\n/)
-    .map((line: string) => cleanLine(line))
-    .filter(Boolean)
-    .filter((line: string) => line.includes('€'))
-}
-
 function buildCompactCandidates(text: string) {
   const compact = cleanLine(text.replace(/\r?\n/g, ' '))
   const candidates: string[] = []
 
+  /*
+    Match rows ending in:
+    €packPrice €unitPrice SKU
+    or
+    €packPrice --- SKU
+
+    Then use the text since the previous row as the product description.
+  */
   const priceSkuRegex =
     /€\s?\d+(?:,\d{3})*(?:\.\d{1,2})?(?:\s*(?:€\s?\d+(?:,\d{3})*(?:\.\d{1,2})?|---))?\s*([A-Z0-9][A-Z0-9./-]{1,})\b/gi
 
@@ -358,8 +343,12 @@ function buildCompactCandidates(text: string) {
 
     let prefix = compact.slice(previousEnd, priceStart)
 
-    if (prefix.length > 220) {
-      prefix = prefix.slice(-220)
+    /*
+      Keep only the useful tail. Long prefixes are usually page headers,
+      category headings, or text from a previous row.
+    */
+    if (prefix.length > 260) {
+      prefix = prefix.slice(-260)
     }
 
     const candidate = cleanLine(`${prefix} ${priceAndSku}`)
@@ -425,14 +414,12 @@ export async function POST(req: Request) {
     const parsed = await pdf(buffer)
     const text = String(parsed.text || '')
 
-    const lineCandidates = buildLineCandidates(text)
     const compactCandidates = buildCompactCandidates(text)
-    const candidates = Array.from(new Set([...lineCandidates, ...compactCandidates]))
 
     const parsedProducts: ParsedProduct[] = []
     const rejectedRows: RejectedRow[] = []
 
-    for (const candidate of candidates) {
+    for (const candidate of compactCandidates) {
       const result = parseCandidate(candidate)
 
       if (result.product) {
@@ -452,12 +439,9 @@ export async function POST(req: Request) {
           error: 'No valid Caterway rows were parsed.',
           debug: {
             textLength: text.length,
-            lineCandidateCount: lineCandidates.length,
             compactCandidateCount: compactCandidates.length,
-            totalCandidateCount: candidates.length,
-            sampleEuroLines: lineCandidates.slice(0, 20),
-            sampleCompactCandidates: compactCandidates.slice(0, 20),
-            rejectedRows: rejectedRows.slice(0, 20),
+            sampleCompactCandidates: compactCandidates.slice(0, 30),
+            rejectedRows: rejectedRows.slice(0, 30),
           },
         },
         { status: 422 }
