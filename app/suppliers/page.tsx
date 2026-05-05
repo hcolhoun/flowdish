@@ -2,13 +2,17 @@
 
 import { useEffect, useMemo, useState } from 'react'
 
+type UnitType = 'g' | 'ml' | 'each'
+
 type Item = {
   id: string
   sku: string
   name: string
   itemType: 'L1' | 'L2' | 'L3'
-  unitType: 'g' | 'ml' | 'each'
+  unitType: UnitType
   shelfLifeDays: number | null
+  sellingPrice?: number | null
+  standardBatchOutput?: number | null
 }
 
 type SupplierProduct = {
@@ -35,70 +39,66 @@ type ImportRow = {
   unitPrice: number | null
   raw?: string
   reason?: string
+  status?: 'ready' | 'review'
 }
 
-type ParseResult = {
-  ready: ImportRow[]
-  needsReview: ImportRow[]
-  rejected: ImportRow[]
-  debug?: unknown
-}
-
-function emptyParseResult(): ParseResult {
-  return {
-    ready: [],
-    needsReview: [],
-    rejected: [],
-  }
-}
-
-function normaliseParsedResponse(data: unknown): ParseResult {
-  if (Array.isArray(data)) {
-    return {
-      ready: data as ImportRow[],
-      needsReview: [],
-      rejected: [],
-    }
-  }
-
-  if (data && typeof data === 'object') {
-    const value = data as {
+type ParseResponse =
+  | ImportRow[]
+  | {
       ready?: ImportRow[]
-      products?: ImportRow[]
       needsReview?: ImportRow[]
-      review?: ImportRow[]
       rejected?: ImportRow[]
-      rejectedRows?: ImportRow[]
-      debug?: unknown
+      debug?: Record<string, unknown>
+      error?: string
     }
 
-    return {
-      ready: value.ready ?? value.products ?? [],
-      needsReview: value.needsReview ?? value.review ?? [],
-      rejected: value.rejected ?? value.rejectedRows ?? [],
-      debug: value.debug,
-    }
-  }
-
-  return emptyParseResult()
+type EditingProduct = {
+  supplier: string
+  supplierSku: string
+  name: string
+  packSize: string
+  weight: string
+  packPrice: string
+  unitPrice: string
 }
 
-function numberInputValue(value: number | null | undefined) {
-  if (value === null || value === undefined || Number.isNaN(value)) return ''
+type EditingL3 = {
+  sku: string
+  name: string
+  unitType: UnitType
+  shelfLifeDays: string
+}
+
+function toInputValue(value: string | number | null | undefined) {
+  if (value === null || value === undefined) return ''
   return String(value)
 }
 
-function cleanNullable(value: string) {
+function toNullableString(value: string) {
   const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : null
+  return trimmed === '' ? null : trimmed
+}
+
+function toNullableNumber(value: string) {
+  const trimmed = value.trim()
+  if (trimmed === '') return null
+
+  const number = Number(trimmed)
+  return Number.isFinite(number) ? number : null
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return ''
+  return new Date(value).toLocaleDateString('en-GB')
 }
 
 export default function SuppliersPage() {
-  const [supplier, setSupplier] = useState('Caterway')
+  const [supplier, setSupplier] = useState<'Caterway' | 'Sysco'>('Caterway')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [fileName, setFileName] = useState('')
 
-  const [parseResult, setParseResult] = useState<ParseResult>(emptyParseResult())
+  const [preview, setPreview] = useState<ImportRow[]>([])
+  const [rejectedRows, setRejectedRows] = useState<ImportRow[]>([])
   const [products, setProducts] = useState<SupplierProduct[]>([])
 
   const [search, setSearch] = useState('')
@@ -109,6 +109,13 @@ export default function SuppliersPage() {
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [parsing, setParsing] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  const [editingProductId, setEditingProductId] = useState<string | null>(null)
+  const [editingProduct, setEditingProduct] = useState<EditingProduct | null>(null)
+
+  const [editingL3Id, setEditingL3Id] = useState<string | null>(null)
+  const [editingL3, setEditingL3] = useState<EditingL3 | null>(null)
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -120,28 +127,42 @@ export default function SuppliersPage() {
     }
   }
 
-  function money(value: number | null | undefined) {
+  function money(value: number | null | undefined, maximumFractionDigits = 4) {
     return new Intl.NumberFormat('en-IE', {
       style: 'currency',
       currency: 'EUR',
-      maximumFractionDigits: 4,
+      maximumFractionDigits,
     }).format(value ?? 0)
+  }
+
+  function unitPriceLabel(product: SupplierProduct | ImportRow) {
+    if (product.unitPrice === null || product.unitPrice === undefined) return ''
+
+    const text = `${product.weight || ''} ${product.packSize || ''}`.toLowerCase()
+
+    if (text.includes('kg') || text.includes('g')) return `${money(product.unitPrice, 6)} / g`
+    if (text.includes('ltr') || text.includes('litre') || text.includes('l') || text.includes('ml')) {
+      return `${money(product.unitPrice, 6)} / ml`
+    }
+
+    return `${money(product.unitPrice, 4)} / each`
   }
 
   async function loadProducts() {
     try {
+      setLoading(true)
       setError('')
 
       const res = await fetch('/api/supplier-products', { cache: 'no-store' })
       const data = await safeJson(res)
 
-      if (!res.ok) {
-        throw new Error(data?.error || 'Failed to load supplier products')
-      }
+      if (!res.ok) throw new Error(data?.error || 'Failed to load supplier products')
 
       setProducts(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -150,7 +171,7 @@ export default function SuppliersPage() {
   }, [])
 
   const suppliers = useMemo(() => {
-    return Array.from(new Set(products.map((product) => product.supplier))).sort()
+    return Array.from(new Set(products.map((p) => p.supplier))).sort()
   }, [products])
 
   const filteredProducts = useMemo(() => {
@@ -164,8 +185,7 @@ export default function SuppliersPage() {
         (product.linkedItem?.name || '').toLowerCase().includes(q) ||
         (product.linkedItem?.sku || '').toLowerCase().includes(q)
 
-      const matchesSupplier =
-        supplierFilter === 'ALL' || product.supplier === supplierFilter
+      const matchesSupplier = supplierFilter === 'ALL' || product.supplier === supplierFilter
 
       const matchesLink =
         linkFilter === 'ALL' ||
@@ -176,15 +196,13 @@ export default function SuppliersPage() {
     })
   }, [products, search, supplierFilter, linkFilter])
 
-  const visibleProducts = filteredProducts.slice(0, 100)
-
-  const totalParsedRows =
-    parseResult.ready.length + parseResult.needsReview.length + parseResult.rejected.length
+  const visibleProducts = filteredProducts.slice(0, 200)
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     setError('')
     setMessage('')
-    setParseResult(emptyParseResult())
+    setPreview([])
+    setRejectedRows([])
     setSelectedFile(null)
     setFileName('')
 
@@ -196,11 +214,38 @@ export default function SuppliersPage() {
     setMessage(`File selected: ${file.name}. Click "Parse Price File" next.`)
   }
 
+  function normaliseParseData(data: ParseResponse) {
+    if (Array.isArray(data)) {
+      return {
+        ready: data.map((row) => ({ ...row, status: 'ready' as const })),
+        rejected: [],
+      }
+    }
+
+    const ready = (data.ready ?? []).map((row) => ({
+      ...row,
+      status: 'ready' as const,
+    }))
+
+    const review = (data.needsReview ?? []).map((row) => ({
+      ...row,
+      status: 'review' as const,
+    }))
+
+    const rejected = data.rejected ?? []
+
+    return {
+      ready: [...ready, ...review],
+      rejected,
+    }
+  }
+
   async function handleParse() {
     try {
       setError('')
       setMessage('')
-      setParseResult(emptyParseResult())
+      setPreview([])
+      setRejectedRows([])
       setParsing(true)
 
       if (!selectedFile) {
@@ -208,15 +253,22 @@ export default function SuppliersPage() {
         return
       }
 
-      if (supplier !== 'Caterway') {
-        setError('Sysco parser is not built yet. Use Caterway PDFs for now.')
+      const endpoint =
+        supplier === 'Caterway'
+          ? '/api/parse-caterway'
+          : supplier === 'Sysco'
+            ? '/api/parse-sysco'
+            : ''
+
+      if (!endpoint) {
+        setError('No parser is available for this supplier yet.')
         return
       }
 
       const formData = new FormData()
       formData.append('file', selectedFile)
 
-      const res = await fetch('/api/parse-caterway', {
+      const res = await fetch(endpoint, {
         method: 'POST',
         body: formData,
       })
@@ -224,26 +276,29 @@ export default function SuppliersPage() {
       const data = await safeJson(res)
 
       if (!res.ok) {
-        const debugText = data?.debug
-          ? `\n\nDebug:\n${JSON.stringify(data.debug, null, 2).slice(0, 3000)}`
-          : ''
-
-        throw new Error(`${data?.error || 'Failed to parse file'}${debugText}`)
+        throw new Error(
+          data?.error
+            ? `${data.error}\n\n${data?.debug ? JSON.stringify(data.debug, null, 2) : ''}`
+            : 'Failed to parse file'
+        )
       }
 
-      const normalised = normaliseParsedResponse(data)
-      setParseResult(normalised)
+      const normalised = normaliseParseData(data)
 
-      const count =
-        normalised.ready.length + normalised.needsReview.length + normalised.rejected.length
+      setPreview(normalised.ready)
+      setRejectedRows(normalised.rejected)
 
-      if (count === 0) {
+      if (normalised.ready.length === 0) {
         setError('No rows were parsed from the file.')
         return
       }
 
+      const reviewCount = normalised.ready.filter((row) => row.status === 'review').length
+
       setMessage(
-        `${normalised.ready.length} clean row(s) parsed. ${normalised.needsReview.length} row(s) need review. ${normalised.rejected.length} row(s) rejected.`
+        `${normalised.ready.length} rows parsed. ${
+          reviewCount > 0 ? `${reviewCount} row(s) need review but can be edited and saved.` : ''
+        }`
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -252,123 +307,35 @@ export default function SuppliersPage() {
     }
   }
 
-  function updateReadyRow(index: number, field: keyof ImportRow, value: string) {
-    setParseResult((prev) => {
-      const next = [...prev.ready]
-      const row = { ...next[index] }
+  function updatePreviewRow(index: number, field: keyof ImportRow, value: string) {
+    setPreview((prev) =>
+      prev.map((row, rowIndex) => {
+        if (rowIndex !== index) return row
 
-      if (field === 'supplier') row.supplier = value
-      if (field === 'supplierSku') row.supplierSku = cleanNullable(value)
-      if (field === 'name') row.name = value
-      if (field === 'packSize') row.packSize = cleanNullable(value)
-      if (field === 'weight') row.weight = cleanNullable(value)
-      if (field === 'packPrice') row.packPrice = value === '' ? null : Number(value)
-      if (field === 'unitPrice') row.unitPrice = value === '' ? null : Number(value)
-      if (field === 'raw') row.raw = value
-      if (field === 'reason') row.reason = value
+        if (field === 'packPrice' || field === 'unitPrice') {
+          return {
+            ...row,
+            [field]: toNullableNumber(value),
+          }
+        }
 
-      next[index] = row
+        if (field === 'supplierSku' || field === 'packSize' || field === 'weight') {
+          return {
+            ...row,
+            [field]: toNullableString(value),
+          }
+        }
 
-      return {
-        ...prev,
-        ready: next,
-      }
-    })
-  }
-
-  function updateReviewRow(index: number, field: keyof ImportRow, value: string) {
-    setParseResult((prev) => {
-      const next = [...prev.needsReview]
-      const row = { ...next[index] }
-
-      if (field === 'supplier') row.supplier = value
-      if (field === 'supplierSku') row.supplierSku = cleanNullable(value)
-      if (field === 'name') row.name = value
-      if (field === 'packSize') row.packSize = cleanNullable(value)
-      if (field === 'weight') row.weight = cleanNullable(value)
-      if (field === 'packPrice') row.packPrice = value === '' ? null : Number(value)
-      if (field === 'unitPrice') row.unitPrice = value === '' ? null : Number(value)
-      if (field === 'raw') row.raw = value
-      if (field === 'reason') row.reason = value
-
-      next[index] = row
-
-      return {
-        ...prev,
-        needsReview: next,
-      }
-    })
-  }
-
-  function removeReadyRow(index: number) {
-    setParseResult((prev) => ({
-      ...prev,
-      ready: prev.ready.filter((_, rowIndex) => rowIndex !== index),
-    }))
-  }
-
-  function removeReviewRow(index: number) {
-    setParseResult((prev) => ({
-      ...prev,
-      needsReview: prev.needsReview.filter((_, rowIndex) => rowIndex !== index),
-    }))
-  }
-
-  function approveReviewRow(index: number) {
-    setParseResult((prev) => {
-      const row = prev.needsReview[index]
-      if (!row) return prev
-
-      return {
-        ...prev,
-        ready: [...prev.ready, { ...row, reason: undefined }],
-        needsReview: prev.needsReview.filter((_, rowIndex) => rowIndex !== index),
-      }
-    })
-  }
-
-  function approveAllReviewRows() {
-    setParseResult((prev) => ({
-      ...prev,
-      ready: [
-        ...prev.ready,
-        ...prev.needsReview.map((row) => ({
+        return {
           ...row,
-          reason: undefined,
-        })),
-      ],
-      needsReview: [],
-    }))
+          [field]: value,
+        }
+      })
+    )
   }
 
-  function validateRows(rows: ImportRow[]) {
-    const validRows: ImportRow[] = []
-
-    for (const row of rows) {
-      const supplierValue = row.supplier?.trim()
-      const nameValue = row.name?.trim()
-      const skuValue = row.supplierSku?.trim() || null
-      const packPriceValue = row.packPrice
-
-      if (!supplierValue) continue
-      if (!nameValue) continue
-      if (!packPriceValue || packPriceValue <= 0 || Number.isNaN(packPriceValue)) continue
-
-      validRows.push({
-        supplier: supplierValue,
-        supplierSku: skuValue,
-        name: nameValue,
-        packSize: row.packSize?.trim() || null,
-        weight: row.weight?.trim() || null,
-        packPrice: packPriceValue,
-        unitPrice:
-          row.unitPrice === null || row.unitPrice === undefined || Number.isNaN(row.unitPrice)
-            ? null
-            : row.unitPrice,
-      })
-    }
-
-    return validRows
+  function removePreviewRow(index: number) {
+    setPreview((prev) => prev.filter((_, rowIndex) => rowIndex !== index))
   }
 
   async function handleSave() {
@@ -377,27 +344,34 @@ export default function SuppliersPage() {
       setMessage('')
       setSaving(true)
 
-      const validRows = validateRows(parseResult.ready)
-
-      if (validRows.length === 0) {
-        setError('No valid parsed rows to save. Check supplier, name, SKU, and pack price.')
+      if (preview.length === 0) {
+        setError('No parsed products to save. Parse the file first.')
         return
       }
 
-      if (parseResult.needsReview.length > 0) {
-        const confirmed = window.confirm(
-          `${parseResult.needsReview.length} row(s) still need review and will NOT be saved. Continue saving only clean rows?`
-        )
+      const productsToSave = preview
+        .filter((row) => row.name.trim() && row.supplierSku && row.packPrice !== null)
+        .map((row) => ({
+          supplier: row.supplier || supplier,
+          supplierSku: row.supplierSku,
+          name: row.name,
+          packSize: row.packSize,
+          weight: row.weight,
+          packPrice: row.packPrice,
+          unitPrice: row.unitPrice,
+        }))
 
-        if (!confirmed) return
+      if (productsToSave.length === 0) {
+        setError('No valid rows to save. Check name, supplier SKU, and pack price.')
+        return
       }
 
-      setMessage('Saving supplier products and creating/updating L3 items. Please wait...')
+      setMessage('Saving supplier products and creating/updating linked L3 items. Please wait...')
 
       const res = await fetch('/api/supplier-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ products: validRows }),
+        body: JSON.stringify({ products: productsToSave }),
       })
 
       const data = await safeJson(res)
@@ -407,12 +381,13 @@ export default function SuppliersPage() {
       }
 
       setMessage(
-        `${validRows.length} supplier product row(s) saved. ${
+        `${productsToSave.length} supplier products saved. ${
           data.linkedCount ?? 0
         } linked to L3 items.`
       )
 
-      setParseResult(emptyParseResult())
+      setPreview([])
+      setRejectedRows([])
       setSelectedFile(null)
       setFileName('')
       await loadProducts()
@@ -423,124 +398,132 @@ export default function SuppliersPage() {
     }
   }
 
-  function renderEditableRow({
-    row,
-    index,
-    mode,
-  }: {
-    row: ImportRow
-    index: number
-    mode: 'ready' | 'review'
-  }) {
-    const update = mode === 'ready' ? updateReadyRow : updateReviewRow
-    const remove = mode === 'ready' ? removeReadyRow : removeReviewRow
+  function startEditProduct(product: SupplierProduct) {
+    setEditingProductId(product.id)
+    setEditingProduct({
+      supplier: product.supplier,
+      supplierSku: product.supplierSku ?? '',
+      name: product.name,
+      packSize: product.packSize ?? '',
+      weight: product.weight ?? '',
+      packPrice: toInputValue(product.packPrice),
+      unitPrice: toInputValue(product.unitPrice),
+    })
 
-    return (
-      <tr key={`${mode}-${index}`} className="border-t align-top">
-        <td className="px-3 py-3">
-          <input
-            value={row.supplierSku ?? ''}
-            onChange={(e) => update(index, 'supplierSku', e.target.value)}
-            className="w-32 rounded-lg border px-2 py-1 text-sm"
-            placeholder="SKU"
-          />
-        </td>
+    setEditingL3Id(null)
+    setEditingL3(null)
+  }
 
-        <td className="px-3 py-3">
-          <input
-            value={row.name ?? ''}
-            onChange={(e) => update(index, 'name', e.target.value)}
-            className="min-w-[260px] rounded-lg border px-2 py-1 text-sm"
-            placeholder="Name"
-          />
-          {mode === 'review' && row.reason ? (
-            <div className="mt-1 text-xs text-amber-700">{row.reason}</div>
-          ) : null}
-        </td>
+  function cancelEditProduct() {
+    setEditingProductId(null)
+    setEditingProduct(null)
+  }
 
-        <td className="px-3 py-3">
-          <input
-            value={row.packSize ?? ''}
-            onChange={(e) => update(index, 'packSize', e.target.value)}
-            className="w-28 rounded-lg border px-2 py-1 text-sm"
-            placeholder="Pack"
-          />
-        </td>
+  async function saveProductEdit(productId: string) {
+    if (!editingProduct) return
 
-        <td className="px-3 py-3">
-          <input
-            value={row.weight ?? ''}
-            onChange={(e) => update(index, 'weight', e.target.value)}
-            className="w-28 rounded-lg border px-2 py-1 text-sm"
-            placeholder="Weight"
-          />
-        </td>
+    try {
+      setError('')
+      setMessage('')
 
-        <td className="px-3 py-3">
-          <input
-            type="number"
-            step="0.0001"
-            value={numberInputValue(row.packPrice)}
-            onChange={(e) => update(index, 'packPrice', e.target.value)}
-            className="w-28 rounded-lg border px-2 py-1 text-sm"
-            placeholder="Pack €"
-          />
-        </td>
+      const res = await fetch('/api/supplier-products', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: productId,
+          supplier: editingProduct.supplier,
+          supplierSku: toNullableString(editingProduct.supplierSku),
+          name: editingProduct.name,
+          packSize: toNullableString(editingProduct.packSize),
+          weight: toNullableString(editingProduct.weight),
+          packPrice: toNullableNumber(editingProduct.packPrice),
+          unitPrice: toNullableNumber(editingProduct.unitPrice),
+        }),
+      })
 
-        <td className="px-3 py-3">
-          <input
-            type="number"
-            step="0.000001"
-            value={numberInputValue(row.unitPrice)}
-            onChange={(e) => update(index, 'unitPrice', e.target.value)}
-            className="w-28 rounded-lg border px-2 py-1 text-sm"
-            placeholder="Unit €"
-          />
-        </td>
+      const data = await safeJson(res)
 
-        <td className="px-3 py-3">
-          <div className="flex flex-wrap gap-2">
-            {mode === 'review' ? (
-              <button
-                type="button"
-                onClick={() => approveReviewRow(index)}
-                className="rounded-lg border border-green-300 px-3 py-1 text-sm text-green-700 hover:bg-green-50"
-              >
-                Approve
-              </button>
-            ) : null}
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to update supplier product')
+      }
 
-            <button
-              type="button"
-              onClick={() => remove(index)}
-              className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-            >
-              Remove
-            </button>
-          </div>
+      setMessage('Supplier product updated.')
+      cancelEditProduct()
+      await loadProducts()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    }
+  }
 
-          {row.raw ? (
-            <details className="mt-2 text-xs text-slate-600">
-              <summary className="cursor-pointer">Raw</summary>
-              <div className="mt-1 max-w-md whitespace-pre-wrap rounded-lg bg-slate-50 p-2">
-                {row.raw}
-              </div>
-            </details>
-          ) : null}
-        </td>
-      </tr>
-    )
+  function startEditL3(item: Item) {
+    setEditingL3Id(item.id)
+    setEditingL3({
+      sku: item.sku,
+      name: item.name,
+      unitType: item.unitType,
+      shelfLifeDays: toInputValue(item.shelfLifeDays),
+    })
+
+    setEditingProductId(null)
+    setEditingProduct(null)
+  }
+
+  function cancelEditL3() {
+    setEditingL3Id(null)
+    setEditingL3(null)
+  }
+
+  async function saveL3Edit(itemId: string) {
+    if (!editingL3) return
+
+    try {
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/items', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: itemId,
+          sku: editingL3.sku,
+          name: editingL3.name,
+          unitType: editingL3.unitType,
+          shelfLifeDays: toNullableNumber(editingL3.shelfLifeDays),
+        }),
+      })
+
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to update linked L3')
+      }
+
+      setMessage('Linked L3 item updated.')
+      cancelEditL3()
+      await loadProducts()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    }
   }
 
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-7xl">
-        <h1 className="text-3xl font-semibold text-slate-900">Supplier Products</h1>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-semibold text-slate-900">Supplier Products</h1>
+            <p className="mt-2 text-slate-800">
+              Upload supplier price lists, review parsed rows, create L3 items, and edit supplier
+              product links.
+            </p>
+          </div>
 
-        <p className="mt-2 text-slate-800">
-          Upload supplier price lists, review parsed rows, create L3 items, and keep supplier prices
-          current.
-        </p>
+          {loading ? (
+            <div className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-600">
+              Loading products…
+            </div>
+          ) : null}
+        </div>
 
         {error ? (
           <div className="mt-4 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -556,8 +539,7 @@ export default function SuppliersPage() {
 
         {saving ? (
           <div className="mt-4 rounded-xl border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-            Saving products and creating/updating L3 items. Do not leave this page until it
-            finishes.
+            Saving supplier products and linked L3s. Do not refresh this page.
           </div>
         ) : null}
 
@@ -569,11 +551,17 @@ export default function SuppliersPage() {
               <label className="mb-1 block text-sm font-medium text-slate-900">Supplier</label>
               <select
                 value={supplier}
-                onChange={(e) => setSupplier(e.target.value)}
+                onChange={(e) => {
+                  setSupplier(e.target.value as 'Caterway' | 'Sysco')
+                  setPreview([])
+                  setRejectedRows([])
+                  setError('')
+                  setMessage('')
+                }}
                 className="w-full rounded-xl border px-3 py-2 text-slate-900"
               >
-                <option value="Caterway">Caterway</option>
-                <option value="Sysco">Sysco</option>
+                <option value="Caterway">Caterway PDF</option>
+                <option value="Sysco">Sysco Excel</option>
               </select>
             </div>
 
@@ -581,13 +569,11 @@ export default function SuppliersPage() {
               <label className="mb-1 block text-sm font-medium text-slate-900">Price File</label>
               <input
                 type="file"
-                accept=".pdf,.csv,.xlsx,.xls,.txt"
+                accept=".pdf,.csv,.txt,.xlsx,.xls"
                 onChange={handleFile}
                 className="w-full rounded-xl border bg-white px-3 py-2 text-slate-900 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-white"
               />
-              {fileName ? (
-                <p className="mt-2 text-sm text-slate-700">Selected: {fileName}</p>
-              ) : null}
+              {fileName ? <p className="mt-2 text-sm text-slate-700">Selected: {fileName}</p> : null}
             </div>
           </div>
 
@@ -598,172 +584,182 @@ export default function SuppliersPage() {
               disabled={parsing || saving}
               className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
             >
-              {parsing ? 'Parsing...' : 'Parse Price File'}
+              {parsing ? 'Parsing…' : 'Parse Price File'}
             </button>
 
             <button
               type="button"
               onClick={handleSave}
-              disabled={parseResult.ready.length === 0 || saving || parsing}
+              disabled={preview.length === 0 || saving || parsing}
               className="rounded-xl bg-green-700 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
             >
-              {saving ? 'Saving...' : 'Save Clean Rows + Create/Update L3s'}
+              {saving ? 'Saving…' : 'Save Products + Create/Update L3s'}
             </button>
           </div>
+        </section>
 
-          {totalParsedRows > 0 ? (
-            <div className="mt-6 grid gap-3 md:grid-cols-4">
-              <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                Total parsed:{' '}
-                <span className="font-semibold text-slate-900">{totalParsedRows}</span>
-              </div>
-              <div className="rounded-xl border bg-green-50 px-4 py-3 text-sm text-green-700">
-                Clean:{' '}
-                <span className="font-semibold text-green-900">{parseResult.ready.length}</span>
-              </div>
-              <div className="rounded-xl border bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                Needs review:{' '}
-                <span className="font-semibold text-amber-900">
-                  {parseResult.needsReview.length}
-                </span>
-              </div>
-              <div className="rounded-xl border bg-red-50 px-4 py-3 text-sm text-red-700">
-                Rejected:{' '}
-                <span className="font-semibold text-red-900">{parseResult.rejected.length}</span>
-              </div>
+        <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
+          <div className="border-b px-6 py-4">
+            <h2 className="text-xl font-semibold text-slate-900">Import Preview</h2>
+            <p className="mt-1 text-sm text-slate-700">
+              Parsed rows: {preview.length}. Edit any row before saving.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-slate-100 text-sm">
+                <tr>
+                  <th className="px-4 py-3 text-slate-800">Status</th>
+                  <th className="px-4 py-3 text-slate-800">SKU</th>
+                  <th className="px-4 py-3 text-slate-800">Name</th>
+                  <th className="px-4 py-3 text-slate-800">Pack</th>
+                  <th className="px-4 py-3 text-slate-800">Weight</th>
+                  <th className="px-4 py-3 text-slate-800">Pack Price</th>
+                  <th className="px-4 py-3 text-slate-800">Unit Price</th>
+                  <th className="px-4 py-3 text-slate-800">Reason</th>
+                  <th className="px-4 py-3 text-slate-800">Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {preview.length === 0 ? (
+                  <tr className="border-t">
+                    <td className="px-4 py-3 text-slate-700" colSpan={9}>
+                      No parsed rows yet.
+                    </td>
+                  </tr>
+                ) : (
+                  preview.slice(0, 250).map((row, index) => (
+                    <tr key={`${row.supplierSku}-${index}`} className="border-t align-top">
+                      <td className="px-4 py-3 text-sm">
+                        {row.status === 'review' ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-800">
+                            Review
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-green-100 px-2 py-1 text-green-800">
+                            Ready
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.supplierSku ?? ''}
+                          onChange={(e) => updatePreviewRow(index, 'supplierSku', e.target.value)}
+                          className="w-32 rounded-lg border px-2 py-1 text-sm"
+                        />
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.name}
+                          onChange={(e) => updatePreviewRow(index, 'name', e.target.value)}
+                          className="w-72 rounded-lg border px-2 py-1 text-sm"
+                        />
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.packSize ?? ''}
+                          onChange={(e) => updatePreviewRow(index, 'packSize', e.target.value)}
+                          className="w-36 rounded-lg border px-2 py-1 text-sm"
+                        />
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.weight ?? ''}
+                          onChange={(e) => updatePreviewRow(index, 'weight', e.target.value)}
+                          className="w-32 rounded-lg border px-2 py-1 text-sm"
+                        />
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={toInputValue(row.packPrice)}
+                          onChange={(e) => updatePreviewRow(index, 'packPrice', e.target.value)}
+                          className="w-28 rounded-lg border px-2 py-1 text-sm"
+                        />
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <input
+                          type="number"
+                          step="0.000001"
+                          value={toInputValue(row.unitPrice)}
+                          onChange={(e) => updatePreviewRow(index, 'unitPrice', e.target.value)}
+                          className="w-28 rounded-lg border px-2 py-1 text-sm"
+                        />
+                        <div className="mt-1 text-xs text-slate-500">{unitPriceLabel(row)}</div>
+                      </td>
+
+                      <td className="px-4 py-3 text-xs text-amber-700">
+                        {row.reason ?? ''}
+                        {row.raw ? (
+                          <details className="mt-1">
+                            <summary className="cursor-pointer text-slate-500">Raw</summary>
+                            <div className="mt-1 max-w-md whitespace-pre-wrap text-slate-500">
+                              {row.raw}
+                            </div>
+                          </details>
+                        ) : null}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() => removePreviewRow(index)}
+                          className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {preview.length > 250 ? (
+            <div className="border-t px-6 py-3 text-sm text-slate-600">
+              Showing first 250 rows in the preview. All {preview.length} rows will still save unless
+              removed.
             </div>
           ) : null}
         </section>
 
-        {parseResult.ready.length > 0 ? (
-          <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-            <div className="border-b px-6 py-4">
-              <h2 className="text-xl font-semibold text-slate-900">Clean Parsed Rows</h2>
-              <p className="mt-1 text-sm text-slate-700">
-                These rows are ready to save. You can still edit them before saving.
+        {rejectedRows.length > 0 ? (
+          <section className="mt-8 overflow-hidden rounded-2xl border border-amber-300 bg-amber-50 shadow-sm">
+            <div className="border-b border-amber-300 px-6 py-4">
+              <h2 className="text-xl font-semibold text-amber-900">Rejected Rows</h2>
+              <p className="mt-1 text-sm text-amber-800">
+                These were not included in the save list.
               </p>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="max-h-96 overflow-auto">
               <table className="w-full text-left">
-                <thead className="bg-slate-100 text-sm">
+                <thead className="bg-amber-100 text-sm">
                   <tr>
-                    <th className="px-3 py-3 text-slate-800">SKU</th>
-                    <th className="px-3 py-3 text-slate-800">Name</th>
-                    <th className="px-3 py-3 text-slate-800">Pack</th>
-                    <th className="px-3 py-3 text-slate-800">Weight</th>
-                    <th className="px-3 py-3 text-slate-800">Pack Price</th>
-                    <th className="px-3 py-3 text-slate-800">Unit Price</th>
-                    <th className="px-3 py-3 text-slate-800">Actions</th>
+                    <th className="px-4 py-3 text-amber-900">Reason</th>
+                    <th className="px-4 py-3 text-amber-900">Raw</th>
                   </tr>
                 </thead>
-
                 <tbody>
-                  {parseResult.ready
-                    .slice(0, 250)
-                    .map((row, index) => renderEditableRow({ row, index, mode: 'ready' }))}
-                </tbody>
-              </table>
-            </div>
-
-            {parseResult.ready.length > 250 ? (
-              <div className="border-t bg-slate-50 px-6 py-3 text-sm text-slate-700">
-                Showing first 250 clean rows. All {parseResult.ready.length} clean rows will still
-                be saved.
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        {parseResult.needsReview.length > 0 ? (
-          <section className="mt-8 overflow-hidden rounded-2xl border border-amber-300 bg-white shadow-sm">
-            <div className="border-b px-6 py-4">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <h2 className="text-xl font-semibold text-slate-900">Rows Needing Review</h2>
-                  <p className="mt-1 text-sm text-slate-700">
-                    Edit these rows, then approve them into the clean list.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={approveAllReviewRows}
-                  className="rounded-xl border border-green-300 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-50"
-                >
-                  Approve All Reviewed Rows
-                </button>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-amber-50 text-sm">
-                  <tr>
-                    <th className="px-3 py-3 text-slate-800">SKU</th>
-                    <th className="px-3 py-3 text-slate-800">Name / Reason</th>
-                    <th className="px-3 py-3 text-slate-800">Pack</th>
-                    <th className="px-3 py-3 text-slate-800">Weight</th>
-                    <th className="px-3 py-3 text-slate-800">Pack Price</th>
-                    <th className="px-3 py-3 text-slate-800">Unit Price</th>
-                    <th className="px-3 py-3 text-slate-800">Actions</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {parseResult.needsReview
-                    .slice(0, 250)
-                    .map((row, index) => renderEditableRow({ row, index, mode: 'review' }))}
-                </tbody>
-              </table>
-            </div>
-
-            {parseResult.needsReview.length > 250 ? (
-              <div className="border-t bg-amber-50 px-6 py-3 text-sm text-amber-800">
-                Showing first 250 review rows.
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        {parseResult.rejected.length > 0 ? (
-          <section className="mt-8 overflow-hidden rounded-2xl border border-red-300 bg-white shadow-sm">
-            <div className="border-b px-6 py-4">
-              <h2 className="text-xl font-semibold text-slate-900">Rejected Rows</h2>
-              <p className="mt-1 text-sm text-slate-700">
-                These were not considered safe enough to save automatically.
-              </p>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-red-50 text-sm">
-                  <tr>
-                    <th className="px-4 py-3 text-slate-800">Reason</th>
-                    <th className="px-4 py-3 text-slate-800">Raw Text</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {parseResult.rejected.slice(0, 100).map((row, index) => (
-                    <tr key={`rejected-${index}`} className="border-t align-top">
-                      <td className="px-4 py-3 text-sm text-red-700">
-                        {row.reason ?? 'Rejected'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-slate-700">
-                        {row.raw ?? row.name ?? ''}
-                      </td>
+                  {rejectedRows.slice(0, 100).map((row, index) => (
+                    <tr key={index} className="border-t border-amber-200">
+                      <td className="px-4 py-3 text-sm text-amber-900">{row.reason ?? ''}</td>
+                      <td className="px-4 py-3 text-xs text-amber-900">{row.raw ?? row.name}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-
-            {parseResult.rejected.length > 100 ? (
-              <div className="border-t bg-red-50 px-6 py-3 text-sm text-red-800">
-                Showing first 100 rejected rows.
-              </div>
-            ) : null}
           </section>
         ) : null}
 
@@ -818,56 +814,281 @@ export default function SuppliersPage() {
                   <th className="px-4 py-3 text-slate-800">Supplier Product</th>
                   <th className="px-4 py-3 text-slate-800">SKU</th>
                   <th className="px-4 py-3 text-slate-800">Pack</th>
-                  <th className="px-4 py-3 text-slate-800">Price</th>
+                  <th className="px-4 py-3 text-slate-800">Weight</th>
+                  <th className="px-4 py-3 text-slate-800">Pack Price</th>
                   <th className="px-4 py-3 text-slate-800">Unit Price</th>
                   <th className="px-4 py-3 text-slate-800">Linked L3</th>
+                  <th className="px-4 py-3 text-slate-800">Updated</th>
+                  <th className="px-4 py-3 text-slate-800">Actions</th>
                 </tr>
               </thead>
 
               <tbody>
                 {visibleProducts.length === 0 ? (
                   <tr className="border-t">
-                    <td className="px-4 py-3 text-slate-700" colSpan={6}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={9}>
                       No supplier products found.
                     </td>
                   </tr>
                 ) : (
-                  visibleProducts.map((product) => (
-                    <tr key={product.id} className="border-t">
-                      <td className="px-4 py-3 text-slate-800">
-                        <div className="font-medium">{product.name}</div>
-                        <div className="text-xs text-slate-600">{product.supplier}</div>
-                      </td>
+                  visibleProducts.map((product) => {
+                    const isEditingProduct = editingProductId === product.id
+                    const isEditingL3 = product.linkedItem && editingL3Id === product.linkedItem.id
 
-                      <td className="px-4 py-3 text-slate-800">
-                        {product.supplierSku ?? ''}
-                      </td>
+                    return (
+                      <tr key={product.id} className="border-t align-top">
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditingProduct && editingProduct ? (
+                            <div className="space-y-2">
+                              <input
+                                value={editingProduct.name}
+                                onChange={(e) =>
+                                  setEditingProduct({ ...editingProduct, name: e.target.value })
+                                }
+                                className="w-72 rounded-lg border px-2 py-1 text-sm"
+                              />
+                              <input
+                                value={editingProduct.supplier}
+                                onChange={(e) =>
+                                  setEditingProduct({ ...editingProduct, supplier: e.target.value })
+                                }
+                                className="w-40 rounded-lg border px-2 py-1 text-sm"
+                              />
+                            </div>
+                          ) : (
+                            <>
+                              <div className="font-medium">{product.name}</div>
+                              <div className="text-xs text-slate-600">{product.supplier}</div>
+                            </>
+                          )}
+                        </td>
 
-                      <td className="px-4 py-3 text-slate-800">
-                        {[product.packSize, product.weight].filter(Boolean).join(' / ')}
-                      </td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditingProduct && editingProduct ? (
+                            <input
+                              value={editingProduct.supplierSku}
+                              onChange={(e) =>
+                                setEditingProduct({
+                                  ...editingProduct,
+                                  supplierSku: e.target.value,
+                                })
+                              }
+                              className="w-32 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            product.supplierSku ?? ''
+                          )}
+                        </td>
 
-                      <td className="px-4 py-3 text-slate-800">
-                        {money(product.packPrice)}
-                      </td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditingProduct && editingProduct ? (
+                            <input
+                              value={editingProduct.packSize}
+                              onChange={(e) =>
+                                setEditingProduct({
+                                  ...editingProduct,
+                                  packSize: e.target.value,
+                                })
+                              }
+                              className="w-36 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            product.packSize ?? ''
+                          )}
+                        </td>
 
-                      <td className="px-4 py-3 text-slate-800">
-                        {product.unitPrice === null || product.unitPrice === undefined
-                          ? ''
-                          : money(product.unitPrice)}
-                      </td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditingProduct && editingProduct ? (
+                            <input
+                              value={editingProduct.weight}
+                              onChange={(e) =>
+                                setEditingProduct({
+                                  ...editingProduct,
+                                  weight: e.target.value,
+                                })
+                              }
+                              className="w-32 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            product.weight ?? ''
+                          )}
+                        </td>
 
-                      <td className="px-4 py-3 text-slate-800">
-                        {product.linkedItem ? (
-                          <span className="text-green-700">
-                            {product.linkedItem.name} [{product.linkedItem.sku}]
-                          </span>
-                        ) : (
-                          <span className="text-red-700">Not linked</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditingProduct && editingProduct ? (
+                            <input
+                              type="number"
+                              step="0.0001"
+                              value={editingProduct.packPrice}
+                              onChange={(e) =>
+                                setEditingProduct({
+                                  ...editingProduct,
+                                  packPrice: e.target.value,
+                                })
+                              }
+                              className="w-28 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            money(product.packPrice, 2)
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditingProduct && editingProduct ? (
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={editingProduct.unitPrice}
+                              onChange={(e) =>
+                                setEditingProduct({
+                                  ...editingProduct,
+                                  unitPrice: e.target.value,
+                                })
+                              }
+                              className="w-28 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            unitPriceLabel(product)
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {product.linkedItem ? (
+                            isEditingL3 && editingL3 ? (
+                              <div className="space-y-2">
+                                <input
+                                  value={editingL3.sku}
+                                  onChange={(e) =>
+                                    setEditingL3({ ...editingL3, sku: e.target.value })
+                                  }
+                                  className="w-40 rounded-lg border px-2 py-1 text-sm"
+                                  placeholder="L3 SKU"
+                                />
+
+                                <input
+                                  value={editingL3.name}
+                                  onChange={(e) =>
+                                    setEditingL3({ ...editingL3, name: e.target.value })
+                                  }
+                                  className="w-64 rounded-lg border px-2 py-1 text-sm"
+                                  placeholder="L3 name"
+                                />
+
+                                <div className="flex gap-2">
+                                  <select
+                                    value={editingL3.unitType}
+                                    onChange={(e) =>
+                                      setEditingL3({
+                                        ...editingL3,
+                                        unitType: e.target.value as UnitType,
+                                      })
+                                    }
+                                    className="rounded-lg border px-2 py-1 text-sm"
+                                  >
+                                    <option value="g">g</option>
+                                    <option value="ml">ml</option>
+                                    <option value="each">each</option>
+                                  </select>
+
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    value={editingL3.shelfLifeDays}
+                                    onChange={(e) =>
+                                      setEditingL3({
+                                        ...editingL3,
+                                        shelfLifeDays: e.target.value,
+                                      })
+                                    }
+                                    className="w-24 rounded-lg border px-2 py-1 text-sm"
+                                    placeholder="Shelf"
+                                  />
+                                </div>
+                              </div>
+                            ) : (
+                              <div>
+                                <div className="font-medium text-green-700">
+                                  {product.linkedItem.name}
+                                </div>
+                                <div className="text-xs text-slate-600">
+                                  {product.linkedItem.sku} · {product.linkedItem.unitType} · shelf{' '}
+                                  {product.linkedItem.shelfLifeDays ?? 'N/A'} days
+                                </div>
+                              </div>
+                            )
+                          ) : (
+                            <span className="text-red-700">Not linked</span>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {formatDate(product.createdAt)}
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col gap-2">
+                            {isEditingProduct ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => saveProductEdit(product.id)}
+                                  className="rounded-lg border border-green-300 px-3 py-1 text-sm text-green-700 hover:bg-green-50"
+                                >
+                                  Save Product
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={cancelEditProduct}
+                                  className="rounded-lg border px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startEditProduct(product)}
+                                className="rounded-lg border px-3 py-1 text-sm text-slate-800 hover:bg-slate-50"
+                              >
+                                Edit Product
+                              </button>
+                            )}
+
+                            {product.linkedItem ? (
+                              isEditingL3 ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveL3Edit(product.linkedItem!.id)}
+                                    className="rounded-lg border border-green-300 px-3 py-1 text-sm text-green-700 hover:bg-green-50"
+                                  >
+                                    Save L3
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={cancelEditL3}
+                                    className="rounded-lg border px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                                  >
+                                    Cancel L3
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => startEditL3(product.linkedItem!)}
+                                  className="rounded-lg border border-blue-300 px-3 py-1 text-sm text-blue-700 hover:bg-blue-50"
+                                >
+                                  Edit L3
+                                </button>
+                              )
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
                 )}
               </tbody>
             </table>

@@ -195,3 +195,86 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: 'Failed to delete item' }, { status: 500 })
   }
 }
+
+export async function PATCH(req: Request) {
+  try {
+    const body = await req.json()
+
+    const id = String(body.id || '').trim()
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing item id' }, { status: 400 })
+    }
+
+    const existing = await prisma.item.findUnique({
+      where: { id },
+    })
+
+    if (!existing) {
+      return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+    }
+
+    const data: any = {}
+
+    if ('sku' in body) data.sku = String(body.sku || '').trim()
+    if ('name' in body) data.name = String(body.name || '').trim()
+
+    if ('unitType' in body) {
+      if (!['g', 'ml', 'each'].includes(body.unitType)) {
+        return NextResponse.json({ error: 'Valid unit type is required' }, { status: 400 })
+      }
+
+      data.unitType = body.unitType
+    }
+
+    if ('shelfLifeDays' in body) {
+      data.shelfLifeDays =
+        body.shelfLifeDays === null || body.shelfLifeDays === ''
+          ? null
+          : Number(body.shelfLifeDays)
+    }
+
+    if ('sellingPrice' in body) {
+      data.sellingPrice =
+        body.sellingPrice === null || body.sellingPrice === ''
+          ? null
+          : Number(body.sellingPrice)
+    }
+
+    if ('standardBatchOutput' in body) {
+      data.standardBatchOutput =
+        body.standardBatchOutput === null || body.standardBatchOutput === ''
+          ? null
+          : Number(body.standardBatchOutput)
+    }
+
+    if ('sku' in data && !data.sku) {
+      return NextResponse.json({ error: 'SKU is required' }, { status: 400 })
+    }
+
+    if ('name' in data && !data.name) {
+      return NextResponse.json({ error: 'Name is required' }, { status: 400 })
+    }
+
+    if ('shelfLifeDays' in data && (existing.itemType === 'L2' || existing.itemType === 'L3')) {
+      if (data.shelfLifeDays === null || data.shelfLifeDays <= 0 || Number.isNaN(data.shelfLifeDays)) {
+        return NextResponse.json({ error: 'Shelf life days is required for L2/L3 items' }, { status: 400 })
+      }
+    }
+
+    const item = await prisma.item.update({
+      where: { id },
+      data,
+    })
+
+    return NextResponse.json(item)
+  } catch (error: any) {
+    console.error('PATCH /api/items failed:', error)
+
+    if (error?.code === 'P2002') {
+      return NextResponse.json({ error: 'That SKU already exists' }, { status: 400 })
+    }
+
+    return NextResponse.json({ error: 'Failed to update item' }, { status: 500 })
+  }
+}
