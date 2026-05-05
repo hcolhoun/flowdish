@@ -651,8 +651,8 @@ export default function SuppliersPage() {
             </p>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
+          <div className="max-h-[70vh] overflow-auto">
+            <table className="min-w-[1500px] w-full text-left">
               <thead className="bg-slate-100 text-sm">
                 <tr>
                   <th className="px-4 py-3 text-slate-800">Status</th>
@@ -663,7 +663,9 @@ export default function SuppliersPage() {
                   <th className="px-4 py-3 text-slate-800">Pack Price</th>
                   <th className="px-4 py-3 text-slate-800">Unit Price</th>
                   <th className="px-4 py-3 text-slate-800">Reason</th>
-                  <th className="px-4 py-3 text-slate-800">Actions</th>
+                  <th className="sticky right-0 z-20 bg-slate-100 px-4 py-3 text-slate-800 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.5)]">
+                    Actions
+                  </th>
                 </tr>
               </thead>
 
@@ -754,14 +756,16 @@ export default function SuppliersPage() {
                         ) : null}
                       </td>
 
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={() => removePreviewRow(index)}
-                          className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-                        >
-                          Remove
-                        </button>
+                      <td className="sticky right-0 z-10 bg-white px-4 py-3 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.5)]">
+                        <div className="flex min-w-[140px] flex-col gap-2">
+                          <button
+                            type="button"
+                            onClick={() => removePreviewRow(index)}
+                            className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -852,8 +856,8 @@ export default function SuppliersPage() {
             </p>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
+          <div className="max-h-[75vh] overflow-auto">
+            <table className="min-w-[1500px] w-full text-left">
               <thead className="bg-slate-100 text-sm">
                 <tr>
                   <th className="px-4 py-3 text-slate-800">Supplier Product</th>
@@ -864,7 +868,9 @@ export default function SuppliersPage() {
                   <th className="px-4 py-3 text-slate-800">Unit Price</th>
                   <th className="px-4 py-3 text-slate-800">Linked L3</th>
                   <th className="px-4 py-3 text-slate-800">Updated</th>
-                  <th className="px-4 py-3 text-slate-800">Actions</th>
+                  <th className="sticky right-0 z-20 bg-slate-100 px-4 py-3 text-slate-800 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.5)]">
+                    Actions
+                  </th>
                 </tr>
               </thead>
 
@@ -891,7 +897,7 @@ export default function SuppliersPage() {
                                 onChange={(e) =>
                                   setEditingProduct({ ...editingProduct, name: e.target.value })
                                 }
-                                className="w-72 rounded-lg border px-2 py-1 text-sm"
+                                className="w-56 rounded-lg border px-2 py-1 text-sm"
                               />
                               <input
                                 value={editingProduct.supplier}
@@ -1074,8 +1080,8 @@ export default function SuppliersPage() {
                           {formatDate(product.createdAt)}
                         </td>
 
-                        <td className="px-4 py-3">
-                          <div className="flex flex-col gap-2">
+                        <td className="sticky right-0 z-10 bg-white px-4 py-3 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.5)]">
+                          <div className="flex min-w-[140px] flex-col gap-2">
                             {isEditingProduct ? (
                               <>
                                 <button
