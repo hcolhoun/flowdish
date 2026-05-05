@@ -190,13 +190,27 @@ function looksLikeSkuToken(value: string) {
   return looksLikeValidSku(value)
 }
 
+function looksLikePackToken(value: string) {
+  const token = value.trim()
+
+  return /^(bag|box|carton|pre-pack|pack|net|tin|jar|tub|bottle|tray|bunch|unit|loose|retail|block|bucket|sack)x?\d*/i.test(
+    token
+  )
+}
+
 function containsEmbeddedSku(name: string) {
   const tokens = name
     .split(/\s+/)
     .map((token) => token.replace(/^[^\w]+|[^\w./-]+$/g, ''))
     .filter(Boolean)
 
-  return tokens.some((token) => looksLikeSkuToken(token))
+  return tokens.some((token) => {
+    if (looksLikePackToken(token)) return false
+    if (/\d+(kg|g|ml|l|ltr|cl)$/i.test(token)) return false
+    if (/^\d+x\d+/i.test(token)) return false
+
+    return looksLikeSkuToken(token)
+  })
 }
 
 function looksLikePackOnlyName(name: string) {
