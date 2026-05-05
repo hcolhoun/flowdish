@@ -33,45 +33,82 @@ type ImportRow = {
   weight: string | null
   packPrice: number | null
   unitPrice: number | null
+  raw?: string
+  reason?: string
 }
 
-type RejectedImportRow = ImportRow & {
-  reason: string
-  raw: string
-  include: boolean
+type ParseResult = {
+  ready: ImportRow[]
+  needsReview: ImportRow[]
+  rejected: ImportRow[]
+  debug?: unknown
 }
 
-function emptyRejectedRow(): RejectedImportRow {
+function emptyParseResult(): ParseResult {
   return {
-    supplier: 'Caterway',
-    supplierSku: '',
-    name: '',
-    packSize: '',
-    weight: '',
-    packPrice: null,
-    unitPrice: null,
-    reason: 'Manual row',
-    raw: '',
-    include: true,
+    ready: [],
+    needsReview: [],
+    rejected: [],
   }
+}
+
+function normaliseParsedResponse(data: unknown): ParseResult {
+  if (Array.isArray(data)) {
+    return {
+      ready: data as ImportRow[],
+      needsReview: [],
+      rejected: [],
+    }
+  }
+
+  if (data && typeof data === 'object') {
+    const value = data as {
+      ready?: ImportRow[]
+      products?: ImportRow[]
+      needsReview?: ImportRow[]
+      review?: ImportRow[]
+      rejected?: ImportRow[]
+      rejectedRows?: ImportRow[]
+      debug?: unknown
+    }
+
+    return {
+      ready: value.ready ?? value.products ?? [],
+      needsReview: value.needsReview ?? value.review ?? [],
+      rejected: value.rejected ?? value.rejectedRows ?? [],
+      debug: value.debug,
+    }
+  }
+
+  return emptyParseResult()
+}
+
+function numberInputValue(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) return ''
+  return String(value)
+}
+
+function cleanNullable(value: string) {
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
 }
 
 export default function SuppliersPage() {
   const [supplier, setSupplier] = useState('Caterway')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [preview, setPreview] = useState<ImportRow[]>([])
-  const [rejectedRows, setRejectedRows] = useState<RejectedImportRow[]>([])
+  const [fileName, setFileName] = useState('')
+
+  const [parseResult, setParseResult] = useState<ParseResult>(emptyParseResult())
   const [products, setProducts] = useState<SupplierProduct[]>([])
+
   const [search, setSearch] = useState('')
   const [supplierFilter, setSupplierFilter] = useState('ALL')
   const [linkFilter, setLinkFilter] = useState('ALL')
+
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
-  const [fileName, setFileName] = useState('')
   const [saving, setSaving] = useState(false)
   const [parsing, setParsing] = useState(false)
-
-  const busy = saving || parsing
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -83,18 +120,13 @@ export default function SuppliersPage() {
     }
   }
 
-  useEffect(() => {
-    function beforeUnload(e: BeforeUnloadEvent) {
-      if (!busy) return
-
-      e.preventDefault()
-      e.returnValue = ''
-    }
-
-    window.addEventListener('beforeunload', beforeUnload)
-
-    return () => window.removeEventListener('beforeunload', beforeUnload)
-  }, [busy])
+  function money(value: number | null | undefined) {
+    return new Intl.NumberFormat('en-IE', {
+      style: 'currency',
+      currency: 'EUR',
+      maximumFractionDigits: 4,
+    }).format(value ?? 0)
+  }
 
   async function loadProducts() {
     try {
@@ -103,7 +135,9 @@ export default function SuppliersPage() {
       const res = await fetch('/api/supplier-products', { cache: 'no-store' })
       const data = await safeJson(res)
 
-      if (!res.ok) throw new Error(data?.error || 'Failed to load supplier products')
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to load supplier products')
+      }
 
       setProducts(data)
     } catch (err) {
@@ -116,7 +150,7 @@ export default function SuppliersPage() {
   }, [])
 
   const suppliers = useMemo(() => {
-    return Array.from(new Set(products.map((p) => p.supplier))).sort()
+    return Array.from(new Set(products.map((product) => product.supplier))).sort()
   }, [products])
 
   const filteredProducts = useMemo(() => {
@@ -142,62 +176,15 @@ export default function SuppliersPage() {
     })
   }, [products, search, supplierFilter, linkFilter])
 
-  function money(value: number | null | undefined) {
-    return new Intl.NumberFormat('en-IE', {
-      style: 'currency',
-      currency: 'EUR',
-      maximumFractionDigits: 4,
-    }).format(value ?? 0)
-  }
+  const visibleProducts = filteredProducts.slice(0, 100)
 
-  function normaliseNullableString(value: string | null | undefined) {
-    const trimmed = String(value ?? '').trim()
-    return trimmed.length > 0 ? trimmed : null
-  }
+  const totalParsedRows =
+    parseResult.ready.length + parseResult.needsReview.length + parseResult.rejected.length
 
-  function toNullableNumber(value: string | number | null | undefined) {
-    if (value === null || value === undefined || value === '') return null
-
-    const number = Number(value)
-    return Number.isFinite(number) ? number : null
-  }
-
-  function cleanRowForSave(row: ImportRow): ImportRow {
-    return {
-      supplier: String(row.supplier || supplier || 'Caterway').trim(),
-      supplierSku: normaliseNullableString(row.supplierSku),
-      name: String(row.name || '').trim(),
-      packSize: normaliseNullableString(row.packSize),
-      weight: normaliseNullableString(row.weight),
-      packPrice: toNullableNumber(row.packPrice),
-      unitPrice: toNullableNumber(row.unitPrice),
-    }
-  }
-
-  function validManualRow(row: RejectedImportRow) {
-    return (
-      row.include &&
-      String(row.supplierSku || '').trim().length > 0 &&
-      String(row.name || '').trim().length > 0 &&
-      Number(row.packPrice) > 0
-    )
-  }
-
-  function rowsToSave() {
-    const cleanPreview = preview.map(cleanRowForSave)
-
-    const manuallyAcceptedRejected = rejectedRows
-      .filter(validManualRow)
-      .map(cleanRowForSave)
-
-    return [...cleanPreview, ...manuallyAcceptedRejected]
-  }
-
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     setError('')
     setMessage('')
-    setPreview([])
-    setRejectedRows([])
+    setParseResult(emptyParseResult())
     setSelectedFile(null)
     setFileName('')
 
@@ -213,8 +200,7 @@ export default function SuppliersPage() {
     try {
       setError('')
       setMessage('')
-      setPreview([])
-      setRejectedRows([])
+      setParseResult(emptyParseResult())
       setParsing(true)
 
       if (!selectedFile) {
@@ -223,7 +209,7 @@ export default function SuppliersPage() {
       }
 
       if (supplier !== 'Caterway') {
-        setError('Sysco Excel import should be built as a separate parser. Caterway PDF parser is selected now.')
+        setError('Sysco parser is not built yet. Use Caterway PDFs for now.')
         return
       }
 
@@ -239,43 +225,25 @@ export default function SuppliersPage() {
 
       if (!res.ok) {
         const debugText = data?.debug
-          ? `\n\nDEBUG:\n${JSON.stringify(data.debug, null, 2)}`
+          ? `\n\nDebug:\n${JSON.stringify(data.debug, null, 2).slice(0, 3000)}`
           : ''
 
-        throw new Error((data?.error || 'Failed to parse file') + debugText)
+        throw new Error(`${data?.error || 'Failed to parse file'}${debugText}`)
       }
 
-      const parsedProducts = Array.isArray(data)
-        ? data
-        : Array.isArray(data.products)
-          ? data.products
-          : []
+      const normalised = normaliseParsedResponse(data)
+      setParseResult(normalised)
 
-      const rejected = Array.isArray(data.rejectedRows)
-        ? data.rejectedRows.map((row: any) => ({
-            supplier: String(row.supplier || supplier || 'Caterway'),
-            supplierSku: row.supplierSku ?? '',
-            name: row.name ?? '',
-            packSize: row.packSize ?? '',
-            weight: row.weight ?? '',
-            packPrice: row.packPrice ?? null,
-            unitPrice: row.unitPrice ?? null,
-            reason: row.reason ?? 'Rejected by parser',
-            raw: row.raw ?? '',
-            include: false,
-          }))
-        : []
+      const count =
+        normalised.ready.length + normalised.needsReview.length + normalised.rejected.length
 
-      setPreview(parsedProducts)
-      setRejectedRows(rejected)
-
-      if (parsedProducts.length === 0 && rejected.length === 0) {
+      if (count === 0) {
         setError('No rows were parsed from the file.')
         return
       }
 
       setMessage(
-        `${parsedProducts.length} clean rows parsed. ${rejected.length} rejected rows available for manual review.`
+        `${normalised.ready.length} clean row(s) parsed. ${normalised.needsReview.length} row(s) need review. ${normalised.rejected.length} row(s) rejected.`
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -284,25 +252,152 @@ export default function SuppliersPage() {
     }
   }
 
+  function updateReadyRow(index: number, field: keyof ImportRow, value: string) {
+    setParseResult((prev) => {
+      const next = [...prev.ready]
+      const row = { ...next[index] }
+
+      if (field === 'supplier') row.supplier = value
+      if (field === 'supplierSku') row.supplierSku = cleanNullable(value)
+      if (field === 'name') row.name = value
+      if (field === 'packSize') row.packSize = cleanNullable(value)
+      if (field === 'weight') row.weight = cleanNullable(value)
+      if (field === 'packPrice') row.packPrice = value === '' ? null : Number(value)
+      if (field === 'unitPrice') row.unitPrice = value === '' ? null : Number(value)
+      if (field === 'raw') row.raw = value
+      if (field === 'reason') row.reason = value
+
+      next[index] = row
+
+      return {
+        ...prev,
+        ready: next,
+      }
+    })
+  }
+
+  function updateReviewRow(index: number, field: keyof ImportRow, value: string) {
+    setParseResult((prev) => {
+      const next = [...prev.needsReview]
+      const row = { ...next[index] }
+
+      if (field === 'supplier') row.supplier = value
+      if (field === 'supplierSku') row.supplierSku = cleanNullable(value)
+      if (field === 'name') row.name = value
+      if (field === 'packSize') row.packSize = cleanNullable(value)
+      if (field === 'weight') row.weight = cleanNullable(value)
+      if (field === 'packPrice') row.packPrice = value === '' ? null : Number(value)
+      if (field === 'unitPrice') row.unitPrice = value === '' ? null : Number(value)
+      if (field === 'raw') row.raw = value
+      if (field === 'reason') row.reason = value
+
+      next[index] = row
+
+      return {
+        ...prev,
+        needsReview: next,
+      }
+    })
+  }
+
+  function removeReadyRow(index: number) {
+    setParseResult((prev) => ({
+      ...prev,
+      ready: prev.ready.filter((_, rowIndex) => rowIndex !== index),
+    }))
+  }
+
+  function removeReviewRow(index: number) {
+    setParseResult((prev) => ({
+      ...prev,
+      needsReview: prev.needsReview.filter((_, rowIndex) => rowIndex !== index),
+    }))
+  }
+
+  function approveReviewRow(index: number) {
+    setParseResult((prev) => {
+      const row = prev.needsReview[index]
+      if (!row) return prev
+
+      return {
+        ...prev,
+        ready: [...prev.ready, { ...row, reason: undefined }],
+        needsReview: prev.needsReview.filter((_, rowIndex) => rowIndex !== index),
+      }
+    })
+  }
+
+  function approveAllReviewRows() {
+    setParseResult((prev) => ({
+      ...prev,
+      ready: [
+        ...prev.ready,
+        ...prev.needsReview.map((row) => ({
+          ...row,
+          reason: undefined,
+        })),
+      ],
+      needsReview: [],
+    }))
+  }
+
+  function validateRows(rows: ImportRow[]) {
+    const validRows: ImportRow[] = []
+
+    for (const row of rows) {
+      const supplierValue = row.supplier?.trim()
+      const nameValue = row.name?.trim()
+      const skuValue = row.supplierSku?.trim() || null
+      const packPriceValue = row.packPrice
+
+      if (!supplierValue) continue
+      if (!nameValue) continue
+      if (!packPriceValue || packPriceValue <= 0 || Number.isNaN(packPriceValue)) continue
+
+      validRows.push({
+        supplier: supplierValue,
+        supplierSku: skuValue,
+        name: nameValue,
+        packSize: row.packSize?.trim() || null,
+        weight: row.weight?.trim() || null,
+        packPrice: packPriceValue,
+        unitPrice:
+          row.unitPrice === null || row.unitPrice === undefined || Number.isNaN(row.unitPrice)
+            ? null
+            : row.unitPrice,
+      })
+    }
+
+    return validRows
+  }
+
   async function handleSave() {
     try {
       setError('')
       setMessage('')
       setSaving(true)
 
-      const productsToSave = rowsToSave()
+      const validRows = validateRows(parseResult.ready)
 
-      if (productsToSave.length === 0) {
-        setError('No products to save. Parse a file first or include corrected rejected rows.')
+      if (validRows.length === 0) {
+        setError('No valid parsed rows to save. Check supplier, name, SKU, and pack price.')
         return
       }
 
-      setMessage('Saving supplier products and creating/updating L3 items. Do not leave this page...')
+      if (parseResult.needsReview.length > 0) {
+        const confirmed = window.confirm(
+          `${parseResult.needsReview.length} row(s) still need review and will NOT be saved. Continue saving only clean rows?`
+        )
+
+        if (!confirmed) return
+      }
+
+      setMessage('Saving supplier products and creating/updating L3 items. Please wait...')
 
       const res = await fetch('/api/supplier-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ products: productsToSave }),
+        body: JSON.stringify({ products: validRows }),
       })
 
       const data = await safeJson(res)
@@ -312,15 +407,12 @@ export default function SuppliersPage() {
       }
 
       setMessage(
-        `Import complete. Created: ${data.createdCount ?? 0}. Updated: ${
-          data.updatedCount ?? 0
-        }. Linked: ${data.linkedCount ?? 0}. Skipped: ${
-          data.skippedCount ?? 0
-        }. Duplicates in upload: ${data.duplicateInUploadCount ?? data.duplicateCount ?? 0}.`
+        `${validRows.length} supplier product row(s) saved. ${
+          data.linkedCount ?? 0
+        } linked to L3 items.`
       )
 
-      setPreview([])
-      setRejectedRows([])
+      setParseResult(emptyParseResult())
       setSelectedFile(null)
       setFileName('')
       await loadProducts()
@@ -331,44 +423,114 @@ export default function SuppliersPage() {
     }
   }
 
-  function updateRejectedRow(
-    index: number,
-    field: keyof RejectedImportRow,
-    value: string | boolean
-  ) {
-    setRejectedRows((prev) =>
-      prev.map((row, rowIndex) => {
-        if (rowIndex !== index) return row
+  function renderEditableRow({
+    row,
+    index,
+    mode,
+  }: {
+    row: ImportRow
+    index: number
+    mode: 'ready' | 'review'
+  }) {
+    const update = mode === 'ready' ? updateReadyRow : updateReviewRow
+    const remove = mode === 'ready' ? removeReadyRow : removeReviewRow
 
-        if (field === 'include') {
-          return { ...row, include: Boolean(value) }
-        }
+    return (
+      <tr key={`${mode}-${index}`} className="border-t align-top">
+        <td className="px-3 py-3">
+          <input
+            value={row.supplierSku ?? ''}
+            onChange={(e) => update(index, 'supplierSku', e.target.value)}
+            className="w-32 rounded-lg border px-2 py-1 text-sm"
+            placeholder="SKU"
+          />
+        </td>
 
-        if (field === 'packPrice' || field === 'unitPrice') {
-          return {
-            ...row,
-            [field]: value === '' ? null : Number(value),
-          }
-        }
+        <td className="px-3 py-3">
+          <input
+            value={row.name ?? ''}
+            onChange={(e) => update(index, 'name', e.target.value)}
+            className="min-w-[260px] rounded-lg border px-2 py-1 text-sm"
+            placeholder="Name"
+          />
+          {mode === 'review' && row.reason ? (
+            <div className="mt-1 text-xs text-amber-700">{row.reason}</div>
+          ) : null}
+        </td>
 
-        return {
-          ...row,
-          [field]: String(value),
-        }
-      })
+        <td className="px-3 py-3">
+          <input
+            value={row.packSize ?? ''}
+            onChange={(e) => update(index, 'packSize', e.target.value)}
+            className="w-28 rounded-lg border px-2 py-1 text-sm"
+            placeholder="Pack"
+          />
+        </td>
+
+        <td className="px-3 py-3">
+          <input
+            value={row.weight ?? ''}
+            onChange={(e) => update(index, 'weight', e.target.value)}
+            className="w-28 rounded-lg border px-2 py-1 text-sm"
+            placeholder="Weight"
+          />
+        </td>
+
+        <td className="px-3 py-3">
+          <input
+            type="number"
+            step="0.0001"
+            value={numberInputValue(row.packPrice)}
+            onChange={(e) => update(index, 'packPrice', e.target.value)}
+            className="w-28 rounded-lg border px-2 py-1 text-sm"
+            placeholder="Pack €"
+          />
+        </td>
+
+        <td className="px-3 py-3">
+          <input
+            type="number"
+            step="0.000001"
+            value={numberInputValue(row.unitPrice)}
+            onChange={(e) => update(index, 'unitPrice', e.target.value)}
+            className="w-28 rounded-lg border px-2 py-1 text-sm"
+            placeholder="Unit €"
+          />
+        </td>
+
+        <td className="px-3 py-3">
+          <div className="flex flex-wrap gap-2">
+            {mode === 'review' ? (
+              <button
+                type="button"
+                onClick={() => approveReviewRow(index)}
+                className="rounded-lg border border-green-300 px-3 py-1 text-sm text-green-700 hover:bg-green-50"
+              >
+                Approve
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => remove(index)}
+              className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+            >
+              Remove
+            </button>
+          </div>
+
+          {row.raw ? (
+            <details className="mt-2 text-xs text-slate-600">
+              <summary className="cursor-pointer">Raw</summary>
+              <div className="mt-1 max-w-md whitespace-pre-wrap rounded-lg bg-slate-50 p-2">
+                {row.raw}
+              </div>
+            </details>
+          ) : null}
+        </td>
+      </tr>
     )
   }
-
-  function addManualRow() {
-    setRejectedRows((prev) => [emptyRejectedRow(), ...prev])
-  }
-
-  function removeRejectedRow(index: number) {
-    setRejectedRows((prev) => prev.filter((_, rowIndex) => rowIndex !== index))
-  }
-
-  const visibleProducts = filteredProducts.slice(0, 100)
-  const saveCount = rowsToSave().length
 
   return (
     <main className="min-h-screen bg-slate-50 p-8">
@@ -376,7 +538,8 @@ export default function SuppliersPage() {
         <h1 className="text-3xl font-semibold text-slate-900">Supplier Products</h1>
 
         <p className="mt-2 text-slate-800">
-          Upload supplier price lists, create L3 items, and link supplier products to kitchen ingredients.
+          Upload supplier price lists, review parsed rows, create L3 items, and keep supplier prices
+          current.
         </p>
 
         {error ? (
@@ -391,9 +554,10 @@ export default function SuppliersPage() {
           </div>
         ) : null}
 
-        {busy ? (
+        {saving ? (
           <div className="mt-4 rounded-xl border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-            {parsing ? 'Parsing file. Please wait...' : 'Saving import. Please wait and do not leave the page...'}
+            Saving products and creating/updating L3 items. Do not leave this page until it
+            finishes.
           </div>
         ) : null}
 
@@ -405,18 +569,11 @@ export default function SuppliersPage() {
               <label className="mb-1 block text-sm font-medium text-slate-900">Supplier</label>
               <select
                 value={supplier}
-                onChange={(e) => {
-                  setSupplier(e.target.value)
-                  setPreview([])
-                  setRejectedRows([])
-                  setError('')
-                  setMessage('')
-                }}
+                onChange={(e) => setSupplier(e.target.value)}
                 className="w-full rounded-xl border px-3 py-2 text-slate-900"
-                disabled={busy}
               >
-                <option value="Caterway">Caterway PDF</option>
-                <option value="Sysco">Sysco Excel - parser pending</option>
+                <option value="Caterway">Caterway</option>
+                <option value="Sysco">Sysco</option>
               </select>
             </div>
 
@@ -424,10 +581,9 @@ export default function SuppliersPage() {
               <label className="mb-1 block text-sm font-medium text-slate-900">Price File</label>
               <input
                 type="file"
-                accept=".pdf,.csv,.txt,.xlsx,.xls"
+                accept=".pdf,.csv,.xlsx,.xls,.txt"
                 onChange={handleFile}
-                disabled={busy}
-                className="w-full rounded-xl border bg-white px-3 py-2 text-slate-900 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-white disabled:opacity-60"
+                className="w-full rounded-xl border bg-white px-3 py-2 text-slate-900 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-white"
               />
               {fileName ? (
                 <p className="mt-2 text-sm text-slate-700">Selected: {fileName}</p>
@@ -439,7 +595,7 @@ export default function SuppliersPage() {
             <button
               type="button"
               onClick={handleParse}
-              disabled={parsing || saving || !selectedFile}
+              disabled={parsing || saving}
               className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
             >
               {parsing ? 'Parsing...' : 'Parse Price File'}
@@ -448,186 +604,168 @@ export default function SuppliersPage() {
             <button
               type="button"
               onClick={handleSave}
-              disabled={saveCount === 0 || saving || parsing}
+              disabled={parseResult.ready.length === 0 || saving || parsing}
               className="rounded-xl bg-green-700 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
             >
-              {saving ? 'Saving...' : `Save ${saveCount} Product${saveCount === 1 ? '' : 's'} + Create/Update L3s`}
-            </button>
-
-            <button
-              type="button"
-              onClick={addManualRow}
-              disabled={busy}
-              className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Add Manual Row
+              {saving ? 'Saving...' : 'Save Clean Rows + Create/Update L3s'}
             </button>
           </div>
+
+          {totalParsedRows > 0 ? (
+            <div className="mt-6 grid gap-3 md:grid-cols-4">
+              <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                Total parsed:{' '}
+                <span className="font-semibold text-slate-900">{totalParsedRows}</span>
+              </div>
+              <div className="rounded-xl border bg-green-50 px-4 py-3 text-sm text-green-700">
+                Clean:{' '}
+                <span className="font-semibold text-green-900">{parseResult.ready.length}</span>
+              </div>
+              <div className="rounded-xl border bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                Needs review:{' '}
+                <span className="font-semibold text-amber-900">
+                  {parseResult.needsReview.length}
+                </span>
+              </div>
+              <div className="rounded-xl border bg-red-50 px-4 py-3 text-sm text-red-700">
+                Rejected:{' '}
+                <span className="font-semibold text-red-900">{parseResult.rejected.length}</span>
+              </div>
+            </div>
+          ) : null}
         </section>
 
-        <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <div className="border-b px-6 py-4">
-            <h2 className="text-xl font-semibold text-slate-900">Import Preview</h2>
-            <p className="mt-1 text-sm text-slate-700">
-              Clean parsed rows: {preview.length}. Showing first 100 rows.
-            </p>
-          </div>
+        {parseResult.ready.length > 0 ? (
+          <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
+            <div className="border-b px-6 py-4">
+              <h2 className="text-xl font-semibold text-slate-900">Clean Parsed Rows</h2>
+              <p className="mt-1 text-sm text-slate-700">
+                These rows are ready to save. You can still edit them before saving.
+              </p>
+            </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="bg-slate-100 text-sm">
-                <tr>
-                  <th className="px-4 py-3 text-slate-800">Supplier</th>
-                  <th className="px-4 py-3 text-slate-800">Name</th>
-                  <th className="px-4 py-3 text-slate-800">Weight</th>
-                  <th className="px-4 py-3 text-slate-800">Pack Price</th>
-                  <th className="px-4 py-3 text-slate-800">Unit Price</th>
-                  <th className="px-4 py-3 text-slate-800">Supplier SKU</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {preview.length === 0 ? (
-                  <tr className="border-t">
-                    <td className="px-4 py-3 text-slate-700" colSpan={6}>
-                      No clean rows parsed yet.
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-slate-100 text-sm">
+                  <tr>
+                    <th className="px-3 py-3 text-slate-800">SKU</th>
+                    <th className="px-3 py-3 text-slate-800">Name</th>
+                    <th className="px-3 py-3 text-slate-800">Pack</th>
+                    <th className="px-3 py-3 text-slate-800">Weight</th>
+                    <th className="px-3 py-3 text-slate-800">Pack Price</th>
+                    <th className="px-3 py-3 text-slate-800">Unit Price</th>
+                    <th className="px-3 py-3 text-slate-800">Actions</th>
                   </tr>
-                ) : (
-                  preview.slice(0, 100).map((product, index) => (
-                    <tr key={`${product.supplierSku}-${index}`} className="border-t">
-                      <td className="px-4 py-3 text-slate-800">{product.supplier}</td>
-                      <td className="px-4 py-3 text-slate-800">{product.name}</td>
-                      <td className="px-4 py-3 text-slate-800">{product.weight ?? ''}</td>
-                      <td className="px-4 py-3 text-slate-800">{money(product.packPrice)}</td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {product.unitPrice ? money(product.unitPrice) : ''}
-                      </td>
-                      <td className="px-4 py-3 text-slate-800">{product.supplierSku ?? ''}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                </thead>
 
-        <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <div className="border-b px-6 py-4">
-            <h2 className="text-xl font-semibold text-slate-900">Rejected / Manual Review Rows</h2>
-            <p className="mt-1 text-sm text-slate-700">
-              Edit any rejected row, tick Include, then save. Rows need at least supplier SKU, name, and pack price.
-            </p>
-          </div>
+                <tbody>
+                  {parseResult.ready
+                    .slice(0, 250)
+                    .map((row, index) => renderEditableRow({ row, index, mode: 'ready' }))}
+                </tbody>
+              </table>
+            </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1200px] text-left">
-              <thead className="bg-slate-100 text-sm">
-                <tr>
-                  <th className="px-4 py-3 text-slate-800">Include</th>
-                  <th className="px-4 py-3 text-slate-800">Reason</th>
-                  <th className="px-4 py-3 text-slate-800">SKU</th>
-                  <th className="px-4 py-3 text-slate-800">Name</th>
-                  <th className="px-4 py-3 text-slate-800">Pack</th>
-                  <th className="px-4 py-3 text-slate-800">Weight</th>
-                  <th className="px-4 py-3 text-slate-800">Pack Price</th>
-                  <th className="px-4 py-3 text-slate-800">Unit Price</th>
-                  <th className="px-4 py-3 text-slate-800">Raw</th>
-                  <th className="px-4 py-3 text-slate-800">Actions</th>
-                </tr>
-              </thead>
+            {parseResult.ready.length > 250 ? (
+              <div className="border-t bg-slate-50 px-6 py-3 text-sm text-slate-700">
+                Showing first 250 clean rows. All {parseResult.ready.length} clean rows will still
+                be saved.
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
-              <tbody>
-                {rejectedRows.length === 0 ? (
-                  <tr className="border-t">
-                    <td className="px-4 py-3 text-slate-700" colSpan={10}>
-                      No rejected rows.
-                    </td>
+        {parseResult.needsReview.length > 0 ? (
+          <section className="mt-8 overflow-hidden rounded-2xl border border-amber-300 bg-white shadow-sm">
+            <div className="border-b px-6 py-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">Rows Needing Review</h2>
+                  <p className="mt-1 text-sm text-slate-700">
+                    Edit these rows, then approve them into the clean list.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={approveAllReviewRows}
+                  className="rounded-xl border border-green-300 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-50"
+                >
+                  Approve All Reviewed Rows
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-amber-50 text-sm">
+                  <tr>
+                    <th className="px-3 py-3 text-slate-800">SKU</th>
+                    <th className="px-3 py-3 text-slate-800">Name / Reason</th>
+                    <th className="px-3 py-3 text-slate-800">Pack</th>
+                    <th className="px-3 py-3 text-slate-800">Weight</th>
+                    <th className="px-3 py-3 text-slate-800">Pack Price</th>
+                    <th className="px-3 py-3 text-slate-800">Unit Price</th>
+                    <th className="px-3 py-3 text-slate-800">Actions</th>
                   </tr>
-                ) : (
-                  rejectedRows.map((row, index) => (
-                    <tr key={`${row.raw}-${index}`} className="border-t align-top">
-                      <td className="px-4 py-3">
-                        <input
-                          type="checkbox"
-                          checked={row.include}
-                          onChange={(e) => updateRejectedRow(index, 'include', e.target.checked)}
-                          disabled={busy}
-                        />
+                </thead>
+
+                <tbody>
+                  {parseResult.needsReview
+                    .slice(0, 250)
+                    .map((row, index) => renderEditableRow({ row, index, mode: 'review' }))}
+                </tbody>
+              </table>
+            </div>
+
+            {parseResult.needsReview.length > 250 ? (
+              <div className="border-t bg-amber-50 px-6 py-3 text-sm text-amber-800">
+                Showing first 250 review rows.
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {parseResult.rejected.length > 0 ? (
+          <section className="mt-8 overflow-hidden rounded-2xl border border-red-300 bg-white shadow-sm">
+            <div className="border-b px-6 py-4">
+              <h2 className="text-xl font-semibold text-slate-900">Rejected Rows</h2>
+              <p className="mt-1 text-sm text-slate-700">
+                These were not considered safe enough to save automatically.
+              </p>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-red-50 text-sm">
+                  <tr>
+                    <th className="px-4 py-3 text-slate-800">Reason</th>
+                    <th className="px-4 py-3 text-slate-800">Raw Text</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {parseResult.rejected.slice(0, 100).map((row, index) => (
+                    <tr key={`rejected-${index}`} className="border-t align-top">
+                      <td className="px-4 py-3 text-sm text-red-700">
+                        {row.reason ?? 'Rejected'}
                       </td>
-                      <td className="px-4 py-3 text-sm text-red-700">{row.reason}</td>
-                      <td className="px-4 py-3">
-                        <input
-                          value={row.supplierSku ?? ''}
-                          onChange={(e) => updateRejectedRow(index, 'supplierSku', e.target.value)}
-                          disabled={busy}
-                          className="w-32 rounded-lg border px-2 py-1 text-sm"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          value={row.name ?? ''}
-                          onChange={(e) => updateRejectedRow(index, 'name', e.target.value)}
-                          disabled={busy}
-                          className="w-72 rounded-lg border px-2 py-1 text-sm"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          value={row.packSize ?? ''}
-                          onChange={(e) => updateRejectedRow(index, 'packSize', e.target.value)}
-                          disabled={busy}
-                          className="w-28 rounded-lg border px-2 py-1 text-sm"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          value={row.weight ?? ''}
-                          onChange={(e) => updateRejectedRow(index, 'weight', e.target.value)}
-                          disabled={busy}
-                          className="w-28 rounded-lg border px-2 py-1 text-sm"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="number"
-                          step="0.0001"
-                          value={row.packPrice ?? ''}
-                          onChange={(e) => updateRejectedRow(index, 'packPrice', e.target.value)}
-                          disabled={busy}
-                          className="w-28 rounded-lg border px-2 py-1 text-sm"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="number"
-                          step="0.000001"
-                          value={row.unitPrice ?? ''}
-                          onChange={(e) => updateRejectedRow(index, 'unitPrice', e.target.value)}
-                          disabled={busy}
-                          className="w-28 rounded-lg border px-2 py-1 text-sm"
-                        />
-                      </td>
-                      <td className="max-w-md px-4 py-3 text-xs text-slate-600">
-                        <div className="max-h-20 overflow-auto whitespace-pre-wrap">{row.raw}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={() => removeRejectedRow(index)}
-                          disabled={busy}
-                          className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60"
-                        >
-                          Remove
-                        </button>
+                      <td className="px-4 py-3 text-sm text-slate-700">
+                        {row.raw ?? row.name ?? ''}
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {parseResult.rejected.length > 100 ? (
+              <div className="border-t bg-red-50 px-6 py-3 text-sm text-red-800">
+                Showing first 100 rejected rows.
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Saved Supplier Products</h2>
@@ -680,7 +818,7 @@ export default function SuppliersPage() {
                   <th className="px-4 py-3 text-slate-800">Supplier Product</th>
                   <th className="px-4 py-3 text-slate-800">SKU</th>
                   <th className="px-4 py-3 text-slate-800">Pack</th>
-                  <th className="px-4 py-3 text-slate-800">Pack Price</th>
+                  <th className="px-4 py-3 text-slate-800">Price</th>
                   <th className="px-4 py-3 text-slate-800">Unit Price</th>
                   <th className="px-4 py-3 text-slate-800">Linked L3</th>
                 </tr>
@@ -700,16 +838,25 @@ export default function SuppliersPage() {
                         <div className="font-medium">{product.name}</div>
                         <div className="text-xs text-slate-600">{product.supplier}</div>
                       </td>
-                      <td className="px-4 py-3 text-slate-800">{product.supplierSku ?? ''}</td>
+
+                      <td className="px-4 py-3 text-slate-800">
+                        {product.supplierSku ?? ''}
+                      </td>
+
                       <td className="px-4 py-3 text-slate-800">
                         {[product.packSize, product.weight].filter(Boolean).join(' / ')}
                       </td>
-                      <td className="px-4 py-3 text-slate-800">{money(product.packPrice)}</td>
+
+                      <td className="px-4 py-3 text-slate-800">
+                        {money(product.packPrice)}
+                      </td>
+
                       <td className="px-4 py-3 text-slate-800">
                         {product.unitPrice === null || product.unitPrice === undefined
                           ? ''
                           : money(product.unitPrice)}
                       </td>
+
                       <td className="px-4 py-3 text-slate-800">
                         {product.linkedItem ? (
                           <span className="text-green-700">

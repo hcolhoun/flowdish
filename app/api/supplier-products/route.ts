@@ -2,10 +2,15 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
 function inferUnitType(product: any): 'g' | 'ml' | 'each' {
+  const basis = String(product.priceBasis || '').toLowerCase()
   const text = `${product.name || ''} ${product.packSize || ''} ${product.weight || ''}`.toLowerCase()
 
+  if (basis === 'g') return 'g'
+  if (basis === 'ml') return 'ml'
+  if (basis === 'each') return 'each'
+
   if (/\d+(\.\d+)?\s?(kg|g)\b/.test(text)) return 'g'
-  if (/\d+(\.\d+)?\s?(l|ltr|litre|litres|ml)\b/.test(text)) return 'ml'
+  if (/\d+(\.\d+)?\s?(l|ltr|litre|liter|ml)\b/.test(text)) return 'ml'
 
   return 'each'
 }
@@ -51,40 +56,25 @@ function makeSku(product: any) {
     .replace(/^-+|-+$/g, '')
 }
 
-function looksLikeBadImportedName(name: string) {
-  const cleaned = name.trim().toLowerCase()
+function cleanString(value: unknown) {
+  const text = String(value || '').trim()
+  return text.length > 0 ? text : null
+}
 
-  if (!cleaned) return true
-  if (cleaned.length < 3) return true
+function cleanNumber(value: unknown) {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
 
-  const badExact = new Set([
-    'box',
-    'boxx',
-    'bag',
-    'bagx',
-    'pack',
-    'packx',
-    'carton',
-    'cartonx',
-    'tray',
-    'trayx',
-    'unit',
-    'bunch',
-    'net',
-  ])
-
-  if (badExact.has(cleaned)) return true
-
-  if (/^(box|bag|pack|carton|tray|unit|bunch|net)x?\d*$/i.test(name)) return true
-
-  if (
-    /product price list|orderproduct code|packsize|buyer at tenjim|caterway|please contact the sales office/i.test(
-      name
-    )
-  ) {
-    return true
-  }
-
+function isBadAutoItemName(name: string) {
+  if (!name || name.trim().length < 3) return true
+  if (/^boxx?$/i.test(name)) return true
+  if (/^bagx?$/i.test(name)) return true
+  if (/^packx?$/i.test(name)) return true
+  if (/Product Price List/i.test(name)) return true
+  if (/OrderProduct Code/i.test(name)) return true
+  if (/Further Information/i.test(name)) return true
   return false
 }
 
@@ -93,9 +83,8 @@ async function createOrLinkL3(product: any) {
   const unitType = inferUnitType(product)
   const shelfLifeDays = inferShelfLifeDays(product)
 
-  if (looksLikeBadImportedName(product.name)) {
-    return null
-  }
+  if (!sku) return null
+  if (isBadAutoItemName(product.name)) return null
 
   let item = await prisma.item.findUnique({
     where: { sku },
@@ -113,18 +102,29 @@ async function createOrLinkL3(product: any) {
         standardBatchOutput: null,
       },
     })
-  } else {
-    item = await prisma.item.update({
-      where: { id: item.id },
-      data: {
-        name: product.name,
-        unitType: item.itemType === 'L3' ? unitType : item.unitType,
-        shelfLifeDays: item.itemType === 'L3' ? shelfLifeDays : item.shelfLifeDays,
-      },
-    })
   }
 
   return item
+}
+
+function dedupeIncomingProducts(products: any[]) {
+  const map = new Map<string, any>()
+
+  for (const product of products) {
+    const supplier = String(product.supplier || '').trim()
+    const supplierSku = product.supplierSku ? String(product.supplierSku).trim() : ''
+    const name = String(product.name || '').trim()
+
+    if (!supplier || !name) continue
+
+    const key = supplierSku
+      ? `${supplier}:${supplierSku}`
+      : `${supplier}:${name.toLowerCase()}`
+
+    map.set(key, product)
+  }
+
+  return Array.from(map.values())
 }
 
 export async function GET() {
@@ -137,6 +137,7 @@ export async function GET() {
     return NextResponse.json(products)
   } catch (error) {
     console.error('GET /api/supplier-products failed:', error)
+
     return NextResponse.json(
       { error: 'Failed to load supplier products' },
       { status: 500 }
@@ -147,88 +148,64 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json()
-    const products = body.products
+    const products = Array.isArray(body.products) ? body.products : []
 
     if (!Array.isArray(products)) {
       return NextResponse.json({ error: 'Products must be an array' }, { status: 400 })
     }
+
+    const dedupedProducts = dedupeIncomingProducts(products)
 
     let createdCount = 0
     let updatedCount = 0
     let linkedCount = 0
     let skippedCount = 0
 
-    const seen = new Set<string>()
-
-    for (const product of products as any[]) {
+    for (const product of dedupedProducts) {
       const cleanProduct = {
-        supplier: String(product.supplier || 'Caterway').trim(),
-        supplierSku: product.supplierSku ? String(product.supplierSku).trim() : null,
+        supplier: String(product.supplier || '').trim(),
+        supplierSku: cleanString(product.supplierSku),
         name: String(product.name || '').trim(),
-        packSize: product.packSize ? String(product.packSize).trim() : null,
-        weight: product.weight ? String(product.weight).trim() : null,
-        packPrice:
-          product.packPrice === null ||
-          product.packPrice === undefined ||
-          product.packPrice === ''
-            ? null
-            : Number(product.packPrice),
-        unitPrice:
-          product.unitPrice === null ||
-          product.unitPrice === undefined ||
-          product.unitPrice === ''
-            ? null
-            : Number(product.unitPrice),
+        packSize: cleanString(product.packSize),
+        weight: cleanString(product.weight),
+        packPrice: cleanNumber(product.packPrice),
+        unitPrice: cleanNumber(product.unitPrice),
       }
 
-      if (!cleanProduct.name || looksLikeBadImportedName(cleanProduct.name)) {
+      if (!cleanProduct.supplier || !cleanProduct.name) {
         skippedCount++
         continue
       }
 
-      if (!cleanProduct.supplier || !cleanProduct.supplierSku) {
+      if (isBadAutoItemName(cleanProduct.name)) {
         skippedCount++
         continue
       }
 
-      if (cleanProduct.packPrice !== null && Number.isNaN(cleanProduct.packPrice)) {
-        skippedCount++
-        continue
-      }
-
-      if (cleanProduct.unitPrice !== null && Number.isNaN(cleanProduct.unitPrice)) {
-        cleanProduct.unitPrice = null
-      }
-
-      const dedupeKey = `${cleanProduct.supplier}::${cleanProduct.supplierSku}`
-
-      if (seen.has(dedupeKey)) {
-        skippedCount++
-        continue
-      }
-
-      seen.add(dedupeKey)
-
-      const linkedItem = await createOrLinkL3(cleanProduct)
-
-      const existing = await prisma.supplierProduct.findFirst({
-        where: {
-          supplier: cleanProduct.supplier,
-          supplierSku: cleanProduct.supplierSku,
-        },
+      const linkedItem = await createOrLinkL3({
+        ...cleanProduct,
+        priceBasis: product.priceBasis,
       })
+
+      const existing = cleanProduct.supplierSku
+        ? await prisma.supplierProduct.findFirst({
+            where: {
+              supplier: cleanProduct.supplier,
+              supplierSku: cleanProduct.supplierSku,
+            },
+          })
+        : await prisma.supplierProduct.findFirst({
+            where: {
+              supplier: cleanProduct.supplier,
+              name: cleanProduct.name,
+            },
+          })
 
       if (existing) {
         await prisma.supplierProduct.update({
           where: { id: existing.id },
           data: {
-            supplier: cleanProduct.supplier,
-            supplierSku: cleanProduct.supplierSku,
-            name: cleanProduct.name,
-            packSize: cleanProduct.packSize,
-            weight: cleanProduct.weight,
-            packPrice: cleanProduct.packPrice,
-            unitPrice: cleanProduct.unitPrice,
+            ...cleanProduct,
             linkedItemId: linkedItem?.id ?? existing.linkedItemId,
           },
         })
@@ -237,13 +214,7 @@ export async function POST(req: Request) {
       } else {
         await prisma.supplierProduct.create({
           data: {
-            supplier: cleanProduct.supplier,
-            supplierSku: cleanProduct.supplierSku,
-            name: cleanProduct.name,
-            packSize: cleanProduct.packSize,
-            weight: cleanProduct.weight,
-            packPrice: cleanProduct.packPrice,
-            unitPrice: cleanProduct.unitPrice,
+            ...cleanProduct,
             linkedItemId: linkedItem?.id ?? null,
           },
         })
@@ -256,6 +227,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
+      receivedCount: products.length,
+      dedupedCount: dedupedProducts.length,
       createdCount,
       updatedCount,
       linkedCount,
@@ -268,7 +241,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error:
-            'A duplicate supplier SKU already exists. The import was stopped before completion.',
+            'Duplicate supplier SKU found. The import was stopped before all rows could be saved.',
         },
         { status: 400 }
       )
@@ -301,6 +274,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json(product)
   } catch (error) {
     console.error('PATCH /api/supplier-products failed:', error)
+
     return NextResponse.json(
       { error: 'Failed to update supplier product link' },
       { status: 500 }
