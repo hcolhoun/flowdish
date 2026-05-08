@@ -188,8 +188,41 @@ model SupplierProduct {
   unitPrice   Float?
   createdAt   DateTime @default(now())
 
-  linkedItemId String?
-  linkedItem   Item?   @relation("SupplierProduct_LinkedItem", fields: [linkedItemId], references: [id])
+  linkedItemId                  String?
+  linkedItem                    Item?                         @relation("SupplierProduct_LinkedItem", fields: [linkedItemId], references: [id])
+  supplierProductPriceHistories SupplierProductPriceHistory[]
 
   @@index([supplier, supplierSku])
+}
+
+model SupplierImportBatch {
+  id               String   @id @default(cuid())
+  supplier         String
+  fileName         String?
+  parsedCount      Int      @default(0)
+  createdCount     Int      @default(0)
+  updatedCount     Int      @default(0)
+  priceChangeCount Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  priceChanges SupplierProductPriceHistory[]
+}
+
+model SupplierProductPriceHistory {
+  id                String  @id @default(cuid())
+  supplierProductId String
+  importBatchId     String?
+
+  oldPackPrice Float?
+  newPackPrice Float?
+  oldUnitPrice Float?
+  newUnitPrice Float?
+
+  changedAt DateTime @default(now())
+
+  supplierProduct SupplierProduct      @relation(fields: [supplierProductId], references: [id], onDelete: Cascade)
+  importBatch     SupplierImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  @@index([supplierProductId])
+  @@index([importBatchId])
 }

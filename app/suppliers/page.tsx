@@ -69,6 +69,48 @@ type EditingL3 = {
   shelfLifeDays: string
 }
 
+type ImportImpactRow = {
+  itemId: string
+  sku: string
+  name: string
+  sellingPrice: number | null
+  oldCogs: number
+  newCogs: number
+  cogsChange: number
+  oldGrossMarginPercent: number | null
+  newGrossMarginPercent: number | null
+  suggestedSellingPriceAtTargetMargin: number | null
+  targetMarginPercent: number
+  status: 'GREEN' | 'AMBER' | 'RED' | 'NO_PRICE'
+  changedInputs: Array<{
+    supplier: string
+    supplierSku: string | null
+    supplierProductName: string
+    l3Sku: string | null
+    l3Name: string | null
+    oldUnitPrice: number | null
+    newUnitPrice: number | null
+    oldPackPrice: number | null
+    newPackPrice: number | null
+    usedIn: 'DIRECT_L1_L3' | 'INDIRECT_L2_L3'
+    l2Name: string | null
+    l2Sku: string | null
+  }>
+}
+
+type ImportImpactResponse = {
+  importBatch: {
+    id: string
+    supplier: string
+    parsedCount: number
+    createdCount: number
+    updatedCount: number
+    priceChangeCount: number
+    createdAt: string
+  }
+  affectedL1s: ImportImpactRow[]
+}
+
 function toInputValue(value: string | number | null | undefined) {
   if (value === null || value === undefined) return ''
   return String(value)
@@ -90,6 +132,18 @@ function toNullableNumber(value: string) {
 function formatDate(value: string | null | undefined) {
   if (!value) return ''
   return new Date(value).toLocaleDateString('en-GB')
+}
+
+function formatPercent(value: number | null | undefined) {
+  if (value === null || value === undefined) return ''
+  return `${value.toFixed(1)}%`
+}
+
+function statusLabel(status: ImportImpactRow['status']) {
+  if (status === 'GREEN') return '✅ OK'
+  if (status === 'AMBER') return '⚠️ Watch'
+  if (status === 'RED') return '🔴 Review price'
+  return 'No selling price'
 }
 
 export default function SuppliersPage() {
@@ -116,6 +170,9 @@ export default function SuppliersPage() {
 
   const [editingL3Id, setEditingL3Id] = useState<string | null>(null)
   const [editingL3, setEditingL3] = useState<EditingL3 | null>(null)
+
+  const [impactReport, setImpactReport] = useState<ImportImpactResponse | null>(null)
+  const [loadingImpact, setLoadingImpact] = useState(false)
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -174,6 +231,32 @@ export default function SuppliersPage() {
     }
   }
 
+  async function loadImpactReport(importBatchId: string) {
+    try {
+      setLoadingImpact(true)
+      setImpactReport(null)
+
+      const res = await fetch(
+        `/api/supplier-products/import-impact?importBatchId=${encodeURIComponent(
+          importBatchId
+        )}`,
+        { cache: 'no-store' }
+      )
+
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to load import impact report')
+      }
+
+      setImpactReport(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoadingImpact(false)
+    }
+  }
+
   useEffect(() => {
     loadProducts()
   }, [])
@@ -211,6 +294,7 @@ export default function SuppliersPage() {
     setMessage('')
     setPreview([])
     setRejectedRows([])
+    setImpactReport(null)
     setSelectedFile(null)
     setFileName('')
 
@@ -254,6 +338,7 @@ export default function SuppliersPage() {
       setMessage('')
       setPreview([])
       setRejectedRows([])
+      setImpactReport(null)
       setParsing(true)
 
       if (!selectedFile) {
@@ -350,6 +435,7 @@ export default function SuppliersPage() {
     try {
       setError('')
       setMessage('')
+      setImpactReport(null)
       setSaving(true)
 
       if (preview.length === 0) {
@@ -379,7 +465,11 @@ export default function SuppliersPage() {
       const res = await fetch('/api/supplier-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ products: productsToSave }),
+        body: JSON.stringify({
+          supplier,
+          fileName,
+          products: productsToSave,
+        }),
       })
 
       const data = await safeJson(res)
@@ -391,14 +481,19 @@ export default function SuppliersPage() {
       setMessage(
         `${productsToSave.length} supplier products saved. ${
           data.linkedCount ?? 0
-        } linked to L3 items.`
+        } linked to L3 items. ${data.priceChangeCount ?? 0} price change(s) detected.`
       )
 
       setPreview([])
       setRejectedRows([])
       setSelectedFile(null)
       setFileName('')
+
       await loadProducts()
+
+      if (data.importBatchId) {
+        await loadImpactReport(data.importBatchId)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -558,8 +653,8 @@ export default function SuppliersPage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Supplier Products</h1>
             <p className="mt-2 text-slate-800">
-              Upload supplier price lists, review parsed rows, create L3 items, and edit supplier
-              product links.
+              Upload supplier price lists, review parsed rows, create L3 items, edit supplier
+              products, and see which L1 dishes are affected by price changes.
             </p>
           </div>
 
@@ -600,6 +695,7 @@ export default function SuppliersPage() {
                   setSupplier(e.target.value as 'Caterway' | 'Sysco')
                   setPreview([])
                   setRejectedRows([])
+                  setImpactReport(null)
                   setError('')
                   setMessage('')
                 }}
@@ -806,6 +902,137 @@ export default function SuppliersPage() {
                       <td className="px-4 py-3 text-xs text-amber-900">{row.raw ?? row.name}</td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
+
+        {loadingImpact ? (
+          <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-900">Price Import Impact</h2>
+            <p className="mt-2 text-sm text-slate-700">Calculating affected L1 dishes…</p>
+          </section>
+        ) : null}
+
+        {impactReport ? (
+          <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
+            <div className="border-b px-6 py-4">
+              <h2 className="text-xl font-semibold text-slate-900">Price Import Impact</h2>
+              <p className="mt-1 text-sm text-slate-700">
+                {impactReport.importBatch.priceChangeCount} price change(s).{' '}
+                {impactReport.affectedL1s.length} affected L1 dish(es).
+              </p>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="min-w-[1200px] w-full text-left">
+                <thead className="bg-slate-100 text-sm">
+                  <tr>
+                    <th className="px-4 py-3 text-slate-800">Status</th>
+                    <th className="px-4 py-3 text-slate-800">L1 Dish</th>
+                    <th className="px-4 py-3 text-slate-800">Selling Price</th>
+                    <th className="px-4 py-3 text-slate-800">Old COGS</th>
+                    <th className="px-4 py-3 text-slate-800">New COGS</th>
+                    <th className="px-4 py-3 text-slate-800">COGS Change</th>
+                    <th className="px-4 py-3 text-slate-800">Old Margin</th>
+                    <th className="px-4 py-3 text-slate-800">New Margin</th>
+                    <th className="px-4 py-3 text-slate-800">Suggested Price</th>
+                    <th className="px-4 py-3 text-slate-800">Changed Inputs</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {impactReport.affectedL1s.length === 0 ? (
+                    <tr className="border-t">
+                      <td className="px-4 py-3 text-slate-700" colSpan={10}>
+                        No L1 dishes were affected by this import.
+                      </td>
+                    </tr>
+                  ) : (
+                    impactReport.affectedL1s.map((row) => (
+                      <tr key={row.itemId} className="border-t align-top">
+                        <td className="px-4 py-3 text-slate-800">{statusLabel(row.status)}</td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          <div className="font-medium">{row.name}</div>
+                          <div className="text-xs text-slate-500">{row.sku}</div>
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {row.sellingPrice === null ? '' : money(row.sellingPrice, 2)}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">{money(row.oldCogs, 4)}</td>
+                        <td className="px-4 py-3 text-slate-800">{money(row.newCogs, 4)}</td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {row.cogsChange >= 0 ? '+' : ''}
+                          {money(row.cogsChange, 4)}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {formatPercent(row.oldGrossMarginPercent)}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {formatPercent(row.newGrossMarginPercent)}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {row.suggestedSellingPriceAtTargetMargin
+                            ? money(row.suggestedSellingPriceAtTargetMargin, 2)
+                            : ''}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          <details>
+                            <summary className="cursor-pointer text-sm text-slate-700">
+                              {row.changedInputs.length} changed input(s)
+                            </summary>
+
+                            <div className="mt-2 space-y-2">
+                              {row.changedInputs.map((input, index) => (
+                                <div
+                                  key={index}
+                                  className="rounded-lg border bg-slate-50 p-2 text-xs"
+                                >
+                                  <div className="font-medium text-slate-900">
+                                    {input.l3Name || input.supplierProductName}
+                                  </div>
+
+                                  <div className="text-slate-600">
+                                    SKU: {input.l3Sku || input.supplierSku || 'N/A'}
+                                  </div>
+
+                                  <div className="text-slate-600">
+                                    Supplier: {input.supplier}
+                                  </div>
+
+                                  <div className="text-slate-600">
+                                    Unit price: {money(input.oldUnitPrice, 6)} →{' '}
+                                    {money(input.newUnitPrice, 6)}
+                                  </div>
+
+                                  <div className="text-slate-600">
+                                    Pack price: {money(input.oldPackPrice, 2)} →{' '}
+                                    {money(input.newPackPrice, 2)}
+                                  </div>
+
+                                  <div className="text-slate-600">
+                                    Used in:{' '}
+                                    {input.usedIn === 'DIRECT_L1_L3'
+                                      ? 'Direct L1 ingredient'
+                                      : `L2 ${input.l2Name || ''}`}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>

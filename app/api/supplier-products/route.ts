@@ -2,15 +2,10 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
 function inferUnitType(product: any): 'g' | 'ml' | 'each' {
-  const basis = String(product.priceBasis || '').toLowerCase()
   const text = `${product.name || ''} ${product.packSize || ''} ${product.weight || ''}`.toLowerCase()
 
-  if (basis === 'g') return 'g'
-  if (basis === 'ml') return 'ml'
-  if (basis === 'each') return 'each'
-
   if (/\d+(\.\d+)?\s?(kg|g)\b/.test(text)) return 'g'
-  if (/\d+(\.\d+)?\s?(l|ltr|litre|liter|ml)\b/.test(text)) return 'ml'
+  if (/\d+(\.\d+)?\s?(l|ltr|litre|ml)\b/.test(text)) return 'ml'
 
   return 'each'
 }
@@ -56,35 +51,38 @@ function makeSku(product: any) {
     .replace(/^-+|-+$/g, '')
 }
 
-function cleanString(value: unknown) {
-  const text = String(value || '').trim()
-  return text.length > 0 ? text : null
-}
-
-function cleanNumber(value: unknown) {
+function toNullableNumber(value: any) {
   if (value === null || value === undefined || value === '') return null
   const number = Number(value)
   return Number.isFinite(number) ? number : null
 }
 
-function isBadAutoItemName(name: string) {
-  if (!name || name.trim().length < 3) return true
-  if (/^boxx?$/i.test(name)) return true
-  if (/^bagx?$/i.test(name)) return true
-  if (/^packx?$/i.test(name)) return true
-  if (/Product Price List/i.test(name)) return true
-  if (/OrderProduct Code/i.test(name)) return true
-  if (/Further Information/i.test(name)) return true
-  return false
+function pricesChanged({
+  oldPackPrice,
+  newPackPrice,
+  oldUnitPrice,
+  newUnitPrice,
+}: {
+  oldPackPrice: number | null
+  newPackPrice: number | null
+  oldUnitPrice: number | null
+  newUnitPrice: number | null
+}) {
+  const normalise = (value: number | null) => {
+    if (value === null || value === undefined) return null
+    return Number(value.toFixed(8))
+  }
+
+  return (
+    normalise(oldPackPrice) !== normalise(newPackPrice) ||
+    normalise(oldUnitPrice) !== normalise(newUnitPrice)
+  )
 }
 
 async function createOrLinkL3(product: any) {
   const sku = makeSku(product)
   const unitType = inferUnitType(product)
   const shelfLifeDays = inferShelfLifeDays(product)
-
-  if (!sku) return null
-  if (isBadAutoItemName(product.name)) return null
 
   let item = await prisma.item.findUnique({
     where: { sku },
@@ -107,26 +105,6 @@ async function createOrLinkL3(product: any) {
   return item
 }
 
-function dedupeIncomingProducts(products: any[]) {
-  const map = new Map<string, any>()
-
-  for (const product of products) {
-    const supplier = String(product.supplier || '').trim()
-    const supplierSku = product.supplierSku ? String(product.supplierSku).trim() : ''
-    const name = String(product.name || '').trim()
-
-    if (!supplier || !name) continue
-
-    const key = supplierSku
-      ? `${supplier}:${supplierSku}`
-      : `${supplier}:${name.toLowerCase()}`
-
-    map.set(key, product)
-  }
-
-  return Array.from(map.values())
-}
-
 export async function GET() {
   try {
     const products = await prisma.supplierProduct.findMany({
@@ -137,7 +115,6 @@ export async function GET() {
     return NextResponse.json(products)
   } catch (error) {
     console.error('GET /api/supplier-products failed:', error)
-
     return NextResponse.json(
       { error: 'Failed to load supplier products' },
       { status: 500 }
@@ -148,44 +125,57 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json()
-    const products = Array.isArray(body.products) ? body.products : []
+    const products = body.products
+    const fileName = body.fileName ? String(body.fileName) : null
+    const supplierName = body.supplier ? String(body.supplier) : 'Mixed'
 
     if (!Array.isArray(products)) {
       return NextResponse.json({ error: 'Products must be an array' }, { status: 400 })
     }
 
-    const dedupedProducts = dedupeIncomingProducts(products)
+    const deduped = new Map<string, any>()
+
+    for (const product of products as any[]) {
+      const supplier = String(product.supplier || supplierName || '').trim()
+      const supplierSku = product.supplierSku ? String(product.supplierSku).trim() : null
+      const name = String(product.name || '').trim()
+
+      if (!supplier || !name) continue
+
+      const key = supplierSku
+        ? `${supplier}::${supplierSku}`
+        : `${supplier}::NO-SKU::${name.toLowerCase()}`
+
+      deduped.set(key, product)
+    }
+
+    const importBatch = await prisma.supplierImportBatch.create({
+      data: {
+        supplier: supplierName,
+        fileName,
+        parsedCount: deduped.size,
+      },
+    })
 
     let createdCount = 0
     let updatedCount = 0
     let linkedCount = 0
-    let skippedCount = 0
+    let priceChangeCount = 0
 
-    for (const product of dedupedProducts) {
+    for (const product of deduped.values()) {
       const cleanProduct = {
-        supplier: String(product.supplier || '').trim(),
-        supplierSku: cleanString(product.supplierSku),
+        supplier: String(product.supplier || supplierName || '').trim(),
+        supplierSku: product.supplierSku ? String(product.supplierSku).trim() : null,
         name: String(product.name || '').trim(),
-        packSize: cleanString(product.packSize),
-        weight: cleanString(product.weight),
-        packPrice: cleanNumber(product.packPrice),
-        unitPrice: cleanNumber(product.unitPrice),
+        packSize: product.packSize ? String(product.packSize).trim() : null,
+        weight: product.weight ? String(product.weight).trim() : null,
+        packPrice: toNullableNumber(product.packPrice),
+        unitPrice: toNullableNumber(product.unitPrice),
       }
 
-      if (!cleanProduct.supplier || !cleanProduct.name) {
-        skippedCount++
-        continue
-      }
+      if (!cleanProduct.supplier || !cleanProduct.name) continue
 
-      if (isBadAutoItemName(cleanProduct.name)) {
-        skippedCount++
-        continue
-      }
-
-      const linkedItem = await createOrLinkL3({
-        ...cleanProduct,
-        priceBasis: product.priceBasis,
-      })
+      const linkedItem = await createOrLinkL3(cleanProduct)
 
       const existing = cleanProduct.supplierSku
         ? await prisma.supplierProduct.findFirst({
@@ -197,56 +187,77 @@ export async function POST(req: Request) {
         : await prisma.supplierProduct.findFirst({
             where: {
               supplier: cleanProduct.supplier,
+              supplierSku: null,
               name: cleanProduct.name,
             },
           })
 
       if (existing) {
-        await prisma.supplierProduct.update({
+        const changed = pricesChanged({
+          oldPackPrice: existing.packPrice,
+          newPackPrice: cleanProduct.packPrice,
+          oldUnitPrice: existing.unitPrice,
+          newUnitPrice: cleanProduct.unitPrice,
+        })
+
+        const updated = await prisma.supplierProduct.update({
           where: { id: existing.id },
           data: {
             ...cleanProduct,
-            linkedItemId: linkedItem?.id ?? existing.linkedItemId,
+            linkedItemId: existing.linkedItemId || linkedItem.id,
           },
         })
+
+        if (changed) {
+          await prisma.supplierProductPriceHistory.create({
+            data: {
+              supplierProductId: updated.id,
+              importBatchId: importBatch.id,
+              oldPackPrice: existing.packPrice,
+              newPackPrice: cleanProduct.packPrice,
+              oldUnitPrice: existing.unitPrice,
+              newUnitPrice: cleanProduct.unitPrice,
+            },
+          })
+
+          priceChangeCount++
+        }
 
         updatedCount++
       } else {
         await prisma.supplierProduct.create({
           data: {
             ...cleanProduct,
-            linkedItemId: linkedItem?.id ?? null,
+            linkedItemId: linkedItem.id,
           },
         })
 
         createdCount++
       }
 
-      if (linkedItem) linkedCount++
+      linkedCount++
     }
+
+    const updatedBatch = await prisma.supplierImportBatch.update({
+      where: { id: importBatch.id },
+      data: {
+        createdCount,
+        updatedCount,
+        priceChangeCount,
+      },
+    })
 
     return NextResponse.json({
       success: true,
-      receivedCount: products.length,
-      dedupedCount: dedupedProducts.length,
+      importBatchId: updatedBatch.id,
+      parsedCount: updatedBatch.parsedCount,
       createdCount,
       updatedCount,
       linkedCount,
-      skippedCount,
+      priceChangeCount,
     })
-  } catch (error: any) {
+  } catch (error) {
     console.error('POST /api/supplier-products failed:', error)
-
-    if (error?.code === 'P2002') {
-      return NextResponse.json(
-        {
-          error:
-            'Duplicate supplier SKU found. The import was stopped before all rows could be saved.',
-        },
-        { status: 400 }
-      )
-    }
-
     return NextResponse.json(
       { error: 'Failed to save supplier products' },
       { status: 500 }
@@ -281,22 +292,9 @@ export async function PATCH(req: Request) {
     if ('name' in body) updateData.name = String(body.name || '')
     if ('packSize' in body) updateData.packSize = body.packSize ? String(body.packSize) : null
     if ('weight' in body) updateData.weight = body.weight ? String(body.weight) : null
-    if ('packPrice' in body) {
-      updateData.packPrice =
-        body.packPrice === null || body.packPrice === undefined || body.packPrice === ''
-          ? null
-          : Number(body.packPrice)
-    }
-    if ('unitPrice' in body) {
-      updateData.unitPrice =
-        body.unitPrice === null || body.unitPrice === undefined || body.unitPrice === ''
-          ? null
-          : Number(body.unitPrice)
-    }
+    if ('packPrice' in body) updateData.packPrice = toNullableNumber(body.packPrice)
+    if ('unitPrice' in body) updateData.unitPrice = toNullableNumber(body.unitPrice)
 
-    // Important:
-    // Only change linkedItemId if the frontend explicitly sends linkedItemId.
-    // Do NOT default it to null, or product edits will unlink the L3.
     if ('linkedItemId' in body) {
       updateData.linkedItemId = body.linkedItemId ? String(body.linkedItemId) : null
     }
@@ -324,14 +322,6 @@ export async function DELETE(req: Request) {
 
     if (!id) {
       return NextResponse.json({ error: 'Missing supplier product id' }, { status: 400 })
-    }
-
-    const product = await prisma.supplierProduct.findUnique({
-      where: { id },
-    })
-
-    if (!product) {
-      return NextResponse.json({ error: 'Supplier product not found' }, { status: 404 })
     }
 
     await prisma.supplierProduct.delete({
