@@ -1,85 +1,163 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+
+type UnitType = 'g' | 'ml' | 'each'
+type ItemType = 'L1' | 'L2' | 'L3'
 
 type Item = {
   id: string
   sku: string
   name: string
-  itemType: 'L1' | 'L2' | 'L3'
-  unitType: 'g' | 'ml' | 'each'
+  itemType: ItemType
+  unitType: UnitType
+  shelfLifeDays: number | null
+  sellingPrice?: number | null
+  standardBatchOutput?: number | null
 }
 
 type WasteRecord = {
   id: string
   date: string
+  itemId: string
   qty: number
+  reason: string | null
   item: Item
-  reason?: string | null
+}
+
+function todayInputValue() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleDateString('en-GB')
 }
 
 export default function WastePage() {
   const [items, setItems] = useState<Item[]>([])
   const [wastes, setWastes] = useState<WasteRecord[]>([])
-  const [itemId, setItemId] = useState('')
-  const [date, setDate] = useState('')
+
+  const [itemSearch, setItemSearch] = useState('')
+  const [selectedItemId, setSelectedItemId] = useState('')
+  const [date, setDate] = useState(todayInputValue())
   const [qty, setQty] = useState('')
   const [reason, setReason] = useState('')
+
+  const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(false)
 
   async function safeJson(res: Response) {
     const text = await res.text()
+
     try {
       return JSON.parse(text)
     } catch {
-      throw new Error(text.slice(0, 500))
+      throw new Error(text.slice(0, 1000))
     }
   }
 
-  async function loadData() {
+  async function loadItems() {
+    const res = await fetch('/api/items', { cache: 'no-store' })
+    const data = await safeJson(res)
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to load items')
+    }
+
+    setItems(data)
+  }
+
+  async function loadWastes() {
+    const res = await fetch('/api/waste', { cache: 'no-store' })
+    const data = await safeJson(res)
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to load waste records')
+    }
+
+    setWastes(data)
+  }
+
+  async function loadPage() {
     try {
+      setLoading(true)
       setError('')
-
-      const [itemsRes, wasteRes] = await Promise.all([
-        fetch('/api/items', { cache: 'no-store' }),
-        fetch('/api/waste', { cache: 'no-store' }),
-      ])
-
-      const itemsData = await safeJson(itemsRes)
-      const wasteData = await safeJson(wasteRes)
-
-      if (!itemsRes.ok) {
-        throw new Error(itemsData?.error || 'Failed to load items')
-      }
-
-      if (!wasteRes.ok) {
-        throw new Error(wasteData?.error || 'Failed to load waste records')
-      }
-
-      setItems(itemsData)
-      setWastes(wasteData)
+      await Promise.all([loadItems(), loadWastes()])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoading(false)
     }
   }
 
   useEffect(() => {
-    loadData()
+    loadPage()
   }, [])
+
+  const l3Items = useMemo(() => {
+    return items
+      .filter((item) => item.itemType === 'L3')
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [items])
+
+  const selectedItem = useMemo(() => {
+    return l3Items.find((item) => item.id === selectedItemId) ?? null
+  }, [l3Items, selectedItemId])
+
+  const filteredL3Items = useMemo(() => {
+    const q = itemSearch.trim().toLowerCase()
+
+    if (!q) return l3Items.slice(0, 25)
+
+    return l3Items
+      .filter((item) => {
+        return (
+          item.name.toLowerCase().includes(q) ||
+          item.sku.toLowerCase().includes(q)
+        )
+      })
+      .slice(0, 25)
+  }, [l3Items, itemSearch])
+
+  function selectItem(item: Item) {
+    setSelectedItemId(item.id)
+    setItemSearch(`${item.name} [${item.sku}]`)
+  }
+
+  function clearSelectedItem() {
+    setSelectedItemId('')
+    setItemSearch('')
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
 
     try {
       setError('')
+      setMessage('')
+      setSaving(true)
+
+      if (!selectedItemId) {
+        setError('Choose an L3 item first.')
+        return
+      }
+
+      const numericQty = Number(qty)
+
+      if (!numericQty || numericQty <= 0) {
+        setError('Quantity must be greater than 0.')
+        return
+      }
 
       const res = await fetch('/api/waste', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          itemId,
+          itemId: selectedItemId,
           date,
-          qty: Number(qty),
+          qty: numericQty,
           reason,
         }),
       })
@@ -87,111 +165,213 @@ export default function WastePage() {
       const data = await safeJson(res)
 
       if (!res.ok) {
-        throw new Error(data?.error || 'Failed to save waste')
+        throw new Error(data?.error || 'Failed to save waste record')
       }
 
-      setItemId('')
-      setDate('')
+      setMessage('Waste recorded and inventory reduced.')
       setQty('')
       setReason('')
-      loadData()
+      clearSelectedItem()
+
+      await loadWastes()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSaving(false)
     }
   }
 
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-6xl">
-        <h1 className="text-3xl font-semibold">Waste</h1>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-semibold text-slate-900">Waste</h1>
+            <p className="mt-2 text-slate-700">
+              Record wasted L3 ingredients. Waste entries reduce inventory using FIFO.
+            </p>
+          </div>
+
+          {loading ? (
+            <div className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-600">
+              Loading…
+            </div>
+          ) : null}
+        </div>
 
         {error ? (
-          <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 whitespace-pre-wrap">
+          <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>
         ) : null}
 
-        <form onSubmit={handleSubmit} className="mt-8 grid gap-4 rounded-2xl border bg-white p-6 shadow-sm md:grid-cols-2">
-          <div>
-            <label className="mb-1 block text-sm font-medium">Item</label>
-            <select
-              value={itemId}
-              onChange={(e) => setItemId(e.target.value)}
-              className="w-full rounded-xl border px-3 py-2"
-              required
-            >
-              <option value="">Select item</option>
-              {items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} [{item.sku}] ({item.itemType})
-                </option>
-              ))}
-            </select>
+        {message ? (
+          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {message}
+          </div>
+        ) : null}
+
+        <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-slate-900">Record Waste</h2>
+
+          <form onSubmit={handleSubmit} className="mt-6 grid gap-5 md:grid-cols-2">
+            <div className="relative md:col-span-2">
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                L3 Item
+              </label>
+
+              <input
+                value={itemSearch}
+                onChange={(e) => {
+                  setItemSearch(e.target.value)
+                  setSelectedItemId('')
+                }}
+                placeholder="Type item name or SKU..."
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+              />
+
+              {itemSearch && !selectedItemId ? (
+                <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-xl border bg-white shadow-lg">
+                  {filteredL3Items.length === 0 ? (
+                    <div className="px-4 py-3 text-sm text-slate-600">
+                      No L3 items found.
+                    </div>
+                  ) : (
+                    filteredL3Items.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => selectItem(item)}
+                        className="block w-full border-b px-4 py-3 text-left hover:bg-slate-50"
+                      >
+                        <div className="font-medium text-slate-900">{item.name}</div>
+                        <div className="text-xs text-slate-600">
+                          {item.sku} · {item.unitType}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
+
+              {selectedItem ? (
+                <div className="mt-2 flex items-center justify-between rounded-xl border bg-slate-50 px-3 py-2 text-sm">
+                  <div className="text-slate-700">
+                    Selected: <span className="font-medium">{selectedItem.name}</span> ·{' '}
+                    {selectedItem.sku} · unit: {selectedItem.unitType}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={clearSelectedItem}
+                    className="text-red-700 hover:underline"
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Date
+              </label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Quantity {selectedItem ? `(${selectedItem.unitType})` : ''}
+              </label>
+              <input
+                type="number"
+                step="0.001"
+                min="0"
+                value={qty}
+                onChange={(e) => setQty(e.target.value)}
+                placeholder="e.g. 500"
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Reason
+              </label>
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Expired, damaged, over-prepped, dropped, quality issue..."
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+              >
+                {saving ? 'Saving…' : 'Record Waste'}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
+          <div className="border-b px-6 py-4">
+            <h2 className="text-xl font-semibold text-slate-900">Waste Records</h2>
           </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium">Date</label>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="w-full rounded-xl border px-3 py-2"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium">Quantity</label>
-            <input
-              type="number"
-              step="0.001"
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              className="w-full rounded-xl border px-3 py-2"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium">Reason</label>
-            <input
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className="w-full rounded-xl border px-3 py-2"
-            />
-          </div>
-
-          <div className="flex items-end">
-            <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-white">
-              Save Waste
-            </button>
-          </div>
-        </form>
-
-        <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <table className="w-full text-left">
-            <thead className="bg-slate-100 text-sm">
-              <tr>
-                <th className="px-4 py-3">Date</th>
-                <th className="px-4 py-3">Item</th>
-                <th className="px-4 py-3">Qty</th>
-                <th className="px-4 py-3">Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {wastes.map((waste) => (
-                <tr key={waste.id} className="border-t">
-                  <td className="px-4 py-3">{new Date(waste.date).toLocaleDateString('en-GB')}</td>
-                  <td className="px-4 py-3">
-                    {waste.item.name} [{waste.item.sku}]
-                  </td>
-                  <td className="px-4 py-3">{waste.qty}</td>
-                  <td className="px-4 py-3">{waste.reason ?? ''}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left">
+              <thead className="bg-slate-100 text-sm">
+                <tr>
+                  <th className="px-4 py-3 text-slate-800">Date</th>
+                  <th className="px-4 py-3 text-slate-800">Item</th>
+                  <th className="px-4 py-3 text-slate-800">SKU</th>
+                  <th className="px-4 py-3 text-slate-800">Quantity</th>
+                  <th className="px-4 py-3 text-slate-800">Reason</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+
+              <tbody>
+                {wastes.length === 0 ? (
+                  <tr className="border-t">
+                    <td colSpan={5} className="px-4 py-3 text-slate-700">
+                      No waste records yet.
+                    </td>
+                  </tr>
+                ) : (
+                  wastes.map((waste) => (
+                    <tr key={waste.id} className="border-t">
+                      <td className="px-4 py-3 text-slate-800">
+                        {formatDate(waste.date)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-800">
+                        {waste.item?.name ?? ''}
+                      </td>
+                      <td className="px-4 py-3 text-slate-800">
+                        {waste.item?.sku ?? ''}
+                      </td>
+                      <td className="px-4 py-3 text-slate-800">
+                        {waste.qty} {waste.item?.unitType ?? ''}
+                      </td>
+                      <td className="px-4 py-3 text-slate-800">
+                        {waste.reason ?? ''}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </main>
   )

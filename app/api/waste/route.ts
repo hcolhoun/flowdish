@@ -32,7 +32,11 @@ export async function POST(req: Request) {
 
     const date = new Date(body.date)
     const qty = Number(body.qty)
-    const reason = body.reason ? String(body.reason) : null
+    const reason = body.reason ? String(body.reason).trim() : null
+
+    if (Number.isNaN(date.getTime())) {
+      return NextResponse.json({ error: 'Invalid waste date' }, { status: 400 })
+    }
 
     if (!qty || qty <= 0) {
       return NextResponse.json({ error: 'Quantity must be greater than 0' }, { status: 400 })
@@ -54,11 +58,12 @@ export async function POST(req: Request) {
         date,
         itemId: item.id,
         qty,
+        reason,
       },
       include: { item: true },
     })
 
-    return NextResponse.json({ ...waste, reason })
+    return NextResponse.json(waste)
   } catch (error) {
     console.error('POST /api/waste failed:', error)
     return NextResponse.json({ error: 'Failed to save waste record' }, { status: 500 })
