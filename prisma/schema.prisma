@@ -188,9 +188,10 @@ model SupplierProduct {
   unitPrice   Float?
   createdAt   DateTime @default(now())
 
-  linkedItemId                  String?
-  linkedItem                    Item?                         @relation("SupplierProduct_LinkedItem", fields: [linkedItemId], references: [id])
-  supplierProductPriceHistories SupplierProductPriceHistory[]
+  linkedItemId String?
+  linkedItem   Item?   @relation("SupplierProduct_LinkedItem", fields: [linkedItemId], references: [id])
+
+  priceHistory SupplierProductPriceHistory[]
 
   @@index([supplier, supplierSku])
 }
