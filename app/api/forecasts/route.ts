@@ -73,21 +73,22 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: 'Missing forecast id' }, { status: 400 })
     }
 
-    const forecast = await prisma.forecast.findUnique({
-      where: { id },
-    })
+    await prisma.$transaction(async (tx) => {
+      await tx.forecastLine.deleteMany({
+        where: { forecastId: id },
+      })
 
-    if (!forecast) {
-      return NextResponse.json({ error: 'Forecast not found' }, { status: 404 })
-    }
-
-    await prisma.forecast.delete({
-      where: { id },
+      await tx.forecast.delete({
+        where: { id },
+      })
     })
 
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('DELETE /api/forecasts failed:', error)
-    return NextResponse.json({ error: 'Failed to delete forecast' }, { status: 500 })
+    return NextResponse.json(
+      { error: 'Failed to delete forecast' },
+      { status: 500 }
+    )
   }
 }
