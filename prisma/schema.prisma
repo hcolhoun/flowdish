@@ -23,16 +23,22 @@ enum InventorySourceType {
   PREP
 }
 
+enum BuildStatus {
+  UNBUILT
+  BUILT
+}
+
 model Item {
-  id                  String   @id @default(cuid())
-  sku                 String   @unique
+  id                  String      @id @default(cuid())
+  sku                 String      @unique
   name                String
   itemType            ItemType
   unitType            UnitType
   shelfLifeDays       Int?
   sellingPrice        Float?
   standardBatchOutput Float?
-  createdAt           DateTime @default(now())
+  buildStatus         BuildStatus @default(UNBUILT)
+  createdAt           DateTime    @default(now())
 
   bomL1L2Parents  BomL1L2[] @relation("BomL1L2_L1")
   bomL1L2Children BomL1L2[] @relation("BomL1L2_L2")
