@@ -69,6 +69,17 @@ type EditingL3 = {
   shelfLifeDays: string
 }
 
+type ManualSupplierProduct = {
+  supplier: string
+  supplierSku: string
+  name: string
+  packSize: string
+  weight: string
+  packPrice: string
+  unitPrice: string
+  createLinkedL3: boolean
+}
+
 type ImportImpactRow = {
   itemId: string
   sku: string
@@ -154,6 +165,17 @@ export default function SuppliersPage() {
   const [preview, setPreview] = useState<ImportRow[]>([])
   const [rejectedRows, setRejectedRows] = useState<ImportRow[]>([])
   const [products, setProducts] = useState<SupplierProduct[]>([])
+
+  const [manualProduct, setManualProduct] = useState<ManualSupplierProduct>({
+    supplier: 'Caterway',
+    supplierSku: '',
+    name: '',
+    packSize: '',
+    weight: '',
+    packPrice: '',
+    unitPrice: '',
+    createLinkedL3: true,
+  })
 
   const [search, setSearch] = useState('')
   const [supplierFilter, setSupplierFilter] = useState('ALL')
@@ -501,6 +523,83 @@ export default function SuppliersPage() {
     }
   }
 
+  async function handleManualAddProduct(e: React.FormEvent) {
+    e.preventDefault()
+
+    try {
+      setError('')
+      setMessage('')
+      setImpactReport(null)
+      setSaving(true)
+
+      const cleanProduct = {
+        supplier: manualProduct.supplier.trim(),
+        supplierSku: toNullableString(manualProduct.supplierSku),
+        name: manualProduct.name.trim(),
+        packSize: toNullableString(manualProduct.packSize),
+        weight: toNullableString(manualProduct.weight),
+        packPrice: toNullableNumber(manualProduct.packPrice),
+        unitPrice: toNullableNumber(manualProduct.unitPrice),
+      }
+
+      if (!cleanProduct.supplier) {
+        throw new Error('Supplier is required.')
+      }
+
+      if (!cleanProduct.name) {
+        throw new Error('Product name is required.')
+      }
+
+      if (cleanProduct.packPrice === null && cleanProduct.unitPrice === null) {
+        throw new Error('Enter either pack price or unit price.')
+      }
+
+      const res = await fetch('/api/supplier-products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supplier: cleanProduct.supplier,
+          fileName: 'Manual entry',
+          createLinkedL3: manualProduct.createLinkedL3,
+          products: [cleanProduct],
+        }),
+      })
+
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to add supplier product')
+      }
+
+      setMessage(
+        `Manual supplier product saved. ${data.createdCount ?? 0} created, ${
+          data.updatedCount ?? 0
+        } updated, ${data.linkedCount ?? 0} linked to L3.`
+      )
+
+      setManualProduct({
+        supplier: manualProduct.supplier,
+        supplierSku: '',
+        name: '',
+        packSize: '',
+        weight: '',
+        packPrice: '',
+        unitPrice: '',
+        createLinkedL3: true,
+      })
+
+      await loadProducts()
+
+      if (data.importBatchId) {
+        await loadImpactReport(data.importBatchId)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   function startEditProduct(product: SupplierProduct) {
     setEditingProductId(product.id)
     setEditingProduct({
@@ -737,6 +836,149 @@ export default function SuppliersPage() {
               {saving ? 'Saving…' : 'Save Products + Create/Update L3s'}
             </button>
           </div>
+        </section>
+
+        <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-slate-900">Manually Add Supplier Product</h2>
+          <p className="mt-1 text-sm text-slate-700">
+            Use this for one-off products, missing supplier lines, or corrections without uploading a price file.
+          </p>
+
+          <form onSubmit={handleManualAddProduct} className="mt-5 grid gap-4 md:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Supplier</label>
+              <input
+                value={manualProduct.supplier}
+                onChange={(e) =>
+                  setManualProduct({
+                    ...manualProduct,
+                    supplier: e.target.value,
+                  })
+                }
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Supplier SKU</label>
+              <input
+                value={manualProduct.supplierSku}
+                onChange={(e) =>
+                  setManualProduct({
+                    ...manualProduct,
+                    supplierSku: e.target.value,
+                  })
+                }
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Product Name</label>
+              <input
+                value={manualProduct.name}
+                onChange={(e) =>
+                  setManualProduct({
+                    ...manualProduct,
+                    name: e.target.value,
+                  })
+                }
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Pack Size</label>
+              <input
+                value={manualProduct.packSize}
+                onChange={(e) =>
+                  setManualProduct({
+                    ...manualProduct,
+                    packSize: e.target.value,
+                  })
+                }
+                placeholder="e.g. x6, case, box"
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Weight / Volume</label>
+              <input
+                value={manualProduct.weight}
+                onChange={(e) =>
+                  setManualProduct({
+                    ...manualProduct,
+                    weight: e.target.value,
+                  })
+                }
+                placeholder="e.g. 200g, 1kg, 5L"
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Pack Price (€)</label>
+              <input
+                type="number"
+                step="0.0001"
+                value={manualProduct.packPrice}
+                onChange={(e) =>
+                  setManualProduct({
+                    ...manualProduct,
+                    packPrice: e.target.value,
+                  })
+                }
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">Unit Price</label>
+              <input
+                type="number"
+                step="0.000001"
+                value={manualProduct.unitPrice}
+                onChange={(e) =>
+                  setManualProduct({
+                    ...manualProduct,
+                    unitPrice: e.target.value,
+                  })
+                }
+                placeholder="€/g, €/ml, or €/each"
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 pt-7">
+              <input
+                id="createLinkedL3"
+                type="checkbox"
+                checked={manualProduct.createLinkedL3}
+                onChange={(e) =>
+                  setManualProduct({
+                    ...manualProduct,
+                    createLinkedL3: e.target.checked,
+                  })
+                }
+              />
+              <label htmlFor="createLinkedL3" className="text-sm text-slate-800">
+                Create/link L3 automatically
+              </label>
+            </div>
+
+            <div className="flex items-end">
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+              >
+                {saving ? 'Saving…' : 'Add Supplier Product'}
+              </button>
+            </div>
+          </form>
         </section>
 
         <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
