@@ -98,7 +98,13 @@ async function createOrLinkL3(product: any) {
         shelfLifeDays,
         sellingPrice: null,
         standardBatchOutput: null,
-      },
+        buildStatus: 'BUILT',
+      } as any,
+    })
+  } else if (item.itemType === 'L3' && item.unitType !== unitType) {
+    item = await prisma.item.update({
+      where: { id: item.id },
+      data: { unitType },
     })
   }
 
@@ -128,6 +134,7 @@ export async function POST(req: Request) {
     const products = body.products
     const fileName = body.fileName ? String(body.fileName) : null
     const supplierName = body.supplier ? String(body.supplier) : 'Mixed'
+    const createLinkedL3 = body.createLinkedL3 === false ? false : true
 
     if (!Array.isArray(products)) {
       return NextResponse.json({ error: 'Products must be an array' }, { status: 400 })
@@ -175,7 +182,12 @@ export async function POST(req: Request) {
 
       if (!cleanProduct.supplier || !cleanProduct.name) continue
 
-      const linkedItem = await createOrLinkL3(cleanProduct)
+      const linkedItem =
+        product.linkedItemId
+          ? await prisma.item.findUnique({ where: { id: String(product.linkedItemId) } })
+          : createLinkedL3
+            ? await createOrLinkL3(cleanProduct)
+            : null
 
       const existing = cleanProduct.supplierSku
         ? await prisma.supplierProduct.findFirst({
@@ -204,7 +216,7 @@ export async function POST(req: Request) {
           where: { id: existing.id },
           data: {
             ...cleanProduct,
-            linkedItemId: existing.linkedItemId || linkedItem.id,
+            linkedItemId: existing.linkedItemId || linkedItem?.id || null,
           },
         })
 
@@ -228,14 +240,14 @@ export async function POST(req: Request) {
         await prisma.supplierProduct.create({
           data: {
             ...cleanProduct,
-            linkedItemId: linkedItem.id,
+            linkedItemId: linkedItem?.id || null,
           },
         })
 
         createdCount++
       }
 
-      linkedCount++
+      if (linkedItem?.id) linkedCount++
     }
 
     const updatedBatch = await prisma.supplierImportBatch.update({
@@ -299,11 +311,35 @@ export async function PATCH(req: Request) {
       updateData.linkedItemId = body.linkedItemId ? String(body.linkedItemId) : null
     }
 
+    const changed =
+      'packPrice' in updateData || 'unitPrice' in updateData
+        ? pricesChanged({
+            oldPackPrice: existing.packPrice,
+            newPackPrice:
+              'packPrice' in updateData ? updateData.packPrice : existing.packPrice,
+            oldUnitPrice: existing.unitPrice,
+            newUnitPrice:
+              'unitPrice' in updateData ? updateData.unitPrice : existing.unitPrice,
+          })
+        : false
+
     const product = await prisma.supplierProduct.update({
       where: { id },
       data: updateData,
       include: { linkedItem: true },
     })
+
+    if (changed) {
+      await prisma.supplierProductPriceHistory.create({
+        data: {
+          supplierProductId: product.id,
+          oldPackPrice: existing.packPrice,
+          newPackPrice: product.packPrice,
+          oldUnitPrice: existing.unitPrice,
+          newUnitPrice: product.unitPrice,
+        },
+      })
+    }
 
     return NextResponse.json(product)
   } catch (error) {

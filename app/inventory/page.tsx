@@ -25,20 +25,46 @@ type InventoryLotRow = {
 
 export default function InventoryPage() {
   const [rows, setRows] = useState<InventoryLotRow[]>([])
+  const [search, setSearch] = useState('')
+  const [sourceFilter, setSourceFilter] = useState<'ALL' | 'DELIVERY' | 'PREP'>('ALL')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase()
+
+    return rows.filter((row) => {
+      const matchesSource = sourceFilter === 'ALL' || row.sourceType === sourceFilter
+
+      const haystack = [
+        row.sku,
+        row.name,
+        row.unitType,
+        row.sourceType,
+        row.delivery?.supplier ?? '',
+        row.delivery ? formatDate(row.delivery.deliveredAt) : '',
+        formatDate(row.expiryAt),
+      ]
+        .join(' ')
+        .toLowerCase()
+
+      const matchesSearch = !q || haystack.includes(q)
+
+      return matchesSource && matchesSearch
+    })
+  }, [rows, search, sourceFilter])
+
   const totals = useMemo(() => {
-    const totalLots = rows.length
-    const totalValue = rows.reduce(
+    const totalLots = filteredRows.length
+    const totalValue = filteredRows.reduce(
       (sum, row) => sum + row.qtyRemaining * (row.unitCost ?? 0),
       0
     )
 
     return { totalLots, totalValue }
-  }, [rows])
+  }, [filteredRows])
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -142,7 +168,8 @@ export default function InventoryPage() {
 
           <div className="rounded-2xl border bg-white px-5 py-3 text-sm text-slate-700 shadow-sm">
             <div>
-              Lots: <span className="font-semibold text-slate-900">{totals.totalLots}</span>
+              Lots:{' '}
+              <span className="font-semibold text-slate-900">{totals.totalLots}</span>
             </div>
             <div>
               Value:{' '}
@@ -169,6 +196,41 @@ export default function InventoryPage() {
           </div>
         ) : null}
 
+        <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+          <div className="grid gap-4 md:grid-cols-[1fr_220px]">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Search inventory
+              </label>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search item, SKU, supplier, source, expiry..."
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Source
+              </label>
+              <select
+                value={sourceFilter}
+                onChange={(e) => setSourceFilter(e.target.value as 'ALL' | 'DELIVERY' | 'PREP')}
+                className="w-full rounded-xl border px-3 py-2 text-slate-900"
+              >
+                <option value="ALL">All sources</option>
+                <option value="DELIVERY">Delivery</option>
+                <option value="PREP">Prep</option>
+              </select>
+            </div>
+          </div>
+
+          <p className="mt-3 text-sm text-slate-600">
+            Showing {filteredRows.length} of {rows.length} lots.
+          </p>
+        </section>
+
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-left">
@@ -190,14 +252,14 @@ export default function InventoryPage() {
               </thead>
 
               <tbody>
-                {rows.length === 0 ? (
+                {filteredRows.length === 0 ? (
                   <tr className="border-t">
                     <td className="px-4 py-3 text-slate-700" colSpan={12}>
-                      No inventory yet.
+                      No inventory lots match your search.
                     </td>
                   </tr>
                 ) : (
-                  rows.map((row) => {
+                  filteredRows.map((row) => {
                     const canDelete = row.qtyRemaining === row.qtyInitial
 
                     return (

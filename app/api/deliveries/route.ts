@@ -15,6 +15,41 @@ function sameDate(a: Date | null, b: Date | null) {
   return a.getTime() === b.getTime()
 }
 
+function parseNullableDate(value: unknown) {
+  if (!value || !String(value).trim()) return null
+  const date = new Date(String(value))
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+async function findDeliveryLots(delivery: {
+  id: string
+  itemId: string
+  qty: number
+  expiryAt: Date | null
+}) {
+  let lotsToMatch = (await prisma.inventoryLot.findMany({
+    where: {
+      deliveryId: delivery.id,
+    } as any,
+    orderBy: { createdAt: 'asc' },
+  })) as InventoryLotForDelete[]
+
+  if (lotsToMatch.length === 0) {
+    const fallbackLots = (await prisma.inventoryLot.findMany({
+      where: {
+        itemId: delivery.itemId,
+        sourceType: 'DELIVERY',
+        qtyInitial: delivery.qty,
+      },
+      orderBy: { createdAt: 'asc' },
+    })) as InventoryLotForDelete[]
+
+    lotsToMatch = fallbackLots.filter((lot) => sameDate(lot.expiryAt, delivery.expiryAt))
+  }
+
+  return lotsToMatch
+}
+
 export async function GET() {
   try {
     const deliveries = await prisma.delivery.findMany({
@@ -71,10 +106,13 @@ export async function POST(req: Request) {
 
     const unitCost = totalCost / qty
 
+    const expiryAtFromBody = parseNullableDate(body.expiryAt)
+
     const expiryAt =
-      item.shelfLifeDays != null
+      expiryAtFromBody ??
+      (item.shelfLifeDays != null
         ? new Date(deliveredAt.getTime() + item.shelfLifeDays * 24 * 60 * 60 * 1000)
-        : null
+        : null)
 
     const delivery = await prisma.$transaction(async (tx) => {
       const createdDelivery = await tx.delivery.create({
@@ -113,6 +151,96 @@ export async function POST(req: Request) {
   }
 }
 
+export async function PATCH(req: Request) {
+  try {
+    const body = await req.json()
+
+    const id = String(body.id || '')
+    const deliveredAt = new Date(body.deliveredAt)
+    const qty = Number(body.qty)
+    const totalCost = Number(body.totalCost)
+    const supplier = body.supplier ? String(body.supplier) : null
+    const expiryAt = parseNullableDate(body.expiryAt)
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing delivery id' }, { status: 400 })
+    }
+
+    if (Number.isNaN(deliveredAt.getTime())) {
+      return NextResponse.json({ error: 'Valid delivery date is required' }, { status: 400 })
+    }
+
+    if (!qty || qty <= 0 || Number.isNaN(qty)) {
+      return NextResponse.json({ error: 'Quantity must be greater than 0' }, { status: 400 })
+    }
+
+    if (!totalCost || totalCost <= 0 || Number.isNaN(totalCost)) {
+      return NextResponse.json(
+        { error: 'Total delivery cost must be greater than 0' },
+        { status: 400 }
+      )
+    }
+
+    const existing = await prisma.delivery.findUnique({
+      where: { id },
+      include: { item: true },
+    })
+
+    if (!existing) {
+      return NextResponse.json({ error: 'Delivery not found' }, { status: 404 })
+    }
+
+    const lotsToUpdate = await findDeliveryLots(existing)
+
+    for (const lot of lotsToUpdate) {
+      if (lot.qtyRemaining !== lot.qtyInitial) {
+        return NextResponse.json(
+          {
+            error:
+              'Cannot edit this delivery because some of its stock has already been used.',
+          },
+          { status: 400 }
+        )
+      }
+    }
+
+    const unitCost = totalCost / qty
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const delivery = await tx.delivery.update({
+        where: { id },
+        data: {
+          deliveredAt,
+          qty,
+          supplier,
+          price: totalCost,
+          expiryAt,
+        },
+        include: { item: true },
+      })
+
+      for (const lot of lotsToUpdate) {
+        await tx.inventoryLot.update({
+          where: { id: lot.id },
+          data: {
+            qtyInitial: qty,
+            qtyRemaining: qty,
+            expiryAt,
+            unitCost,
+          },
+        })
+      }
+
+      return delivery
+    })
+
+    return NextResponse.json(updated)
+  } catch (error) {
+    console.error('PATCH /api/deliveries failed:', error)
+    return NextResponse.json({ error: 'Failed to update delivery' }, { status: 500 })
+  }
+}
+
 export async function DELETE(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
@@ -130,27 +258,7 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: 'Delivery not found' }, { status: 404 })
     }
 
-    let lotsToDelete = (await prisma.inventoryLot.findMany({
-      where: {
-        deliveryId: delivery.id,
-      } as any,
-      orderBy: { createdAt: 'asc' },
-    })) as InventoryLotForDelete[]
-
-    if (lotsToDelete.length === 0) {
-      const fallbackLots = (await prisma.inventoryLot.findMany({
-        where: {
-          itemId: delivery.itemId,
-          sourceType: 'DELIVERY',
-          qtyInitial: delivery.qty,
-        },
-        orderBy: { createdAt: 'asc' },
-      })) as InventoryLotForDelete[]
-
-      lotsToDelete = fallbackLots.filter((lot: InventoryLotForDelete) =>
-        sameDate(lot.expiryAt, delivery.expiryAt)
-      )
-    }
+    const lotsToDelete = await findDeliveryLots(delivery)
 
     for (const lot of lotsToDelete) {
       if (lot.qtyRemaining !== lot.qtyInitial) {

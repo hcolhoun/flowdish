@@ -79,6 +79,19 @@ type ReviewRow = {
   notes: string
 }
 
+type EditingDelivery = {
+  deliveredAt: string
+  qty: string
+  supplier: string
+  totalCost: string
+  expiryAt: string
+}
+
+function toDateInputValue(value: string | null | undefined) {
+  if (!value) return ''
+  return new Date(value).toISOString().slice(0, 10)
+}
+
 export default function DeliveriesPage() {
   const [items, setItems] = useState<Item[]>([])
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
@@ -95,6 +108,9 @@ export default function DeliveriesPage() {
     useState<LatestSupplierProduct | null>(null)
   const [priceManuallyEdited, setPriceManuallyEdited] = useState(false)
   const [supplierManuallyEdited, setSupplierManuallyEdited] = useState(false)
+
+  const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null)
+  const [editingDelivery, setEditingDelivery] = useState<EditingDelivery | null>(null)
 
   const [docketFile, setDocketFile] = useState<File | null>(null)
   const [docketParsing, setDocketParsing] = useState(false)
@@ -160,11 +176,6 @@ export default function DeliveriesPage() {
   function toInputValue(value: string | number | null | undefined) {
     if (value === null || value === undefined) return ''
     return String(value)
-  }
-
-  function unitTypeLabel(unitType: UnitType | '') {
-    if (!unitType) return ''
-    return unitType
   }
 
   async function loadData() {
@@ -309,7 +320,59 @@ export default function DeliveriesPage() {
       setPriceManuallyEdited(false)
       setSupplierManuallyEdited(false)
       setMessage('Delivery saved.')
-      loadData()
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    }
+  }
+
+  function startEditDelivery(delivery: Delivery) {
+    setEditingDeliveryId(delivery.id)
+    setEditingDelivery({
+      deliveredAt: toDateInputValue(delivery.deliveredAt),
+      qty: String(delivery.qty),
+      supplier: delivery.supplier ?? '',
+      totalCost: toInputValue(delivery.price),
+      expiryAt: toDateInputValue(delivery.expiryAt),
+    })
+    setError('')
+    setMessage('')
+  }
+
+  function cancelEditDelivery() {
+    setEditingDeliveryId(null)
+    setEditingDelivery(null)
+  }
+
+  async function saveDeliveryEdit(delivery: Delivery) {
+    if (!editingDelivery) return
+
+    try {
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/deliveries', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: delivery.id,
+          deliveredAt: editingDelivery.deliveredAt,
+          qty: Number(editingDelivery.qty),
+          supplier: editingDelivery.supplier,
+          totalCost: Number(editingDelivery.totalCost),
+          expiryAt: editingDelivery.expiryAt || null,
+        }),
+      })
+
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to update delivery')
+      }
+
+      setMessage('Delivery updated.')
+      cancelEditDelivery()
+      await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     }
@@ -334,7 +397,7 @@ export default function DeliveriesPage() {
     }
 
     setMessage('Delivery deleted.')
-    loadData()
+    await loadData()
   }
 
   function filteredReviewItems(searchValue: string) {
@@ -764,11 +827,6 @@ export default function DeliveriesPage() {
                             <option value="ml">ml</option>
                             <option value="each">each</option>
                           </select>
-                          {row.unitType ? (
-                            <div className="mt-1 text-xs text-slate-500">
-                              {unitTypeLabel(row.unitType)}
-                            </div>
-                          ) : null}
                         </td>
 
                         <td className="px-4 py-3">
@@ -899,12 +957,6 @@ export default function DeliveriesPage() {
                     </button>
                   ))
                 )}
-
-                {items.length > 50 && !itemSearch.trim() ? (
-                  <div className="border-t bg-slate-50 px-4 py-2 text-xs text-slate-500">
-                    Showing first 50 items. Type to search the full list.
-                  </div>
-                ) : null}
               </div>
             ) : null}
 
@@ -1001,71 +1053,203 @@ export default function DeliveriesPage() {
         </form>
 
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <table className="w-full text-left">
-            <thead className="bg-slate-100 text-sm">
-              <tr>
-                <th className="px-4 py-3 text-slate-800">Date</th>
-                <th className="px-4 py-3 text-slate-800">Item</th>
-                <th className="px-4 py-3 text-slate-800">Qty</th>
-                <th className="px-4 py-3 text-slate-800">Unit</th>
-                <th className="px-4 py-3 text-slate-800">Supplier</th>
-                <th className="px-4 py-3 text-slate-800">Total Cost</th>
-                <th className="px-4 py-3 text-slate-800">Cost / Unit</th>
-                <th className="px-4 py-3 text-slate-800">Expiry</th>
-                <th className="px-4 py-3 text-slate-800">Actions</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {deliveries.length === 0 ? (
-                <tr className="border-t">
-                  <td className="px-4 py-3 text-slate-700" colSpan={9}>
-                    No deliveries yet.
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="min-w-[1150px] w-full text-left">
+              <thead className="bg-slate-100 text-sm">
+                <tr>
+                  <th className="px-4 py-3 text-slate-800">Date</th>
+                  <th className="px-4 py-3 text-slate-800">Item</th>
+                  <th className="px-4 py-3 text-slate-800">Qty</th>
+                  <th className="px-4 py-3 text-slate-800">Unit</th>
+                  <th className="px-4 py-3 text-slate-800">Supplier</th>
+                  <th className="px-4 py-3 text-slate-800">Total Cost</th>
+                  <th className="px-4 py-3 text-slate-800">Cost / Unit</th>
+                  <th className="px-4 py-3 text-slate-800">Expiry</th>
+                  <th className="px-4 py-3 text-slate-800">Actions</th>
                 </tr>
-              ) : (
-                deliveries.map((delivery) => {
-                  const unitCost =
-                    delivery.price && delivery.qty > 0 ? delivery.price / delivery.qty : 0
+              </thead>
 
-                  return (
-                    <tr key={delivery.id} className="border-t">
-                      <td className="px-4 py-3 text-slate-800">
-                        {formatDate(delivery.deliveredAt)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {delivery.item.name} [{delivery.item.sku}]
-                      </td>
-                      <td className="px-4 py-3 text-slate-800">{delivery.qty}</td>
-                      <td className="px-4 py-3 text-slate-800">{delivery.unitType}</td>
-                      <td className="px-4 py-3 text-slate-800">{delivery.supplier ?? ''}</td>
-                      <td className="px-4 py-3 text-slate-800">{money(delivery.price)}</td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {money(unitCost, 5)} / {delivery.unitType}
-                      </td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {formatDate(delivery.expiryAt)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleDelete(
-                              delivery.id,
-                              `${delivery.item.name} (${delivery.qty} ${delivery.unitType})`
-                            )
-                          }
-                          className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
+              <tbody>
+                {deliveries.length === 0 ? (
+                  <tr className="border-t">
+                    <td className="px-4 py-3 text-slate-700" colSpan={9}>
+                      No deliveries yet.
+                    </td>
+                  </tr>
+                ) : (
+                  deliveries.map((delivery) => {
+                    const unitCost =
+                      delivery.price && delivery.qty > 0 ? delivery.price / delivery.qty : 0
+
+                    const isEditing = editingDeliveryId === delivery.id && editingDelivery
+
+                    const editingUnitCost =
+                      isEditing &&
+                      Number(editingDelivery.qty) > 0 &&
+                      Number(editingDelivery.totalCost) > 0
+                        ? Number(editingDelivery.totalCost) / Number(editingDelivery.qty)
+                        : unitCost
+
+                    return (
+                      <tr key={delivery.id} className="border-t align-top">
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditing ? (
+                            <input
+                              type="date"
+                              value={editingDelivery.deliveredAt}
+                              onChange={(e) =>
+                                setEditingDelivery({
+                                  ...editingDelivery,
+                                  deliveredAt: e.target.value,
+                                })
+                              }
+                              className="rounded-lg border px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            formatDate(delivery.deliveredAt)
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {delivery.item.name} [{delivery.item.sku}]
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              step="0.001"
+                              value={editingDelivery.qty}
+                              onChange={(e) =>
+                                setEditingDelivery({
+                                  ...editingDelivery,
+                                  qty: e.target.value,
+                                })
+                              }
+                              className="w-24 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            delivery.qty
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">{delivery.unitType}</td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditing ? (
+                            <input
+                              value={editingDelivery.supplier}
+                              onChange={(e) =>
+                                setEditingDelivery({
+                                  ...editingDelivery,
+                                  supplier: e.target.value,
+                                })
+                              }
+                              className="w-32 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            delivery.supplier ?? ''
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={editingDelivery.totalCost}
+                              onChange={(e) =>
+                                setEditingDelivery({
+                                  ...editingDelivery,
+                                  totalCost: e.target.value,
+                                })
+                              }
+                              className="w-28 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            money(delivery.price)
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {money(editingUnitCost, 5)} / {delivery.unitType}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditing ? (
+                            <input
+                              type="date"
+                              value={editingDelivery.expiryAt}
+                              onChange={(e) =>
+                                setEditingDelivery({
+                                  ...editingDelivery,
+                                  expiryAt: e.target.value,
+                                })
+                              }
+                              className="rounded-lg border px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            formatDate(delivery.expiryAt)
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => saveDeliveryEdit(delivery)}
+                                  className="rounded-lg border border-green-300 px-3 py-1 text-sm text-green-700 hover:bg-green-50"
+                                >
+                                  Save
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={cancelEditDelivery}
+                                  className="rounded-lg border px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => startEditDelivery(delivery)}
+                                  className="rounded-lg border px-3 py-1 text-sm text-slate-800 hover:bg-slate-50"
+                                >
+                                  Edit
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleDelete(
+                                      delivery.id,
+                                      `${delivery.item.name} (${delivery.qty} ${delivery.unitType})`
+                                    )
+                                  }
+                                  className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                                >
+                                  Delete
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Deliveries can only be edited while none of their stock has been used.
         </div>
       </div>
     </main>
