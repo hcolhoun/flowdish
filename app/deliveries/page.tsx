@@ -23,6 +23,19 @@ type Delivery = {
   item: Item
 }
 
+type SupplierProduct = {
+  id: string
+  supplier: string
+  supplierSku: string | null
+  name: string
+  packSize: string | null
+  weight: string | null
+  packPrice: number | null
+  unitPrice: number | null
+  linkedItemId: string | null
+  linkedItem?: Item | null
+}
+
 type LatestSupplierProduct = {
   id: string
   supplier: string
@@ -95,6 +108,7 @@ function toDateInputValue(value: string | null | undefined) {
 export default function DeliveriesPage() {
   const [items, setItems] = useState<Item[]>([])
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
+  const [supplierProducts, setSupplierProducts] = useState<SupplierProduct[]>([])
 
   const [itemId, setItemId] = useState('')
   const [itemSearch, setItemSearch] = useState('')
@@ -126,6 +140,45 @@ export default function DeliveriesPage() {
 
   const selectedItem = items.find((item) => item.id === itemId)
 
+  const supplierProductsByItemId = useMemo(() => {
+    const map = new Map<string, SupplierProduct[]>()
+
+    for (const product of supplierProducts) {
+      if (!product.linkedItemId) continue
+
+      const existing = map.get(product.linkedItemId) ?? []
+      existing.push(product)
+      map.set(product.linkedItemId, existing)
+    }
+
+    for (const item of items) {
+      const bySku = supplierProducts.filter(
+        (product) =>
+          product.supplierSku &&
+          product.supplierSku.toLowerCase() === item.sku.toLowerCase()
+      )
+
+      if (bySku.length > 0) {
+        const existing = map.get(item.id) ?? []
+        map.set(item.id, [...existing, ...bySku])
+      }
+    }
+
+    for (const [key, value] of map.entries()) {
+      const deduped = Array.from(new Map(value.map((product) => [product.id, product])).values())
+
+      deduped.sort((a, b) => {
+        const aPrice = a.unitPrice ?? Number.POSITIVE_INFINITY
+        const bPrice = b.unitPrice ?? Number.POSITIVE_INFINITY
+        return aPrice - bPrice
+      })
+
+      map.set(key, deduped)
+    }
+
+    return map
+  }, [supplierProducts, items])
+
   const filteredItems = useMemo(() => {
     const query = itemSearch.trim().toLowerCase()
 
@@ -133,11 +186,28 @@ export default function DeliveriesPage() {
 
     return items
       .filter((item) => {
-        const haystack = `${item.name} ${item.sku}`.toLowerCase()
+        const linkedProducts = supplierProductsByItemId.get(item.id) ?? []
+
+        const supplierHaystack = linkedProducts
+          .map((product) =>
+            [
+              product.supplier,
+              product.supplierSku,
+              product.name,
+              product.packSize,
+              product.weight,
+            ]
+              .filter(Boolean)
+              .join(' ')
+          )
+          .join(' ')
+
+        const haystack = `${item.name} ${item.sku} ${supplierHaystack}`.toLowerCase()
+
         return haystack.includes(query)
       })
       .slice(0, 50)
-  }, [items, itemSearch])
+  }, [items, itemSearch, supplierProductsByItemId])
 
   const calculatedUnitCost =
     Number(qty) > 0 && Number(totalCost) > 0 ? Number(totalCost) / Number(qty) : null
@@ -178,23 +248,53 @@ export default function DeliveriesPage() {
     return String(value)
   }
 
+  function packSummary(product: SupplierProduct | LatestSupplierProduct | null | undefined) {
+    if (!product) return 'No linked supplier pack saved'
+
+    const parts = [
+      product.supplier,
+      product.supplierSku ? `SKU ${product.supplierSku}` : null,
+      product.packSize ? `Pack ${product.packSize}` : null,
+      product.weight ? `Weight ${product.weight}` : null,
+      product.packPrice !== null && product.packPrice !== undefined
+        ? `Pack price ${money(product.packPrice, 2)}`
+        : null,
+      product.unitPrice !== null && product.unitPrice !== undefined
+        ? `Unit ${money(product.unitPrice, 5)}`
+        : null,
+    ].filter(Boolean)
+
+    return parts.join(' · ')
+  }
+
+  function bestSupplierProductForItem(item: Item) {
+    const products = supplierProductsByItemId.get(item.id) ?? []
+    return products[0] ?? null
+  }
+
   async function loadData() {
     try {
       setError('')
 
-      const [itemsRes, deliveriesRes] = await Promise.all([
+      const [itemsRes, deliveriesRes, supplierProductsRes] = await Promise.all([
         fetch('/api/items', { cache: 'no-store' }),
         fetch('/api/deliveries', { cache: 'no-store' }),
+        fetch('/api/supplier-products', { cache: 'no-store' }),
       ])
 
       const itemsData = await safeJson(itemsRes)
       const deliveriesData = await safeJson(deliveriesRes)
+      const supplierProductsData = await safeJson(supplierProductsRes)
 
       if (!itemsRes.ok) throw new Error(itemsData?.error || 'Failed to load items')
       if (!deliveriesRes.ok) throw new Error(deliveriesData?.error || 'Failed to load deliveries')
+      if (!supplierProductsRes.ok) {
+        throw new Error(supplierProductsData?.error || 'Failed to load supplier products')
+      }
 
       setItems(itemsData.filter((item: Item) => item.itemType === 'L3'))
       setDeliveries(deliveriesData)
+      setSupplierProducts(supplierProductsData)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     }
@@ -918,7 +1018,7 @@ export default function DeliveriesPage() {
                 }}
                 onFocus={() => setItemDropdownOpen(true)}
                 className="w-full rounded-xl border px-3 py-2"
-                placeholder="Search by item name or SKU..."
+                placeholder="Search by item, SKU, supplier, pack, or weight..."
                 autoComplete="off"
                 required
               />
@@ -937,25 +1037,51 @@ export default function DeliveriesPage() {
             <input type="hidden" value={itemId} required />
 
             {itemDropdownOpen ? (
-              <div className="absolute z-20 mt-2 max-h-72 w-full overflow-y-auto rounded-xl border bg-white shadow-lg">
+              <div className="absolute z-20 mt-2 max-h-96 w-full overflow-y-auto rounded-xl border bg-white shadow-lg">
                 {filteredItems.length === 0 ? (
                   <div className="px-4 py-3 text-sm text-slate-600">
                     No matching L3 items found.
                   </div>
                 ) : (
-                  filteredItems.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => selectItem(item)}
-                      className="block w-full border-b px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
-                    >
-                      <div className="font-medium text-slate-900">{item.name}</div>
-                      <div className="text-xs text-slate-500">
-                        {item.sku} · {item.unitType}
-                      </div>
-                    </button>
-                  ))
+                  filteredItems.map((item) => {
+                    const bestProduct = bestSupplierProductForItem(item)
+                    const allProducts = supplierProductsByItemId.get(item.id) ?? []
+
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => selectItem(item)}
+                        className="block w-full border-b px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <div className="font-medium text-slate-900">{item.name}</div>
+                            <div className="text-xs text-slate-500">
+                              Flowdish SKU {item.sku} · Unit {item.unitType}
+                            </div>
+
+                            <div className="mt-1 text-xs text-slate-700">
+                              {packSummary(bestProduct)}
+                            </div>
+
+                            {allProducts.length > 1 ? (
+                              <div className="mt-1 text-xs text-slate-500">
+                                {allProducts.length} supplier pack options linked. Showing cheapest
+                                unit price.
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="shrink-0 rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                            {bestProduct?.unitPrice
+                              ? `${money(bestProduct.unitPrice, 5)} / ${item.unitType}`
+                              : 'No price'}
+                          </div>
+                        </div>
+                      </button>
+                    )
+                  })
                 )}
               </div>
             ) : null}
@@ -972,10 +1098,12 @@ export default function DeliveriesPage() {
 
             {selectedItem && latestSupplierProduct ? (
               <div className="mt-2 rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                Latest supplier price: {latestSupplierProduct.supplier} ·{' '}
-                {formatUnitPrice(latestSupplierProduct.unitPrice, selectedItem.unitType)}
-                {latestSupplierProduct.packPrice ? (
-                  <> · Pack {money(latestSupplierProduct.packPrice)}</>
+                <div className="font-medium text-slate-900">Selected supplier pack</div>
+                <div>{packSummary(latestSupplierProduct)}</div>
+                {latestSupplierProduct.unitPrice ? (
+                  <div className="mt-1">
+                    Unit price: {formatUnitPrice(latestSupplierProduct.unitPrice, selectedItem.unitType)}
+                  </div>
                 ) : null}
               </div>
             ) : selectedItem && !loadingPrice ? (
@@ -1008,6 +1136,13 @@ export default function DeliveriesPage() {
               className="w-full rounded-xl border px-3 py-2"
               required
             />
+            {selectedItem && latestSupplierProduct?.weight ? (
+              <p className="mt-1 text-xs text-slate-600">
+                Pack reference: {latestSupplierProduct.packSize || 'Pack'} ·{' '}
+                {latestSupplierProduct.weight}. Enter the delivered quantity in{' '}
+                {selectedItem.unitType}.
+              </p>
+            ) : null}
           </div>
 
           <div>
