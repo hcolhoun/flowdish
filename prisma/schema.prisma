@@ -7,6 +7,7 @@ datasource db {
 }
 
 enum ItemType {
+  L0
   L1
   L2
   L3
@@ -40,6 +41,9 @@ model Item {
   buildStatus         BuildStatus @default(UNBUILT)
   createdAt           DateTime    @default(now())
 
+  bomL0L1Parents  BomL0L1[] @relation("BomL0L1_L0")
+  bomL0L1Children BomL0L1[] @relation("BomL0L1_L1")
+
   bomL1L2Parents  BomL1L2[] @relation("BomL1L2_L1")
   bomL1L2Children BomL1L2[] @relation("BomL1L2_L2")
 
@@ -60,14 +64,32 @@ model Item {
   supplierProducts SupplierProduct[] @relation("SupplierProduct_LinkedItem")
 }
 
+model BomL0L1 {
+  id       String @id @default(cuid())
+  l0ItemId String
+  l1ItemId String
+  qty      Float
+
+  l0 Item @relation("BomL0L1_L0", fields: [l0ItemId], references: [id], onDelete: Cascade)
+  l1 Item @relation("BomL0L1_L1", fields: [l1ItemId], references: [id], onDelete: Cascade)
+
+  @@unique([l0ItemId, l1ItemId])
+  @@index([l0ItemId])
+  @@index([l1ItemId])
+}
+
 model BomL1L2 {
   id       String @id @default(cuid())
   l1ItemId String
   l2ItemId String
   qty      Float
 
-  l1 Item @relation("BomL1L2_L1", fields: [l1ItemId], references: [id])
-  l2 Item @relation("BomL1L2_L2", fields: [l2ItemId], references: [id])
+  l1 Item @relation("BomL1L2_L1", fields: [l1ItemId], references: [id], onDelete: Cascade)
+  l2 Item @relation("BomL1L2_L2", fields: [l2ItemId], references: [id], onDelete: Cascade)
+
+  @@unique([l1ItemId, l2ItemId])
+  @@index([l1ItemId])
+  @@index([l2ItemId])
 }
 
 model BomL1L3 {
@@ -76,8 +98,12 @@ model BomL1L3 {
   l3ItemId String
   qty      Float
 
-  l1 Item @relation("BomL1L3_L1", fields: [l1ItemId], references: [id])
-  l3 Item @relation("BomL1L3_L3", fields: [l3ItemId], references: [id])
+  l1 Item @relation("BomL1L3_L1", fields: [l1ItemId], references: [id], onDelete: Cascade)
+  l3 Item @relation("BomL1L3_L3", fields: [l3ItemId], references: [id], onDelete: Cascade)
+
+  @@unique([l1ItemId, l3ItemId])
+  @@index([l1ItemId])
+  @@index([l3ItemId])
 }
 
 model BomL2L3 {
@@ -86,8 +112,12 @@ model BomL2L3 {
   l3ItemId String
   qty      Float
 
-  l2 Item @relation("BomL2L3_L2", fields: [l2ItemId], references: [id])
-  l3 Item @relation("BomL2L3_L3", fields: [l3ItemId], references: [id])
+  l2 Item @relation("BomL2L3_L2", fields: [l2ItemId], references: [id], onDelete: Cascade)
+  l3 Item @relation("BomL2L3_L3", fields: [l3ItemId], references: [id], onDelete: Cascade)
+
+  @@unique([l2ItemId, l3ItemId])
+  @@index([l2ItemId])
+  @@index([l3ItemId])
 }
 
 model Delivery {
@@ -121,6 +151,7 @@ model InventoryLot {
   item Item @relation(fields: [itemId], references: [id])
 
   @@index([deliveryId])
+  @@index([itemId])
 }
 
 model PrepBatch {
@@ -131,6 +162,8 @@ model PrepBatch {
   expiryAt   DateTime?
 
   item Item @relation(fields: [itemId], references: [id])
+
+  @@index([itemId])
 }
 
 model Sale {
@@ -141,6 +174,9 @@ model Sale {
   cost   Float    @default(0)
 
   item Item @relation(fields: [itemId], references: [id])
+
+  @@index([itemId])
+  @@index([soldAt])
 }
 
 model Waste {
@@ -151,6 +187,9 @@ model Waste {
   reason String?
 
   item Item @relation(fields: [itemId], references: [id])
+
+  @@index([itemId])
+  @@index([date])
 }
 
 model Forecast {
@@ -169,8 +208,11 @@ model ForecastLine {
   itemId     String
   qty        Float
 
-  forecast Forecast @relation(fields: [forecastId], references: [id])
+  forecast Forecast @relation(fields: [forecastId], references: [id], onDelete: Cascade)
   item     Item     @relation(fields: [itemId], references: [id])
+
+  @@index([forecastId])
+  @@index([itemId])
 }
 
 model SopDocument {
@@ -180,7 +222,7 @@ model SopDocument {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  item Item @relation(fields: [itemId], references: [id])
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
 }
 
 model SupplierProduct {
@@ -200,6 +242,7 @@ model SupplierProduct {
   priceHistory SupplierProductPriceHistory[]
 
   @@index([supplier, supplierSku])
+  @@index([linkedItemId])
 }
 
 model SupplierImportBatch {

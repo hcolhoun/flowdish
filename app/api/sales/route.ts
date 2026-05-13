@@ -29,10 +29,7 @@ function combineRequirements(requirements: StockRequirement[]) {
   return Array.from(map.values())
 }
 
-async function consumeItemStock(
-  tx: any,
-  requirement: StockRequirement
-) {
+async function consumeItemStock(tx: any, requirement: StockRequirement) {
   const lots = await tx.inventoryLot.findMany({
     where: {
       itemId: requirement.itemId,
@@ -116,9 +113,47 @@ async function buildL1Requirements(l1ItemId: string, saleQty: number) {
   return combineRequirements(requirements)
 }
 
-export async function GET() {
+function startOfDay(date: Date) {
+  const copy = new Date(date)
+  copy.setHours(0, 0, 0, 0)
+  return copy
+}
+
+function endOfDay(date: Date) {
+  const copy = new Date(date)
+  copy.setHours(23, 59, 59, 999)
+  return copy
+}
+
+export async function GET(req: Request) {
   try {
+    const { searchParams } = new URL(req.url)
+
+    const startDateParam = searchParams.get('startDate')
+    const endDateParam = searchParams.get('endDate')
+
+    const where: any = {}
+
+    if (startDateParam || endDateParam) {
+      where.soldAt = {}
+
+      if (startDateParam) {
+        const startDate = new Date(startDateParam)
+        if (!Number.isNaN(startDate.getTime())) {
+          where.soldAt.gte = startOfDay(startDate)
+        }
+      }
+
+      if (endDateParam) {
+        const endDate = new Date(endDateParam)
+        if (!Number.isNaN(endDate.getTime())) {
+          where.soldAt.lte = endOfDay(endDate)
+        }
+      }
+    }
+
     const sales = await prisma.sale.findMany({
+      where,
       include: { item: true },
       orderBy: { soldAt: 'desc' },
     })
