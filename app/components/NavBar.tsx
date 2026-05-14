@@ -34,19 +34,19 @@ export default function NavBar() {
 
   return (
     <div className="border-b bg-white">
-      <div className="mx-auto max-w-7xl px-6 py-4">
-        <Link href="/" className="mb-3 flex justify-center">
+      <div className="mx-auto flex max-w-7xl items-center gap-4 px-6 py-4">
+        <Link href="/" className="flex shrink-0 items-center">
           <Image
             src="/flowdish-banner-logo.png"
             alt="Flowdish"
-            width={260}
-            height={80}
+            width={120}
+            height={40}
             priority
-            className="h-10 w-auto"
+            className="h-10 w-auto object-contain"
           />
         </Link>
 
-        <div className="flex flex-wrap items-center justify-center gap-2">
+        <nav className="flex flex-1 flex-wrap items-center gap-2">
           {links.map((link) => {
             const active = pathname === link.href
 
@@ -64,15 +64,15 @@ export default function NavBar() {
               </Link>
             )
           })}
+        </nav>
 
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="rounded-xl border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
-          >
-            Logout
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="shrink-0 rounded-xl border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+        >
+          Logout
+        </button>
       </div>
     </div>
   )
