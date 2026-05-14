@@ -2,8 +2,13 @@ import './globals.css'
 import NavBar from './components/NavBar'
 
 export const metadata = {
-  title: 'Kitchen Cloud',
+  title: 'Flowdish',
   description: 'Kitchen operations system',
+  icons: {
+    icon: '/prawn.png',
+    shortcut: '/prawn.png',
+    apple: '/prawn.png',
+  },
 }
 
 export default function RootLayout({

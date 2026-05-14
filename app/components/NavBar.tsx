@@ -30,46 +30,44 @@ export default function NavBar() {
     router.refresh()
   }
 
-  if (pathname === '/login') return null
+  if (pathname === '/login' || pathname === '/reset-password') return null
 
   return (
     <div className="border-b bg-white">
-      <div className="mx-auto flex max-w-7xl items-center gap-4 px-6 py-4">
-        <Link href="/" className="flex shrink-0 items-center">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2 px-6 py-4">
+        <Link href="/" className="mr-4 flex items-center">
           <Image
             src="/flowdish-banner-logo.png"
             alt="Flowdish"
-            width={120}
-            height={40}
+            width={180}
+            height={56}
             priority
-            className="h-10 w-auto object-contain"
+            className="h-14 w-auto object-contain"
           />
         </Link>
 
-        <nav className="flex flex-1 flex-wrap items-center gap-2">
-          {links.map((link) => {
-            const active = pathname === link.href
+        {links.map((link) => {
+          const active = pathname === link.href
 
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={`rounded-xl px-4 py-2 text-sm font-medium ${
-                  active
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
-                }`}
-              >
-                {link.label}
-              </Link>
-            )
-          })}
-        </nav>
+          return (
+            <Link
+              key={link.href}
+              href={link.href}
+              className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                active
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+              }`}
+            >
+              {link.label}
+            </Link>
+          )
+        })}
 
         <button
           type="button"
           onClick={handleLogout}
-          className="shrink-0 rounded-xl border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+          className="ml-auto rounded-xl border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
         >
           Logout
         </button>
