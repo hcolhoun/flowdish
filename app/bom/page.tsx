@@ -84,6 +84,25 @@ type L1CostingRow = {
   isEstimated: boolean
 }
 
+type ExpandedL1Bom = {
+  loading: boolean
+  error: string
+  l1ToL2Rows: Array<{
+    id: string
+    l1ItemId: string
+    l2ItemId: string
+    qty: number
+    l2: Item
+  }>
+  l1ToL3Rows: Array<{
+    id: string
+    l1ItemId: string
+    l3ItemId: string
+    qty: number
+    l3: Item
+  }>
+}
+
 function QtyInput({
   value,
   unit,
@@ -397,6 +416,8 @@ export default function BomPage() {
   const [l1ToL2Rows, setL1ToL2Rows] = useState<ChildRow[]>([])
   const [l1ToL3Rows, setL1ToL3Rows] = useState<ChildRow[]>([])
   const [l2ToL3Rows, setL2ToL3Rows] = useState<ChildRow[]>([])
+  const [expandedL1Ids, setExpandedL1Ids] = useState<string[]>([])
+  const [expandedL1BomById, setExpandedL1BomById] = useState<Record<string, ExpandedL1Bom>>({})
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -862,6 +883,77 @@ export default function BomPage() {
     setter(next)
   }
 
+  function isL1Expanded(l1ItemId: string) {
+    return expandedL1Ids.includes(l1ItemId)
+  }
+
+  async function toggleL1Expanded(l1ItemId: string) {
+    const alreadyExpanded = expandedL1Ids.includes(l1ItemId)
+
+    if (alreadyExpanded) {
+      setExpandedL1Ids((prev) => prev.filter((id) => id !== l1ItemId))
+      return
+    }
+
+    setExpandedL1Ids((prev) => [...prev, l1ItemId])
+
+    if (expandedL1BomById[l1ItemId]) {
+      return
+    }
+
+    setExpandedL1BomById((prev) => ({
+      ...prev,
+      [l1ItemId]: {
+        loading: true,
+        error: '',
+        l1ToL2Rows: [],
+        l1ToL3Rows: [],
+      },
+    }))
+
+    try {
+      const [l1l2Res, l1l3Res] = await Promise.all([
+        fetch(`/api/bom/l1-l2?parentId=${l1ItemId}`, { cache: 'no-store' }),
+        fetch(`/api/bom/l1-l3?parentId=${l1ItemId}`, { cache: 'no-store' }),
+      ])
+
+      const l1l2Data = await safeJson(l1l2Res)
+      const l1l3Data = await safeJson(l1l3Res)
+
+      if (!l1l2Res.ok) {
+        throw new Error(l1l2Data?.error || 'Failed to load L1 → L2 rows')
+      }
+
+      if (!l1l3Res.ok) {
+        throw new Error(l1l3Data?.error || 'Failed to load L1 → L3 rows')
+      }
+
+      setExpandedL1BomById((prev) => ({
+        ...prev,
+        [l1ItemId]: {
+          loading: false,
+          error: '',
+          l1ToL2Rows: l1l2Data,
+          l1ToL3Rows: l1l3Data,
+        },
+      }))
+    } catch (err) {
+      setExpandedL1BomById((prev) => ({
+        ...prev,
+        [l1ItemId]: {
+          loading: false,
+          error: err instanceof Error ? err.message : 'Unknown error',
+          l1ToL2Rows: [],
+          l1ToL3Rows: [],
+        },
+      }))
+    }
+  }
+
+  function expandedL1Costing(l1ItemId: string) {
+    return l1CostingByItemId.get(l1ItemId) ?? null
+  }
+  
   function validateRows(rows: ChildRow[], label: string) {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
@@ -1123,6 +1215,8 @@ export default function BomPage() {
             value={parentId}
             onChange={(e) => {
               setParentId(e.target.value)
+              setExpandedL1Ids([])
+              setExpandedL1BomById({})
               setMessage('')
               setError('')
             }}
@@ -1364,47 +1458,245 @@ export default function BomPage() {
                       ? qty * cost.sellingPrice
                       : null
 
+                  const expanded = row.childId ? isL1Expanded(row.childId) : false
+                  const expandedBom = row.childId ? expandedL1BomById[row.childId] : null
+                  const expandedCosting = row.childId ? expandedL1Costing(row.childId) : null
+
                   return (
-                    <div
-                      key={index}
-                      className="grid gap-3 md:grid-cols-[1fr_180px_150px_150px_150px_100px]"
-                    >
-                      <L1Picker
-                        selectedId={row.childId}
-                        l1Items={l1Items}
-                        onSelect={(id) =>
-                          updateRow(l0ToL1Rows, setL0ToL1Rows, index, 'childId', id)
-                        }
-                      />
+                    <div key={index} className="rounded-2xl border bg-white p-4">
+                      <div className="grid gap-3 md:grid-cols-[1fr_160px_140px_140px_140px_110px_100px]">
+                        <L1Picker
+                          selectedId={row.childId}
+                          l1Items={l1Items}
+                          onSelect={(id) =>
+                            updateRow(l0ToL1Rows, setL0ToL1Rows, index, 'childId', id)
+                          }
+                        />
 
-                      <QtyInput
-                        value={row.qty}
-                        unit="each"
-                        placeholder="Qty"
-                        onChange={(value) =>
-                          updateRow(l0ToL1Rows, setL0ToL1Rows, index, 'qty', value)
-                        }
-                      />
+                        <QtyInput
+                          value={row.qty}
+                          unit="each"
+                          placeholder="Qty"
+                          onChange={(value) =>
+                            updateRow(l0ToL1Rows, setL0ToL1Rows, index, 'qty', value)
+                          }
+                        />
 
-                      <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
-                        {cost ? `${money(cost.foodCost)} COGS` : 'Missing costing'}
+                        <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                          {cost ? `${money(cost.foodCost)} COGS` : 'Missing costing'}
+                        </div>
+
+                        <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                          {cost?.sellingPrice ? `${money(cost.sellingPrice)} sell` : 'No price'}
+                        </div>
+
+                        <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
+                          {item ? `${money(lineCogs)} / ${money(lineSales)}` : '—'}
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={!row.childId}
+                          onClick={() => toggleL1Expanded(row.childId)}
+                          className="rounded-xl border px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {expanded ? 'Collapse' : 'Expand'}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => removeRow(l0ToL1Rows, setL0ToL1Rows, index)}
+                          className="rounded-xl border px-3 py-2"
+                        >
+                          Remove
+                        </button>
                       </div>
 
-                      <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
-                        {cost?.sellingPrice ? `${money(cost.sellingPrice)} sell` : 'No price'}
-                      </div>
+                      {expanded && item ? (
+                        <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
+                          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                            <div>
+                              <h3 className="text-lg font-semibold text-slate-900">
+                                {item.name} [{item.sku}]
+                              </h3>
+                              <p className="mt-1 text-sm text-slate-600">
+                                Expanded L1 dish inside this L0 menu.
+                              </p>
+                            </div>
 
-                      <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
-                        {item ? `${money(lineCogs)} / ${money(lineSales)}` : '—'}
-                      </div>
+                            <div className="grid gap-2 text-sm md:grid-cols-4">
+                              <div className="rounded-xl border bg-white px-3 py-2">
+                                <div className="text-xs text-slate-500">Selling Price</div>
+                                <div className="font-semibold text-slate-900">
+                                  {money(expandedCosting?.sellingPrice)}
+                                </div>
+                              </div>
 
-                      <button
-                        type="button"
-                        onClick={() => removeRow(l0ToL1Rows, setL0ToL1Rows, index)}
-                        className="rounded-xl border px-3 py-2"
-                      >
-                        Remove
-                      </button>
+                              <div className="rounded-xl border bg-white px-3 py-2">
+                                <div className="text-xs text-slate-500">Food Cost</div>
+                                <div className="font-semibold text-slate-900">
+                                  {money(expandedCosting?.foodCost)}
+                                </div>
+                              </div>
+
+                              <div className="rounded-xl border bg-white px-3 py-2">
+                                <div className="text-xs text-slate-500">Food Cost %</div>
+                                <div className="font-semibold text-slate-900">
+                                  {percent(expandedCosting?.foodCostPercent)}
+                                </div>
+                              </div>
+
+                              <div className="rounded-xl border bg-white px-3 py-2">
+                                <div className="text-xs text-slate-500">Margin</div>
+                                <div className="font-semibold text-slate-900">
+                                  {percent(expandedCosting?.grossMarginPercent)}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {expandedBom?.loading ? (
+                            <div className="mt-4 rounded-xl border bg-white px-4 py-3 text-sm text-slate-600">
+                              Loading L1 BOM…
+                            </div>
+                          ) : null}
+
+                          {expandedBom?.error ? (
+                            <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+                              {expandedBom.error}
+                            </div>
+                          ) : null}
+
+                          {expandedBom && !expandedBom.loading && !expandedBom.error ? (
+                            <div className="mt-5 grid gap-5 xl:grid-cols-2">
+                              <div className="rounded-xl border bg-white p-4">
+                                <h4 className="font-semibold text-slate-900">
+                                  L2 Prep Components
+                                </h4>
+
+                                <div className="mt-3 overflow-x-auto">
+                                  <table className="w-full text-left text-sm">
+                                    <thead className="bg-slate-100">
+                                      <tr>
+                                        <th className="px-3 py-2">L2</th>
+                                        <th className="px-3 py-2">Qty</th>
+                                        <th className="px-3 py-2">Unit Cost</th>
+                                        <th className="px-3 py-2">Line Cost</th>
+                                      </tr>
+                                    </thead>
+
+                                    <tbody>
+                                      {expandedBom.l1ToL2Rows.length === 0 ? (
+                                        <tr className="border-t">
+                                          <td className="px-3 py-2 text-slate-600" colSpan={4}>
+                                            No L2 components.
+                                          </td>
+                                        </tr>
+                                      ) : (
+                                        expandedBom.l1ToL2Rows.map((bomRow) => {
+                                          const l2Cost = getL2Cost(bomRow.l2ItemId)
+                                          const lineCost =
+                                            l2Cost?.costPerUnit !== null &&
+                                            l2Cost?.costPerUnit !== undefined
+                                              ? bomRow.qty * l2Cost.costPerUnit
+                                              : null
+
+                                          return (
+                                            <tr key={bomRow.id} className="border-t">
+                                              <td className="px-3 py-2">
+                                                <div className="font-medium text-slate-900">
+                                                  {bomRow.l2.name}
+                                                </div>
+                                                <div className="text-xs text-slate-500">
+                                                  {bomRow.l2.sku}
+                                                </div>
+                                              </td>
+
+                                              <td className="px-3 py-2">
+                                                {numberLabel(bomRow.qty)} {bomRow.l2.unitType}
+                                              </td>
+
+                                              <td className="px-3 py-2">
+                                                {l2Cost?.costPerUnit !== null &&
+                                                l2Cost?.costPerUnit !== undefined
+                                                  ? `${money(l2Cost.costPerUnit, 5)} / ${bomRow.l2.unitType}`
+                                                  : 'Missing'}
+                                              </td>
+
+                                              <td className="px-3 py-2">{money(lineCost)}</td>
+                                            </tr>
+                                          )
+                                        })
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+
+                              <div className="rounded-xl border bg-white p-4">
+                                <h4 className="font-semibold text-slate-900">
+                                  Direct L3 Ingredients
+                                </h4>
+
+                                <div className="mt-3 overflow-x-auto">
+                                  <table className="w-full text-left text-sm">
+                                    <thead className="bg-slate-100">
+                                      <tr>
+                                        <th className="px-3 py-2">L3</th>
+                                        <th className="px-3 py-2">Qty</th>
+                                        <th className="px-3 py-2">Unit Price</th>
+                                        <th className="px-3 py-2">Line Cost</th>
+                                      </tr>
+                                    </thead>
+
+                                    <tbody>
+                                      {expandedBom.l1ToL3Rows.length === 0 ? (
+                                        <tr className="border-t">
+                                          <td className="px-3 py-2 text-slate-600" colSpan={4}>
+                                            No direct L3 ingredients.
+                                          </td>
+                                        </tr>
+                                      ) : (
+                                        expandedBom.l1ToL3Rows.map((bomRow) => {
+                                          const price = getL3Price(bomRow.l3ItemId)
+                                          const lineCost = price
+                                            ? bomRow.qty * price.unitPrice
+                                            : null
+
+                                          return (
+                                            <tr key={bomRow.id} className="border-t">
+                                              <td className="px-3 py-2">
+                                                <div className="font-medium text-slate-900">
+                                                  {bomRow.l3.name}
+                                                </div>
+                                                <div className="text-xs text-slate-500">
+                                                  {bomRow.l3.sku}
+                                                </div>
+                                              </td>
+
+                                              <td className="px-3 py-2">
+                                                {numberLabel(bomRow.qty)} {bomRow.l3.unitType}
+                                              </td>
+
+                                              <td className="px-3 py-2">
+                                                {price
+                                                  ? `${money(price.unitPrice, 5)} / ${bomRow.l3.unitType}`
+                                                  : 'Missing'}
+                                              </td>
+
+                                              <td className="px-3 py-2">{money(lineCost)}</td>
+                                            </tr>
+                                          )
+                                        })
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   )
                 })}
