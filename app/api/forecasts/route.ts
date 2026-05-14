@@ -2,22 +2,20 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
 function startOfToday() {
-  const date = new Date()
-  date.setHours(0, 0, 0, 0)
-  return date
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate())
 }
 
 function startOfTomorrow() {
-  const date = startOfToday()
-  date.setDate(date.getDate() + 1)
-  return date
+  const start = startOfToday()
+  return new Date(start.getTime() + 24 * 60 * 60 * 1000)
 }
 
-function todayNameDate() {
-  const date = new Date()
-  const yyyy = date.getFullYear()
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const dd = String(date.getDate()).padStart(2, '0')
+function dateStamp() {
+  const now = new Date()
+  const yyyy = now.getFullYear()
+  const mm = String(now.getMonth() + 1).padStart(2, '0')
+  const dd = String(now.getDate()).padStart(2, '0')
   return `${yyyy}-${mm}-${dd}`
 }
 
@@ -31,7 +29,7 @@ async function generateForecastName() {
     },
   })
 
-  return `Forecast ${todayNameDate()} #${countToday + 1}`
+  return `Forecast ${dateStamp()} #${countToday + 1}`
 }
 
 export async function GET() {
@@ -66,32 +64,23 @@ export async function POST(req: Request) {
     const lines = Array.isArray(body.lines) ? body.lines : []
 
     if (Number.isNaN(startDate.getTime())) {
-      return NextResponse.json({ error: 'Start date is required' }, { status: 400 })
+      return NextResponse.json({ error: 'Valid start date is required' }, { status: 400 })
     }
 
     if (Number.isNaN(endDate.getTime())) {
-      return NextResponse.json({ error: 'End date is required' }, { status: 400 })
-    }
-
-    if (endDate < startDate) {
-      return NextResponse.json(
-        { error: 'End date cannot be before start date' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Valid end date is required' }, { status: 400 })
     }
 
     const validLines = lines
-      .filter((line: { itemId?: string; qty?: number | string }) => {
-        return line.itemId && Number(line.qty) > 0
-      })
-      .map((line: { itemId: string; qty: number | string }) => ({
+      .filter((line: any) => line.itemId && Number(line.qty) > 0)
+      .map((line: any) => ({
         itemId: String(line.itemId),
         qty: Number(line.qty),
       }))
 
     if (validLines.length === 0) {
       return NextResponse.json(
-        { error: 'Add at least one valid forecast line' },
+        { error: 'Add at least one valid forecast line.' },
         { status: 400 }
       )
     }
@@ -141,6 +130,9 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('DELETE /api/forecasts failed:', error)
-    return NextResponse.json({ error: 'Failed to delete forecast' }, { status: 500 })
+    return NextResponse.json(
+      { error: 'Failed to delete forecast' },
+      { status: 500 }
+    )
   }
 }

@@ -2,13 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 
-type UnitType = 'g' | 'ml' | 'each'
-
 type Item = {
   id: string
   sku: string
   name: string
-  itemType: 'L1' | 'L2' | 'L3'
+  itemType: 'L0' | 'L1' | 'L2' | 'L3'
 }
 
 type ForecastLineInput = {
@@ -21,7 +19,6 @@ type Forecast = {
   name: string
   startDate: string
   endDate: string
-  createdAt: string
   lines?: Array<{
     id: string
     qty: number
@@ -42,7 +39,7 @@ type L2PlanRow = {
   itemId: string
   sku: string
   name: string
-  unitType: UnitType
+  unitType: 'g' | 'ml' | 'each'
   requiredQty: number
   totalStock: number
   usableStock: number
@@ -57,71 +54,31 @@ type L2PlanRow = {
   expiryStatus: string
 }
 
-type L3PlanRow = {
-  itemId: string
-  sku: string
-  name: string
-  unitType: UnitType
-  requiredQty: number
-  totalStock: number
-  usableStock: number
-  expiringBeforeForecastEnd: number
-  expiredStock: number
-  shortfallQty: number
-  shelfLifeDays: number | null
-  nextExpiry: string | null
-  daysToNextExpiry: number | null
-  expiryStatus: string
-}
-
 type PlanResponse = {
   forecast: Forecast
   l1Plan: L1PlanRow[]
   l2Plan: L2PlanRow[]
-  l3Plan: L3PlanRow[]
 }
 
-function todayInputValue() {
-  return new Date().toISOString().slice(0, 10)
-}
-
-function todayNameDate() {
-  const date = new Date()
-  const yyyy = date.getFullYear()
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const dd = String(date.getDate()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd}`
-}
-
-function isSameLocalDay(value: string) {
-  const date = new Date(value)
-  const now = new Date()
-
-  return (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  )
-}
-
-function buildDefaultForecastName(forecasts: Forecast[]) {
-  const todayCount = forecasts.filter((forecast) => {
-    return forecast.createdAt && isSameLocalDay(forecast.createdAt)
-  }).length
-
-  return `Forecast ${todayNameDate()} #${todayCount + 1}`
+type L0L1BomRow = {
+  id: string
+  l0ItemId: string
+  l1ItemId: string
+  qty: number
+  l1: Item
 }
 
 export default function PlanningPage() {
   const [items, setItems] = useState<Item[]>([])
+  const [menus, setMenus] = useState<Item[]>([])
   const [forecasts, setForecasts] = useState<Forecast[]>([])
   const [selectedForecastId, setSelectedForecastId] = useState('')
+  const [selectedMenuId, setSelectedMenuId] = useState('')
   const [plan, setPlan] = useState<PlanResponse | null>(null)
 
   const [name, setName] = useState('')
-  const [nameManuallyEdited, setNameManuallyEdited] = useState(false)
-  const [startDate, setStartDate] = useState(todayInputValue())
-  const [endDate, setEndDate] = useState(todayInputValue())
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [lines, setLines] = useState<ForecastLineInput[]>([{ itemId: '', qty: '1' }])
 
   const [error, setError] = useState('')
@@ -129,6 +86,7 @@ export default function PlanningPage() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [loadingMenu, setLoadingMenu] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const selectedForecast = useMemo(
@@ -142,8 +100,18 @@ export default function PlanningPage() {
     try {
       return JSON.parse(text)
     } catch {
-      throw new Error(text.slice(0, 1000))
+      throw new Error(text.slice(0, 500))
     }
+  }
+
+  function todayInputValue() {
+    return new Date().toISOString().slice(0, 10)
+  }
+
+  function sevenDaysFromTodayInputValue() {
+    const date = new Date()
+    date.setDate(date.getDate() + 7)
+    return date.toISOString().slice(0, 10)
   }
 
   function formatDate(value: string | null | undefined) {
@@ -152,13 +120,11 @@ export default function PlanningPage() {
   }
 
   function formatNumber(value: number) {
-    if (!Number.isFinite(value)) return '0'
     return Number.isInteger(value) ? String(value) : value.toFixed(3)
   }
 
   function statusClass(status: string) {
     if (status === 'PREP REQUIRED') return 'bg-red-50 text-red-700'
-    if (status === 'ORDER REQUIRED') return 'bg-red-50 text-red-700'
     if (status === 'EXPIRED STOCK') return 'bg-red-50 text-red-700'
     if (status === 'EXPIRING BEFORE FORECAST ENDS') return 'bg-amber-50 text-amber-700'
     if (status === 'USE SOON') return 'bg-amber-50 text-amber-700'
@@ -181,13 +147,9 @@ export default function PlanningPage() {
       if (!itemsRes.ok) throw new Error(itemsData?.error || 'Failed to load items')
       if (!forecastsRes.ok) throw new Error(forecastsData?.error || 'Failed to load forecasts')
 
-      const l1Items = itemsData.filter((item: Item) => item.itemType === 'L1')
-      setItems(l1Items)
+      setItems(itemsData.filter((item: Item) => item.itemType === 'L1'))
+      setMenus(itemsData.filter((item: Item) => item.itemType === 'L0'))
       setForecasts(forecastsData)
-
-      if (!nameManuallyEdited) {
-        setName(buildDefaultForecastName(forecastsData))
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -196,17 +158,10 @@ export default function PlanningPage() {
   }
 
   useEffect(() => {
-    loadData()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  function resetNewForecastForm(nextForecasts: Forecast[]) {
-    setName(buildDefaultForecastName(nextForecasts))
-    setNameManuallyEdited(false)
     setStartDate(todayInputValue())
-    setEndDate(todayInputValue())
-    setLines([{ itemId: '', qty: '1' }])
-  }
+    setEndDate(sevenDaysFromTodayInputValue())
+    loadData()
+  }, [])
 
   function addLine() {
     setLines((prev) => [...prev, { itemId: '', qty: '1' }])
@@ -225,6 +180,54 @@ export default function PlanningPage() {
       const next = prev.filter((_, lineIndex) => lineIndex !== index)
       return next.length > 0 ? next : [{ itemId: '', qty: '1' }]
     })
+  }
+
+  async function loadMenuIntoForecast() {
+    try {
+      setError('')
+      setMessage('')
+      setPlan(null)
+      setLoadingMenu(true)
+
+      if (!selectedMenuId) {
+        throw new Error('Select an L0 menu first.')
+      }
+
+      const menu = menus.find((item) => item.id === selectedMenuId)
+
+      const res = await fetch(`/api/bom/l0-l1?parentId=${selectedMenuId}`, {
+        cache: 'no-store',
+      })
+
+      const data = (await safeJson(res)) as L0L1BomRow[] | { error?: string }
+
+      if (!res.ok) {
+        throw new Error(!Array.isArray(data) ? data?.error || 'Failed to load menu' : 'Failed to load menu')
+      }
+
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error('This L0 menu has no L1 dishes yet. Build it in BOM Builder first.')
+      }
+
+      setLines(
+        data.map((row) => ({
+          itemId: row.l1ItemId,
+          qty: String(row.qty || 1),
+        }))
+      )
+
+      if (!name.trim() && menu) {
+        setName(`${menu.name} forecast`)
+      }
+
+      setMessage(
+        `${data.length} L1 dish(es) loaded from ${menu?.name || 'selected menu'}. Edit quantities before saving.`
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoadingMenu(false)
+    }
   }
 
   async function saveForecast(e: React.FormEvent) {
@@ -259,12 +262,14 @@ export default function PlanningPage() {
         throw new Error(data?.error || 'Failed to save forecast')
       }
 
-      const savedForecast = data as Forecast
-      setSelectedForecastId(savedForecast.id)
+      setName('')
+      setStartDate(todayInputValue())
+      setEndDate(sevenDaysFromTodayInputValue())
+      setLines([{ itemId: '', qty: '1' }])
+      setSelectedMenuId('')
+      setSelectedForecastId(data.id)
       setMessage('Forecast saved. You can now generate the prep plan.')
-
       await loadData()
-      resetNewForecastForm([savedForecast, ...forecasts])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -286,7 +291,7 @@ export default function PlanningPage() {
       setMessage('')
       setPlan(null)
 
-      const res = await fetch(`/api/prep-plan?forecastId=${forecastId}&t=${Date.now()}`, {
+      const res = await fetch(`/api/prep-plan?forecastId=${forecastId}`, {
         cache: 'no-store',
       })
 
@@ -297,7 +302,6 @@ export default function PlanningPage() {
       }
 
       setPlan(data)
-      setMessage('Plan regenerated using current live inventory.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -345,7 +349,7 @@ export default function PlanningPage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Planning</h1>
             <p className="mt-2 text-sm text-slate-600">
-              Create demand forecasts and regenerate live prep and ingredient plans.
+              Load an L0 menu, forecast L1 sales, and generate prep requirements.
             </p>
           </div>
 
@@ -369,6 +373,48 @@ export default function PlanningPage() {
         ) : null}
 
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-slate-900">Load L0 Menu</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Select a built L0 menu and pull its L1 dishes into the forecast lines.
+          </p>
+
+          <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                L0 Menu
+              </label>
+              <select
+                value={selectedMenuId}
+                onChange={(e) => setSelectedMenuId(e.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+              >
+                <option value="">Select L0 menu</option>
+                {menus.map((menu) => (
+                  <option key={menu.id} value={menu.id}>
+                    {menu.name} [{menu.sku}]
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={loadMenuIntoForecast}
+              disabled={!selectedMenuId || loadingMenu}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loadingMenu ? 'Loading Menu…' : 'Load Menu into Forecast'}
+            </button>
+          </div>
+
+          {menus.length === 0 ? (
+            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              No L0 menus found. Create an L0 item on the Items page, then build it in BOM Builder.
+            </div>
+          ) : null}
+        </section>
+
+        <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">New Forecast</h2>
 
           <form onSubmit={saveForecast} className="mt-6">
@@ -379,16 +425,10 @@ export default function PlanningPage() {
                 </label>
                 <input
                   value={name}
-                  onChange={(e) => {
-                    setName(e.target.value)
-                    setNameManuallyEdited(true)
-                  }}
+                  onChange={(e) => setName(e.target.value)}
                   className="w-full rounded-xl border px-3 py-2"
-                  placeholder="Auto-generated if left blank"
+                  placeholder="Optional - auto-generated if blank"
                 />
-                <p className="mt-1 text-xs text-slate-500">
-                  Auto-generated, but you can edit it.
-                </p>
               </div>
 
               <div>
@@ -420,7 +460,12 @@ export default function PlanningPage() {
 
             <div className="mt-6">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-lg font-semibold text-slate-900">Forecast Lines</h3>
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">Forecast Lines</h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Quantities are expected L1 sales for the selected forecast period.
+                  </p>
+                </div>
 
                 <button
                   type="button"
@@ -455,7 +500,7 @@ export default function PlanningPage() {
                       value={line.qty}
                       onChange={(e) => updateLine(index, 'qty', e.target.value)}
                       className="rounded-xl border px-3 py-2"
-                      placeholder="Forecast qty"
+                      placeholder="Expected sales"
                       required
                     />
 
@@ -498,8 +543,7 @@ export default function PlanningPage() {
               <option value="">Select forecast</option>
               {forecasts.map((forecast) => (
                 <option key={forecast.id} value={forecast.id}>
-                  {forecast.name} ({formatDate(forecast.startDate)} -{' '}
-                  {formatDate(forecast.endDate)})
+                  {forecast.name} ({formatDate(forecast.startDate)} - {formatDate(forecast.endDate)})
                 </option>
               ))}
             </select>
@@ -510,7 +554,7 @@ export default function PlanningPage() {
               disabled={!selectedForecastId || generating}
               className="rounded-xl bg-slate-900 px-5 py-2 font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {generating ? 'Regenerating…' : 'Regenerate Live Plan'}
+              {generating ? 'Generating…' : 'Generate Plan'}
             </button>
           </div>
 
@@ -545,15 +589,9 @@ export default function PlanningPage() {
                       <tr key={row.itemId} className="border-t">
                         <td className="px-4 py-3 text-slate-800">{row.sku}</td>
                         <td className="px-4 py-3 text-slate-800">{row.name}</td>
-                        <td className="px-4 py-3 text-slate-800">
-                          {formatNumber(row.forecastQty)}
-                        </td>
-                        <td className="px-4 py-3 text-slate-800">
-                          {formatNumber(row.makeableQty)}
-                        </td>
-                        <td className="px-4 py-3 text-slate-800">
-                          {formatNumber(row.shortfallQty)}
-                        </td>
+                        <td className="px-4 py-3 text-slate-800">{formatNumber(row.forecastQty)}</td>
+                        <td className="px-4 py-3 text-slate-800">{formatNumber(row.makeableQty)}</td>
+                        <td className="px-4 py-3 text-slate-800">{formatNumber(row.shortfallQty)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -565,8 +603,7 @@ export default function PlanningPage() {
               <div className="border-b px-6 py-4">
                 <h2 className="text-xl font-semibold text-slate-900">L2 Prep List</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  Required quantities are based on the full forecast. Shortfall updates from live
-                  inventory every time you regenerate.
+                  Required and shortfall quantities are shown in each L2 item’s base unit.
                 </p>
               </div>
 
@@ -618,72 +655,7 @@ export default function PlanningPage() {
                           </td>
                           <td className="px-4 py-3">
                             <span
-                              className={`rounded-lg px-2 py-1 text-sm font-semibold ${statusClass(
-                                row.expiryStatus
-                              )}`}
-                            >
-                              {row.expiryStatus}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="rounded-2xl border bg-white shadow-sm">
-              <div className="border-b px-6 py-4">
-                <h2 className="text-xl font-semibold text-slate-900">L3 Ingredient Shortages</h2>
-                <p className="mt-1 text-sm text-slate-600">
-                  Includes direct L1 ingredients and L3 ingredients needed to prep short L2 batches.
-                </p>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-100 text-sm">
-                    <tr>
-                      <th className="px-4 py-3 text-slate-800">SKU</th>
-                      <th className="px-4 py-3 text-slate-800">Name</th>
-                      <th className="px-4 py-3 text-slate-800">Required</th>
-                      <th className="px-4 py-3 text-slate-800">Usable Stock</th>
-                      <th className="px-4 py-3 text-slate-800">Shortfall</th>
-                      <th className="px-4 py-3 text-slate-800">Next Expiry</th>
-                      <th className="px-4 py-3 text-slate-800">Status</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {plan.l3Plan.length === 0 ? (
-                      <tr className="border-t">
-                        <td className="px-4 py-3 text-slate-700" colSpan={7}>
-                          No L3 ingredient demand found.
-                        </td>
-                      </tr>
-                    ) : (
-                      plan.l3Plan.map((row) => (
-                        <tr key={row.itemId} className="border-t">
-                          <td className="px-4 py-3 text-slate-800">{row.sku}</td>
-                          <td className="px-4 py-3 text-slate-800">{row.name}</td>
-                          <td className="px-4 py-3 text-slate-800">
-                            {formatNumber(row.requiredQty)} {row.unitType}
-                          </td>
-                          <td className="px-4 py-3 text-slate-800">
-                            {formatNumber(row.usableStock)} {row.unitType}
-                          </td>
-                          <td className="px-4 py-3 text-slate-800">
-                            {formatNumber(row.shortfallQty)} {row.unitType}
-                          </td>
-                          <td className="px-4 py-3 text-slate-800">
-                            {row.nextExpiry ? formatDate(row.nextExpiry) : ''}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span
-                              className={`rounded-lg px-2 py-1 text-sm font-semibold ${statusClass(
-                                row.expiryStatus
-                              )}`}
+                              className={`rounded-lg px-2 py-1 text-sm font-semibold ${statusClass(row.expiryStatus)}`}
                             >
                               {row.expiryStatus}
                             </span>
@@ -726,12 +698,8 @@ export default function PlanningPage() {
                   forecasts.map((forecast) => (
                     <tr key={forecast.id} className="border-t">
                       <td className="px-4 py-3 text-slate-800">{forecast.name}</td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {formatDate(forecast.startDate)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {formatDate(forecast.endDate)}
-                      </td>
+                      <td className="px-4 py-3 text-slate-800">{formatDate(forecast.startDate)}</td>
+                      <td className="px-4 py-3 text-slate-800">{formatDate(forecast.endDate)}</td>
                       <td className="px-4 py-3 text-slate-800">
                         {(forecast.lines ?? [])
                           .map((line) => `${line.item.name} (${formatNumber(line.qty)})`)
@@ -747,7 +715,7 @@ export default function PlanningPage() {
                             }}
                             className="rounded-lg border px-3 py-1 text-sm text-slate-800 hover:bg-slate-50"
                           >
-                            Regenerate
+                            Plan
                           </button>
 
                           <button
