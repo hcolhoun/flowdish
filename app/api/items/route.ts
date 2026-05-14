@@ -1,7 +1,12 @@
 import { prisma } from '@/lib/prisma'
 import { NextResponse } from 'next/server'
 
+type ItemTypeValue = 'L0' | 'L1' | 'L2' | 'L3'
+type UnitTypeValue = 'g' | 'ml' | 'each'
+type BuildStatusValue = 'UNBUILT' | 'BUILT'
+
 function makeSkuPrefix(itemType: string) {
+  if (itemType === 'L0') return 'L0'
   if (itemType === 'L1') return 'L1'
   if (itemType === 'L2') return 'L2'
   return 'L3'
@@ -19,8 +24,9 @@ function generateSuggestedSku(itemType: string, name: string) {
   return `${makeSkuPrefix(itemType)}-${slugifyName(name)}`
 }
 
-function nullablePositiveNumber(value: unknown) {
+function toNullableNumber(value: unknown) {
   if (value === null || value === undefined || value === '') return null
+
   const number = Number(value)
   return Number.isFinite(number) ? number : null
 }
@@ -28,7 +34,10 @@ function nullablePositiveNumber(value: unknown) {
 export async function GET() {
   try {
     const items = await prisma.item.findMany({
-      orderBy: { createdAt: 'desc' },
+      orderBy: [
+        { itemType: 'asc' },
+        { createdAt: 'desc' },
+      ],
     })
 
     return NextResponse.json(items)
@@ -43,8 +52,8 @@ export async function POST(req: Request) {
     const body = await req.json()
 
     const name = String(body.name || '').trim()
-    const itemType = body.itemType
-    const unitType = itemType === 'L1' ? 'each' : body.unitType
+    const itemType = body.itemType as ItemTypeValue
+    const unitType = itemType === 'L0' || itemType === 'L1' ? 'each' : body.unitType
 
     let sku = String(body.sku || '').trim()
 
@@ -52,11 +61,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 })
     }
 
-    if (!['L1', 'L2', 'L3'].includes(itemType)) {
+    if (!['L0', 'L1', 'L2', 'L3'].includes(itemType)) {
       return NextResponse.json({ error: 'Valid item type is required' }, { status: 400 })
     }
 
-    if (!sku && (itemType === 'L1' || itemType === 'L2')) {
+    if (!sku && (itemType === 'L0' || itemType === 'L1' || itemType === 'L2')) {
       sku = generateSuggestedSku(itemType, name)
     }
 
@@ -68,10 +77,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Valid unit type is required' }, { status: 400 })
     }
 
-    const shelfLifeDays = nullablePositiveNumber(body.shelfLifeDays)
+    const shelfLifeDays = toNullableNumber(body.shelfLifeDays)
 
     if (itemType === 'L2' || itemType === 'L3') {
-      if (shelfLifeDays === null || shelfLifeDays <= 0) {
+      if (shelfLifeDays === null || shelfLifeDays <= 0 || Number.isNaN(shelfLifeDays)) {
         return NextResponse.json(
           { error: 'Shelf life days is required for L2/L3 items' },
           { status: 400 }
@@ -88,7 +97,7 @@ export async function POST(req: Request) {
         shelfLifeDays: itemType === 'L2' || itemType === 'L3' ? shelfLifeDays : null,
         sellingPrice: null,
         standardBatchOutput: null,
-        buildStatus: itemType === 'L1' || itemType === 'L2' ? 'UNBUILT' : 'BUILT',
+        buildStatus: itemType === 'L3' ? 'BUILT' : 'UNBUILT',
       },
     })
 
@@ -120,12 +129,14 @@ export async function DELETE(req: Request) {
     }
 
     const [
-      bomL1AsParent,
-      bomL2AsChild,
+      bomL0AsParent,
+      bomL1AsChildOfL0,
+      bomL1AsParentL2,
+      bomL2AsChildOfL1,
       bomL1AsParentL3,
-      bomL3AsChildL1,
+      bomL3AsChildOfL1,
       bomL2AsParentL3,
-      bomL3AsChildL2,
+      bomL3AsChildOfL2,
       deliveries,
       inventoryLots,
       prepBatches,
@@ -133,6 +144,8 @@ export async function DELETE(req: Request) {
       wastes,
       forecastLines,
     ] = await Promise.all([
+      prisma.bomL0L1.count({ where: { l0ItemId: id } }),
+      prisma.bomL0L1.count({ where: { l1ItemId: id } }),
       prisma.bomL1L2.count({ where: { l1ItemId: id } }),
       prisma.bomL1L2.count({ where: { l2ItemId: id } }),
       prisma.bomL1L3.count({ where: { l1ItemId: id } }),
@@ -148,12 +161,14 @@ export async function DELETE(req: Request) {
     ])
 
     const usageCount =
-      bomL1AsParent +
-      bomL2AsChild +
+      bomL0AsParent +
+      bomL1AsChildOfL0 +
+      bomL1AsParentL2 +
+      bomL2AsChildOfL1 +
       bomL1AsParentL3 +
-      bomL3AsChildL1 +
+      bomL3AsChildOfL1 +
       bomL2AsParentL3 +
-      bomL3AsChildL2 +
+      bomL3AsChildOfL2 +
       deliveries +
       inventoryLots +
       prepBatches +
@@ -165,7 +180,7 @@ export async function DELETE(req: Request) {
       return NextResponse.json(
         {
           error:
-            'Cannot delete this item because it is already used in BOMs or stock/activity records.',
+            'Cannot delete this item because it is already used in menus, BOMs, stock, forecasts, sales, waste, or prep records.',
         },
         { status: 400 }
       )
@@ -198,7 +213,15 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 })
     }
 
-    const data: any = {}
+    const data: {
+      sku?: string
+      name?: string
+      unitType?: UnitTypeValue
+      shelfLifeDays?: number | null
+      sellingPrice?: number | null
+      standardBatchOutput?: number | null
+      buildStatus?: BuildStatusValue
+    } = {}
 
     if ('sku' in body) data.sku = String(body.sku || '').trim()
     if ('name' in body) data.name = String(body.name || '').trim()
@@ -212,20 +235,20 @@ export async function PATCH(req: Request) {
     }
 
     if ('shelfLifeDays' in body) {
-      data.shelfLifeDays = nullablePositiveNumber(body.shelfLifeDays)
+      data.shelfLifeDays = toNullableNumber(body.shelfLifeDays)
     }
 
     if ('sellingPrice' in body) {
-      data.sellingPrice = nullablePositiveNumber(body.sellingPrice)
+      data.sellingPrice = toNullableNumber(body.sellingPrice)
     }
 
     if ('standardBatchOutput' in body) {
-      data.standardBatchOutput = nullablePositiveNumber(body.standardBatchOutput)
+      data.standardBatchOutput = toNullableNumber(body.standardBatchOutput)
     }
 
     if ('buildStatus' in body) {
-      if (!['UNBUILT', 'BUILT'].includes(body.buildStatus)) {
-        return NextResponse.json({ error: 'Invalid build status' }, { status: 400 })
+      if (body.buildStatus !== 'UNBUILT' && body.buildStatus !== 'BUILT') {
+        return NextResponse.json({ error: 'Valid build status is required' }, { status: 400 })
       }
 
       data.buildStatus = body.buildStatus
@@ -240,20 +263,17 @@ export async function PATCH(req: Request) {
     }
 
     if ('shelfLifeDays' in data && (existing.itemType === 'L2' || existing.itemType === 'L3')) {
-      if (data.shelfLifeDays === null || data.shelfLifeDays <= 0) {
+      if (
+        data.shelfLifeDays === null ||
+        data.shelfLifeDays === undefined ||
+        data.shelfLifeDays <= 0 ||
+        Number.isNaN(data.shelfLifeDays)
+      ) {
         return NextResponse.json(
           { error: 'Shelf life days is required for L2/L3 items' },
           { status: 400 }
         )
       }
-    }
-
-    if ('sellingPrice' in data && existing.itemType !== 'L1') {
-      delete data.sellingPrice
-    }
-
-    if ('standardBatchOutput' in data && existing.itemType !== 'L2') {
-      delete data.standardBatchOutput
     }
 
     const item = await prisma.item.update({
