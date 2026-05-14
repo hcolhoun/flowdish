@@ -86,21 +86,10 @@ type L1CostingRow = {
 
 type ExpandedL1Bom = {
   loading: boolean
+  saving: boolean
   error: string
-  l1ToL2Rows: Array<{
-    id: string
-    l1ItemId: string
-    l2ItemId: string
-    qty: number
-    l2: Item
-  }>
-  l1ToL3Rows: Array<{
-    id: string
-    l1ItemId: string
-    l3ItemId: string
-    qty: number
-    l3: Item
-  }>
+  l1ToL2Rows: ChildRow[]
+  l1ToL3Rows: ChildRow[]
 }
 
 function QtyInput({
@@ -144,7 +133,7 @@ function L1Picker({
     <select
       value={selectedId}
       onChange={(e) => onSelect(e.target.value)}
-      className="rounded-xl border px-3 py-2"
+      className="w-full rounded-xl border px-3 py-2"
     >
       <option value="">Select L1 dish</option>
       {l1Items.map((item) => (
@@ -169,7 +158,7 @@ function L2Picker({
     <select
       value={selectedId}
       onChange={(e) => onSelect(e.target.value)}
-      className="rounded-xl border px-3 py-2"
+      className="w-full rounded-xl border px-3 py-2"
     >
       <option value="">Select L2</option>
       {l2Items.map((item) => (
@@ -887,27 +876,15 @@ export default function BomPage() {
     return expandedL1Ids.includes(l1ItemId)
   }
 
-  async function toggleL1Expanded(l1ItemId: string) {
-    const alreadyExpanded = expandedL1Ids.includes(l1ItemId)
-
-    if (alreadyExpanded) {
-      setExpandedL1Ids((prev) => prev.filter((id) => id !== l1ItemId))
-      return
-    }
-
-    setExpandedL1Ids((prev) => [...prev, l1ItemId])
-
-    if (expandedL1BomById[l1ItemId]) {
-      return
-    }
-
+  async function loadExpandedL1Bom(l1ItemId: string) {
     setExpandedL1BomById((prev) => ({
       ...prev,
       [l1ItemId]: {
         loading: true,
+        saving: false,
         error: '',
-        l1ToL2Rows: [],
-        l1ToL3Rows: [],
+        l1ToL2Rows: prev[l1ItemId]?.l1ToL2Rows ?? [],
+        l1ToL3Rows: prev[l1ItemId]?.l1ToL3Rows ?? [],
       },
     }))
 
@@ -920,21 +897,23 @@ export default function BomPage() {
       const l1l2Data = await safeJson(l1l2Res)
       const l1l3Data = await safeJson(l1l3Res)
 
-      if (!l1l2Res.ok) {
-        throw new Error(l1l2Data?.error || 'Failed to load L1 → L2 rows')
-      }
-
-      if (!l1l3Res.ok) {
-        throw new Error(l1l3Data?.error || 'Failed to load L1 → L3 rows')
-      }
+      if (!l1l2Res.ok) throw new Error(l1l2Data?.error || 'Failed to load L1 → L2 rows')
+      if (!l1l3Res.ok) throw new Error(l1l3Data?.error || 'Failed to load L1 → L3 rows')
 
       setExpandedL1BomById((prev) => ({
         ...prev,
         [l1ItemId]: {
           loading: false,
+          saving: false,
           error: '',
-          l1ToL2Rows: l1l2Data,
-          l1ToL3Rows: l1l3Data,
+          l1ToL2Rows: l1l2Data.map((row: any) => ({
+            childId: row.l2ItemId,
+            qty: String(row.qty),
+          })),
+          l1ToL3Rows: l1l3Data.map((row: any) => ({
+            childId: row.l3ItemId,
+            qty: String(row.qty),
+          })),
         },
       }))
     } catch (err) {
@@ -942,18 +921,95 @@ export default function BomPage() {
         ...prev,
         [l1ItemId]: {
           loading: false,
+          saving: false,
           error: err instanceof Error ? err.message : 'Unknown error',
-          l1ToL2Rows: [],
-          l1ToL3Rows: [],
+          l1ToL2Rows: prev[l1ItemId]?.l1ToL2Rows ?? [],
+          l1ToL3Rows: prev[l1ItemId]?.l1ToL3Rows ?? [],
         },
       }))
+    }
+  }
+
+  async function toggleL1Expanded(l1ItemId: string) {
+    const alreadyExpanded = expandedL1Ids.includes(l1ItemId)
+
+    if (alreadyExpanded) {
+      setExpandedL1Ids((prev) => prev.filter((id) => id !== l1ItemId))
+      return
+    }
+
+    setExpandedL1Ids((prev) => [...prev, l1ItemId])
+
+    if (!expandedL1BomById[l1ItemId]) {
+      await loadExpandedL1Bom(l1ItemId)
     }
   }
 
   function expandedL1Costing(l1ItemId: string) {
     return l1CostingByItemId.get(l1ItemId) ?? null
   }
-  
+
+  function addExpandedL1Row(l1ItemId: string, section: 'l1ToL2Rows' | 'l1ToL3Rows') {
+    setExpandedL1BomById((prev) => {
+      const current = prev[l1ItemId]
+      if (!current) return prev
+
+      return {
+        ...prev,
+        [l1ItemId]: {
+          ...current,
+          [section]: [...current[section], { childId: '', qty: '1' }],
+        },
+      }
+    })
+  }
+
+  function updateExpandedL1Row(
+    l1ItemId: string,
+    section: 'l1ToL2Rows' | 'l1ToL3Rows',
+    index: number,
+    field: 'childId' | 'qty',
+    value: string
+  ) {
+    setExpandedL1BomById((prev) => {
+      const current = prev[l1ItemId]
+      if (!current) return prev
+
+      const nextRows = [...current[section]]
+      nextRows[index] = { ...nextRows[index], [field]: value }
+
+      return {
+        ...prev,
+        [l1ItemId]: {
+          ...current,
+          [section]: nextRows,
+        },
+      }
+    })
+  }
+
+  function removeExpandedL1Row(
+    l1ItemId: string,
+    section: 'l1ToL2Rows' | 'l1ToL3Rows',
+    index: number
+  ) {
+    setExpandedL1BomById((prev) => {
+      const current = prev[l1ItemId]
+      if (!current) return prev
+
+      const nextRows = [...current[section]]
+      nextRows.splice(index, 1)
+
+      return {
+        ...prev,
+        [l1ItemId]: {
+          ...current,
+          [section]: nextRows,
+        },
+      }
+    })
+  }
+
   function validateRows(rows: ChildRow[], label: string) {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
@@ -1001,6 +1057,23 @@ export default function BomPage() {
 
     if (!res.ok) {
       throw new Error(data?.error || 'Failed to update parent item')
+    }
+  }
+
+  async function patchItemBuildStatus(itemId: string, buildStatus: BuildStatus) {
+    const res = await fetch('/api/items', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: itemId,
+        buildStatus,
+      }),
+    })
+
+    const data = await safeJson(res)
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to update item build status')
     }
   }
 
@@ -1053,6 +1126,106 @@ export default function BomPage() {
     } catch (err) {
       setMessage('')
       setError(err instanceof Error ? err.message : 'Unknown error')
+    }
+  }
+
+  async function saveExpandedL1(l1ItemId: string, buildStatus?: BuildStatus) {
+    const expanded = expandedL1BomById[l1ItemId]
+    const l1Item = getItem(l1ItemId)
+
+    if (!expanded || !l1Item) return
+
+    try {
+      setError('')
+      setMessage(`Saving ${l1Item.name} inside L0…`)
+
+      const validationError =
+        validateRows(expanded.l1ToL2Rows, `${l1Item.name} L1 → L2`) ||
+        validateRows(expanded.l1ToL3Rows, `${l1Item.name} L1 → L3`)
+
+      if (validationError) {
+        setMessage('')
+        setError(validationError)
+        return
+      }
+
+      setExpandedL1BomById((prev) => ({
+        ...prev,
+        [l1ItemId]: {
+          ...expanded,
+          saving: true,
+          error: '',
+        },
+      }))
+
+      const payloadL1L2 = {
+        parentId: l1ItemId,
+        rows: expanded.l1ToL2Rows
+          .filter((row) => row.childId && row.qty !== '')
+          .map((row) => ({
+            childId: row.childId,
+            qty: Number(row.qty),
+          })),
+      }
+
+      const payloadL1L3 = {
+        parentId: l1ItemId,
+        rows: expanded.l1ToL3Rows
+          .filter((row) => row.childId && row.qty !== '')
+          .map((row) => ({
+            childId: row.childId,
+            qty: Number(row.qty),
+          })),
+      }
+
+      const [l1l2Res, l1l3Res] = await Promise.all([
+        fetch('/api/bom/l1-l2', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadL1L2),
+        }),
+        fetch('/api/bom/l1-l3', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadL1L3),
+        }),
+      ])
+
+      const l1l2Data = await safeJson(l1l2Res)
+      const l1l3Data = await safeJson(l1l3Res)
+
+      if (!l1l2Res.ok) throw new Error(l1l2Data?.error || 'Failed to save L1 → L2')
+      if (!l1l3Res.ok) throw new Error(l1l3Data?.error || 'Failed to save L1 → L3')
+
+      if (buildStatus) {
+        await patchItemBuildStatus(l1ItemId, buildStatus)
+      }
+
+      await Promise.all([loadItems(), loadCosting()])
+      await loadExpandedL1Bom(l1ItemId)
+
+      setMessage(
+        buildStatus === 'BUILT'
+          ? `${l1Item.name} saved as built inside L0.`
+          : `${l1Item.name} saved inside L0.`
+      )
+    } catch (err) {
+      setMessage('')
+      setError(err instanceof Error ? err.message : 'Unknown error')
+
+      setExpandedL1BomById((prev) => {
+        const current = prev[l1ItemId]
+        if (!current) return prev
+
+        return {
+          ...prev,
+          [l1ItemId]: {
+            ...current,
+            saving: false,
+            error: err instanceof Error ? err.message : 'Unknown error',
+          },
+        }
+      })
     }
   }
 
@@ -1429,25 +1602,25 @@ export default function BomPage() {
         {parentItem?.itemType === 'L0' ? (
           <div className="mt-8 space-y-8">
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">L0 → L1</h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    Add the L1 dishes on this menu. Qty can be 1 for a normal menu list, or expected
-                    weekly sales quantity for forecast planning.
+                    Add the L1 dishes on this menu. Expand any dish to edit its L2 and L3 rows
+                    without leaving this L0 screen.
                   </p>
                 </div>
 
                 <button
                   type="button"
                   onClick={() => addRow(setL0ToL1Rows)}
-                  className="rounded-xl bg-slate-900 px-4 py-2 text-white"
+                  className="shrink-0 rounded-xl bg-slate-900 px-4 py-2 text-white"
                 >
                   Add L1 Dish
                 </button>
               </div>
 
-              <div className="mt-4 space-y-3">
+              <div className="mt-4 space-y-4">
                 {l0ToL1Rows.map((row, index) => {
                   const item = getItem(row.childId)
                   const cost = row.childId ? l1CostingByItemId.get(row.childId) ?? null : null
@@ -1464,7 +1637,7 @@ export default function BomPage() {
 
                   return (
                     <div key={index} className="rounded-2xl border bg-white p-4">
-                      <div className="grid gap-3 md:grid-cols-[1fr_160px_140px_140px_140px_110px_100px]">
+                      <div className="grid gap-3 xl:grid-cols-[minmax(260px,1fr)_150px_130px_130px_150px_210px]">
                         <L1Picker
                           selectedId={row.childId}
                           l1Items={l1Items}
@@ -1494,33 +1667,35 @@ export default function BomPage() {
                           {item ? `${money(lineCogs)} / ${money(lineSales)}` : '—'}
                         </div>
 
-                        <button
-                          type="button"
-                          disabled={!row.childId}
-                          onClick={() => toggleL1Expanded(row.childId)}
-                          className="rounded-xl border px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {expanded ? 'Collapse' : 'Expand'}
-                        </button>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            disabled={!row.childId}
+                            onClick={() => toggleL1Expanded(row.childId)}
+                            className="rounded-xl border px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {expanded ? 'Collapse' : 'Expand'}
+                          </button>
 
-                        <button
-                          type="button"
-                          onClick={() => removeRow(l0ToL1Rows, setL0ToL1Rows, index)}
-                          className="rounded-xl border px-3 py-2"
-                        >
-                          Remove
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => removeRow(l0ToL1Rows, setL0ToL1Rows, index)}
+                            className="rounded-xl border px-3 py-2 text-sm"
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </div>
 
                       {expanded && item ? (
                         <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
-                          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                          <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
                             <div>
                               <h3 className="text-lg font-semibold text-slate-900">
                                 {item.name} [{item.sku}]
                               </h3>
                               <p className="mt-1 text-sm text-slate-600">
-                                Expanded L1 dish inside this L0 menu.
+                                Edit this L1 dish while staying inside the L0 menu.
                               </p>
                             </div>
 
@@ -1567,131 +1742,215 @@ export default function BomPage() {
                             </div>
                           ) : null}
 
-                          {expandedBom && !expandedBom.loading && !expandedBom.error ? (
-                            <div className="mt-5 grid gap-5 xl:grid-cols-2">
+                          {expandedBom && !expandedBom.loading ? (
+                            <div className="mt-5 space-y-5">
                               <div className="rounded-xl border bg-white p-4">
-                                <h4 className="font-semibold text-slate-900">
-                                  L2 Prep Components
-                                </h4>
+                                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                  <h4 className="font-semibold text-slate-900">
+                                    L1 → L2 Prep Components
+                                  </h4>
 
-                                <div className="mt-3 overflow-x-auto">
-                                  <table className="w-full text-left text-sm">
-                                    <thead className="bg-slate-100">
-                                      <tr>
-                                        <th className="px-3 py-2">L2</th>
-                                        <th className="px-3 py-2">Qty</th>
-                                        <th className="px-3 py-2">Unit Cost</th>
-                                        <th className="px-3 py-2">Line Cost</th>
-                                      </tr>
-                                    </thead>
+                                  <button
+                                    type="button"
+                                    onClick={() => addExpandedL1Row(item.id, 'l1ToL2Rows')}
+                                    className="rounded-xl bg-slate-900 px-4 py-2 text-sm text-white"
+                                  >
+                                    Add L2 Row
+                                  </button>
+                                </div>
 
-                                    <tbody>
-                                      {expandedBom.l1ToL2Rows.length === 0 ? (
-                                        <tr className="border-t">
-                                          <td className="px-3 py-2 text-slate-600" colSpan={4}>
-                                            No L2 components.
-                                          </td>
-                                        </tr>
-                                      ) : (
-                                        expandedBom.l1ToL2Rows.map((bomRow) => {
-                                          const l2Cost = getL2Cost(bomRow.l2ItemId)
-                                          const lineCost =
-                                            l2Cost?.costPerUnit !== null &&
-                                            l2Cost?.costPerUnit !== undefined
-                                              ? bomRow.qty * l2Cost.costPerUnit
-                                              : null
+                                <div className="mt-4 space-y-3">
+                                  {expandedBom.l1ToL2Rows.length === 0 ? (
+                                    <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                                      No L2 components.
+                                    </div>
+                                  ) : (
+                                    expandedBom.l1ToL2Rows.map((bomRow, bomIndex) => {
+                                      const l2Item = getItem(bomRow.childId)
+                                      const l2Cost = getL2Cost(bomRow.childId)
+                                      const rowQty = getQty(bomRow.qty)
+                                      const lineCost =
+                                        l2Cost?.costPerUnit !== null &&
+                                        l2Cost?.costPerUnit !== undefined
+                                          ? rowQty * l2Cost.costPerUnit
+                                          : null
 
-                                          return (
-                                            <tr key={bomRow.id} className="border-t">
-                                              <td className="px-3 py-2">
-                                                <div className="font-medium text-slate-900">
-                                                  {bomRow.l2.name}
-                                                </div>
-                                                <div className="text-xs text-slate-500">
-                                                  {bomRow.l2.sku}
-                                                </div>
-                                              </td>
+                                      return (
+                                        <div
+                                          key={bomIndex}
+                                          className="grid gap-3 xl:grid-cols-[minmax(260px,1fr)_180px_150px_150px_100px]"
+                                        >
+                                          <L2Picker
+                                            selectedId={bomRow.childId}
+                                            l2Items={l2Items}
+                                            onSelect={(id) =>
+                                              updateExpandedL1Row(
+                                                item.id,
+                                                'l1ToL2Rows',
+                                                bomIndex,
+                                                'childId',
+                                                id
+                                              )
+                                            }
+                                          />
 
-                                              <td className="px-3 py-2">
-                                                {numberLabel(bomRow.qty)} {bomRow.l2.unitType}
-                                              </td>
+                                          <QtyInput
+                                            value={bomRow.qty}
+                                            unit={getUnit(bomRow.childId)}
+                                            placeholder="Qty per dish"
+                                            onChange={(value) =>
+                                              updateExpandedL1Row(
+                                                item.id,
+                                                'l1ToL2Rows',
+                                                bomIndex,
+                                                'qty',
+                                                value
+                                              )
+                                            }
+                                          />
 
-                                              <td className="px-3 py-2">
-                                                {l2Cost?.costPerUnit !== null &&
-                                                l2Cost?.costPerUnit !== undefined
-                                                  ? `${money(l2Cost.costPerUnit, 5)} / ${bomRow.l2.unitType}`
-                                                  : 'Missing'}
-                                              </td>
+                                          <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                                            {l2Cost?.costPerUnit !== null &&
+                                            l2Cost?.costPerUnit !== undefined &&
+                                            l2Item
+                                              ? `${money(l2Cost.costPerUnit, 5)} / ${l2Item.unitType}`
+                                              : 'Missing cost'}
+                                          </div>
 
-                                              <td className="px-3 py-2">{money(lineCost)}</td>
-                                            </tr>
-                                          )
-                                        })
-                                      )}
-                                    </tbody>
-                                  </table>
+                                          <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
+                                            {money(lineCost)}
+                                          </div>
+
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              removeExpandedL1Row(
+                                                item.id,
+                                                'l1ToL2Rows',
+                                                bomIndex
+                                              )
+                                            }
+                                            className="rounded-xl border px-3 py-2 text-sm"
+                                          >
+                                            Remove
+                                          </button>
+                                        </div>
+                                      )
+                                    })
+                                  )}
                                 </div>
                               </div>
 
                               <div className="rounded-xl border bg-white p-4">
-                                <h4 className="font-semibold text-slate-900">
-                                  Direct L3 Ingredients
-                                </h4>
+                                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                  <h4 className="font-semibold text-slate-900">
+                                    L1 → L3 Direct Ingredients
+                                  </h4>
 
-                                <div className="mt-3 overflow-x-auto">
-                                  <table className="w-full text-left text-sm">
-                                    <thead className="bg-slate-100">
-                                      <tr>
-                                        <th className="px-3 py-2">L3</th>
-                                        <th className="px-3 py-2">Qty</th>
-                                        <th className="px-3 py-2">Unit Price</th>
-                                        <th className="px-3 py-2">Line Cost</th>
-                                      </tr>
-                                    </thead>
-
-                                    <tbody>
-                                      {expandedBom.l1ToL3Rows.length === 0 ? (
-                                        <tr className="border-t">
-                                          <td className="px-3 py-2 text-slate-600" colSpan={4}>
-                                            No direct L3 ingredients.
-                                          </td>
-                                        </tr>
-                                      ) : (
-                                        expandedBom.l1ToL3Rows.map((bomRow) => {
-                                          const price = getL3Price(bomRow.l3ItemId)
-                                          const lineCost = price
-                                            ? bomRow.qty * price.unitPrice
-                                            : null
-
-                                          return (
-                                            <tr key={bomRow.id} className="border-t">
-                                              <td className="px-3 py-2">
-                                                <div className="font-medium text-slate-900">
-                                                  {bomRow.l3.name}
-                                                </div>
-                                                <div className="text-xs text-slate-500">
-                                                  {bomRow.l3.sku}
-                                                </div>
-                                              </td>
-
-                                              <td className="px-3 py-2">
-                                                {numberLabel(bomRow.qty)} {bomRow.l3.unitType}
-                                              </td>
-
-                                              <td className="px-3 py-2">
-                                                {price
-                                                  ? `${money(price.unitPrice, 5)} / ${bomRow.l3.unitType}`
-                                                  : 'Missing'}
-                                              </td>
-
-                                              <td className="px-3 py-2">{money(lineCost)}</td>
-                                            </tr>
-                                          )
-                                        })
-                                      )}
-                                    </tbody>
-                                  </table>
+                                  <button
+                                    type="button"
+                                    onClick={() => addExpandedL1Row(item.id, 'l1ToL3Rows')}
+                                    className="rounded-xl bg-slate-900 px-4 py-2 text-sm text-white"
+                                  >
+                                    Add L3 Row
+                                  </button>
                                 </div>
+
+                                <div className="mt-4 space-y-3">
+                                  {expandedBom.l1ToL3Rows.length === 0 ? (
+                                    <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                                      No direct L3 ingredients.
+                                    </div>
+                                  ) : (
+                                    expandedBom.l1ToL3Rows.map((bomRow, bomIndex) => {
+                                      const l3Item = getItem(bomRow.childId)
+                                      const price = getL3Price(bomRow.childId)
+                                      const rowQty = getQty(bomRow.qty)
+                                      const lineCost = price ? rowQty * price.unitPrice : null
+
+                                      return (
+                                        <div
+                                          key={bomIndex}
+                                          className="grid gap-3 xl:grid-cols-[minmax(260px,1fr)_180px_150px_150px_100px]"
+                                        >
+                                          <L3SearchPicker
+                                            selectedId={bomRow.childId}
+                                            l3Items={l3Items}
+                                            onError={setError}
+                                            onSelect={(id) =>
+                                              updateExpandedL1Row(
+                                                item.id,
+                                                'l1ToL3Rows',
+                                                bomIndex,
+                                                'childId',
+                                                id
+                                              )
+                                            }
+                                          />
+
+                                          <QtyInput
+                                            value={bomRow.qty}
+                                            unit={getUnit(bomRow.childId)}
+                                            placeholder="Qty per dish"
+                                            onChange={(value) =>
+                                              updateExpandedL1Row(
+                                                item.id,
+                                                'l1ToL3Rows',
+                                                bomIndex,
+                                                'qty',
+                                                value
+                                              )
+                                            }
+                                          />
+
+                                          <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                                            {price && l3Item
+                                              ? `${money(price.unitPrice, 5)} / ${l3Item.unitType}`
+                                              : 'Missing price'}
+                                          </div>
+
+                                          <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
+                                            {money(lineCost)}
+                                          </div>
+
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              removeExpandedL1Row(
+                                                item.id,
+                                                'l1ToL3Rows',
+                                                bomIndex
+                                              )
+                                            }
+                                            className="rounded-xl border px-3 py-2 text-sm"
+                                          >
+                                            Remove
+                                          </button>
+                                        </div>
+                                      )
+                                    })
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap gap-3 rounded-xl border bg-white p-4">
+                                <button
+                                  type="button"
+                                  disabled={expandedBom.saving}
+                                  onClick={() => saveExpandedL1(item.id)}
+                                  className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {expandedBom.saving ? 'Saving…' : 'Save This L1'}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={expandedBom.saving}
+                                  onClick={() => saveExpandedL1(item.id, 'BUILT')}
+                                  className="rounded-xl bg-green-700 px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Save This L1 as Built
+                                </button>
                               </div>
                             </div>
                           ) : null}
@@ -1701,25 +1960,25 @@ export default function BomPage() {
                   )
                 })}
               </div>
+
+              <div className="mt-6 flex flex-wrap gap-3 border-t pt-5">
+                <button
+                  type="button"
+                  onClick={() => saveL0()}
+                  className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50"
+                >
+                  Save L0 BOM
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => saveL0('BUILT')}
+                  className="rounded-xl bg-green-700 px-5 py-3 text-white"
+                >
+                  Save L0 as Built
+                </button>
+              </div>
             </section>
-
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => saveL0()}
-                className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50"
-              >
-                Save L0 BOM
-              </button>
-
-              <button
-                type="button"
-                onClick={() => saveL0('BUILT')}
-                className="rounded-xl bg-green-700 px-5 py-3 text-white"
-              >
-                Save L0 as Built
-              </button>
-            </div>
           </div>
         ) : null}
 
@@ -1847,7 +2106,9 @@ export default function BomPage() {
                       />
 
                       <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
-                        {price && item ? `${money(price.unitPrice, 5)} / ${item.unitType}` : 'Missing price'}
+                        {price && item
+                          ? `${money(price.unitPrice, 5)} / ${item.unitType}`
+                          : 'Missing price'}
                       </div>
 
                       <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
@@ -1938,7 +2199,9 @@ export default function BomPage() {
                       />
 
                       <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
-                        {price && item ? `${money(price.unitPrice, 5)} / ${item.unitType}` : 'Missing price'}
+                        {price && item
+                          ? `${money(price.unitPrice, 5)} / ${item.unitType}`
+                          : 'Missing price'}
                       </div>
 
                       <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
