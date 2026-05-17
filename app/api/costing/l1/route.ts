@@ -15,7 +15,7 @@ type ItemLike = {
   id: string
   sku: string
   name: string
-  itemType: 'L1' | 'L2' | 'L3'
+  itemType: 'L0' | 'L1' | 'L2' | 'L3'
   unitType: 'g' | 'ml' | 'each'
   sellingPrice?: number | null
   standardBatchOutput?: number | null
@@ -47,17 +47,23 @@ export async function GET(req: Request) {
     const itemId = searchParams.get('itemId')
 
     const [
-      l1Items,
+      items,
       l1ToL2Rows,
       l1ToL3Rows,
+      l2ToL2Rows,
       l2ToL3Rows,
       supplierProducts,
     ] = await Promise.all([
       prisma.item.findMany({
-        where: {
-          itemType: 'L1',
-          ...(itemId ? { id: itemId } : {}),
-        },
+        where: itemId
+          ? {
+              OR: [
+                { id: itemId },
+                { itemType: 'L2' },
+                { itemType: 'L3' },
+              ],
+            }
+          : undefined,
         orderBy: { name: 'asc' },
       }),
 
@@ -75,6 +81,14 @@ export async function GET(req: Request) {
         include: {
           l1: true,
           l3: true,
+        },
+        orderBy: { id: 'asc' },
+      }),
+
+      prisma.bomL2L2.findMany({
+        include: {
+          parentL2: true,
+          childL2: true,
         },
         orderBy: { id: 'asc' },
       }),
@@ -99,6 +113,13 @@ export async function GET(req: Request) {
         ],
       }),
     ])
+
+    const typedItems = items as ItemLike[]
+
+    const l1Items = typedItems.filter((item: ItemLike) => item.itemType === 'L1')
+    const itemById = new Map<string, ItemLike>(
+      typedItems.map((item: ItemLike) => [item.id, item])
+    )
 
     const pricesByItemId = new Map<string, SupplierPrice[]>()
     const pricesBySku = new Map<string, SupplierPrice[]>()
@@ -130,6 +151,7 @@ export async function GET(req: Request) {
 
     const l1ToL2ByL1 = new Map<string, any[]>()
     const l1ToL3ByL1 = new Map<string, any[]>()
+    const l2ToL2ByL2 = new Map<string, any[]>()
     const l2ToL3ByL2 = new Map<string, any[]>()
 
     for (const row of l1ToL2Rows as any[]) {
@@ -144,19 +166,85 @@ export async function GET(req: Request) {
       l1ToL3ByL1.set(row.l1ItemId, existing)
     }
 
+    for (const row of l2ToL2Rows as any[]) {
+      const existing = l2ToL2ByL2.get(row.parentL2ItemId) ?? []
+      existing.push(row)
+      l2ToL2ByL2.set(row.parentL2ItemId, existing)
+    }
+
     for (const row of l2ToL3Rows as any[]) {
       const existing = l2ToL3ByL2.get(row.l2ItemId) ?? []
       existing.push(row)
       l2ToL3ByL2.set(row.l2ItemId, existing)
     }
 
-    function calculateL2Cost(l2Item: ItemLike) {
+    const l2CostCache = new Map<string, any>()
+
+    function calculateL2Cost(l2Item: ItemLike, stack = new Set<string>()) {
+      const existing = l2CostCache.get(l2Item.id)
+      if (existing) return existing
+
+      if (stack.has(l2Item.id)) {
+        return {
+          itemId: l2Item.id,
+          sku: l2Item.sku,
+          name: l2Item.name,
+          unitType: l2Item.unitType,
+          standardBatchOutput: l2Item.standardBatchOutput ?? null,
+          batchCost: 0,
+          costPerUnit: null,
+          missingCostCount: 1,
+          outputMissing: false,
+          ingredients: [],
+          prepComponents: [],
+        }
+      }
+
+      const nextStack = new Set(stack)
+      nextStack.add(l2Item.id)
+
+      const childL2Rows = l2ToL2ByL2.get(l2Item.id) ?? []
       const ingredientRows = l2ToL3ByL2.get(l2Item.id) ?? []
       const standardBatchOutput = l2Item.standardBatchOutput ?? null
 
       let batchCost = 0
       let missingCostCount = 0
       const ingredients: any[] = []
+      const prepComponents: any[] = []
+
+      for (const row of childL2Rows) {
+        const childL2 = row.childL2 as ItemLike
+        const qty = numberValue(row.qty)
+        const childCost = calculateL2Cost(childL2, nextStack)
+
+        const lineCost =
+          childCost.costPerUnit !== null && childCost.costPerUnit !== undefined
+            ? qty * childCost.costPerUnit
+            : null
+
+        if (lineCost === null) {
+          missingCostCount++
+        } else {
+          batchCost += lineCost
+        }
+
+        if (childCost.missingCostCount > 0) {
+          missingCostCount += childCost.missingCostCount
+        }
+
+        prepComponents.push({
+          itemId: childL2.id,
+          sku: childL2.sku,
+          name: childL2.name,
+          qty,
+          unitType: childL2.unitType,
+          standardBatchOutput: childCost.standardBatchOutput,
+          batchCost: childCost.batchCost,
+          costPerUnit: childCost.costPerUnit,
+          lineCost,
+          missingCostCount: childCost.missingCostCount,
+        })
+      }
 
       for (const row of ingredientRows) {
         const l3 = row.l3 as ItemLike
@@ -195,7 +283,11 @@ export async function GET(req: Request) {
         outputMissing = true
       }
 
-      return {
+      if (outputMissing) {
+        missingCostCount++
+      }
+
+      const result = {
         itemId: l2Item.id,
         sku: l2Item.sku,
         name: l2Item.name,
@@ -206,18 +298,11 @@ export async function GET(req: Request) {
         missingCostCount,
         outputMissing,
         ingredients,
+        prepComponents,
       }
-    }
 
-    const l2CostCache = new Map<string, ReturnType<typeof calculateL2Cost>>()
-
-    function getL2Cost(l2Item: ItemLike) {
-      const existing = l2CostCache.get(l2Item.id)
-      if (existing) return existing
-
-      const calculated = calculateL2Cost(l2Item)
-      l2CostCache.set(l2Item.id, calculated)
-      return calculated
+      l2CostCache.set(l2Item.id, result)
+      return result
     }
 
     const results = []
@@ -263,13 +348,13 @@ export async function GET(req: Request) {
       for (const row of l2Rows) {
         const l2 = row.l2 as ItemLike
         const qty = numberValue(row.qty)
-        const l2Cost = getL2Cost(l2)
+        const l2Cost = calculateL2Cost(l2)
 
         let lineCost: number | null = null
         let missingReason: string | null = null
 
         if (l2Cost.costPerUnit === null) {
-          missingReason = 'Missing L2 standard batch output'
+          missingReason = 'Missing L2 standard batch output or nested L2 cost'
           missingCostCount++
         } else {
           lineCost = qty * l2Cost.costPerUnit
@@ -278,10 +363,6 @@ export async function GET(req: Request) {
 
         if (l2Cost.missingCostCount > 0) {
           missingCostCount += l2Cost.missingCostCount
-        }
-
-        if (l2Cost.outputMissing) {
-          missingCostCount++
         }
 
         prepComponents.push({
@@ -296,8 +377,9 @@ export async function GET(req: Request) {
           costPerUnit: l2Cost.costPerUnit,
           lineCost,
           missingReason,
-          missingCostCount: l2Cost.missingCostCount + (l2Cost.outputMissing ? 1 : 0),
+          missingCostCount: l2Cost.missingCostCount,
           ingredients: l2Cost.ingredients,
+          prepComponents: l2Cost.prepComponents,
         })
       }
 

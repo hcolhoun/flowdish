@@ -1,6 +1,15 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
+type ItemRow = {
+  id: string
+  sku: string
+  name: string
+  itemType: 'L0' | 'L1' | 'L2' | 'L3'
+  unitType: 'g' | 'ml' | 'each'
+  standardBatchOutput: number | null
+}
+
 type PriceInfo = {
   unitPrice: number
   supplier: string
@@ -17,31 +26,41 @@ function numberValue(value: unknown) {
 
 export async function GET() {
   try {
-    const [items, supplierProducts, l2BomRows] = await Promise.all([
-      prisma.item.findMany({
-        orderBy: { name: 'asc' },
-      }),
+    const [itemsRaw, supplierProducts, l2ToL2RowsRaw, l2ToL3RowsRaw] =
+      await Promise.all([
+        prisma.item.findMany({
+          orderBy: { name: 'asc' },
+        }),
 
-      prisma.supplierProduct.findMany({
-        where: {
-          unitPrice: {
-            gt: 0,
+        prisma.supplierProduct.findMany({
+          where: {
+            unitPrice: {
+              gt: 0,
+            },
           },
-        },
-        orderBy: [
-          { unitPrice: 'asc' },
-          { name: 'asc' },
-        ],
-      }),
+          orderBy: [{ unitPrice: 'asc' }, { name: 'asc' }],
+        }),
 
-      prisma.bomL2L3.findMany({
-        include: {
-          l2: true,
-          l3: true,
-        },
-        orderBy: { id: 'asc' },
-      }),
-    ])
+        prisma.bomL2L2.findMany({
+          include: {
+            parentL2: true,
+            childL2: true,
+          },
+          orderBy: { id: 'asc' },
+        }),
+
+        prisma.bomL2L3.findMany({
+          include: {
+            l2: true,
+            l3: true,
+          },
+          orderBy: { id: 'asc' },
+        }),
+      ])
+
+    const items = itemsRaw as ItemRow[]
+    const l2ToL2Rows = l2ToL2RowsRaw as any[]
+    const l2ToL3Rows = l2ToL3RowsRaw as any[]
 
     const l3PricesByItemId: Record<string, PriceInfo> = {}
     const pricesByItemId = new Map<string, PriceInfo[]>()
@@ -84,12 +103,19 @@ export async function GET() {
       }
     }
 
-    const l2RowsByItemId = new Map<string, typeof l2BomRows>()
+    const l2ToL2ByParent = new Map<string, any[]>()
+    const l2ToL3ByParent = new Map<string, any[]>()
 
-    for (const row of l2BomRows) {
-      const existing = l2RowsByItemId.get(row.l2ItemId) ?? []
+    for (const row of l2ToL2Rows) {
+      const existing = l2ToL2ByParent.get(row.parentL2ItemId) ?? []
       existing.push(row)
-      l2RowsByItemId.set(row.l2ItemId, existing)
+      l2ToL2ByParent.set(row.parentL2ItemId, existing)
+    }
+
+    for (const row of l2ToL3Rows) {
+      const existing = l2ToL3ByParent.get(row.l2ItemId) ?? []
+      existing.push(row)
+      l2ToL3ByParent.set(row.l2ItemId, existing)
     }
 
     const l2CostsByItemId: Record<
@@ -106,14 +132,59 @@ export async function GET() {
       }
     > = {}
 
-    for (const item of items) {
-      if (item.itemType !== 'L2') continue
+    const itemById = new Map<string, ItemRow>(
+      items.map((item: ItemRow) => [item.id, item])
+    )
 
-      const rows = l2RowsByItemId.get(item.id) ?? []
+    function calculateL2Cost(l2ItemId: string, stack = new Set<string>()) {
+      const cached = l2CostsByItemId[l2ItemId]
+      if (cached) return cached
+
+      const item = itemById.get(l2ItemId)
+
+      if (!item || item.itemType !== 'L2') {
+        return null
+      }
+
+      if (stack.has(l2ItemId)) {
+        return {
+          itemId: item.id,
+          sku: item.sku,
+          name: item.name,
+          unitType: item.unitType,
+          standardBatchOutput: item.standardBatchOutput ?? null,
+          batchCost: 0,
+          costPerUnit: null,
+          missingCostCount: 1,
+        }
+      }
+
+      const nextStack = new Set(stack)
+      nextStack.add(l2ItemId)
+
+      const childL2Rows = l2ToL2ByParent.get(l2ItemId) ?? []
+      const childL3Rows = l2ToL3ByParent.get(l2ItemId) ?? []
+
       let batchCost = 0
       let missingCostCount = 0
 
-      for (const row of rows) {
+      for (const row of childL2Rows) {
+        const childCost = calculateL2Cost(row.childL2ItemId, nextStack)
+        const qty = numberValue(row.qty)
+
+        if (!childCost || childCost.costPerUnit === null) {
+          missingCostCount++
+          continue
+        }
+
+        if (childCost.missingCostCount > 0) {
+          missingCostCount += childCost.missingCostCount
+        }
+
+        batchCost += qty * childCost.costPerUnit
+      }
+
+      for (const row of childL3Rows) {
         const price = l3PricesByItemId[row.l3ItemId]
         const qty = numberValue(row.qty)
 
@@ -135,7 +206,7 @@ export async function GET() {
         missingCostCount++
       }
 
-      l2CostsByItemId[item.id] = {
+      const result = {
         itemId: item.id,
         sku: item.sku,
         name: item.name,
@@ -144,6 +215,16 @@ export async function GET() {
         batchCost,
         costPerUnit,
         missingCostCount,
+      }
+
+      l2CostsByItemId[item.id] = result
+
+      return result
+    }
+
+    for (const item of items) {
+      if (item.itemType === 'L2') {
+        calculateL2Cost(item.id)
       }
     }
 

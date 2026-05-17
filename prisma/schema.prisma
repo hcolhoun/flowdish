@@ -50,6 +50,9 @@ model Item {
   bomL1L3Parents  BomL1L3[] @relation("BomL1L3_L1")
   bomL1L3Children BomL1L3[] @relation("BomL1L3_L3")
 
+  bomL2L2Parents  BomL2L2[] @relation("BomL2L2_Parent")
+  bomL2L2Children BomL2L2[] @relation("BomL2L2_Child")
+
   bomL2L3Parents  BomL2L3[] @relation("BomL2L3_L2")
   bomL2L3Children BomL2L3[] @relation("BomL2L3_L3")
 
@@ -70,10 +73,9 @@ model BomL0L1 {
   l1ItemId String
   qty      Float
 
-  l0 Item @relation("BomL0L1_L0", fields: [l0ItemId], references: [id], onDelete: Cascade)
-  l1 Item @relation("BomL0L1_L1", fields: [l1ItemId], references: [id], onDelete: Cascade)
+  l0 Item @relation("BomL0L1_L0", fields: [l0ItemId], references: [id])
+  l1 Item @relation("BomL0L1_L1", fields: [l1ItemId], references: [id])
 
-  @@unique([l0ItemId, l1ItemId])
   @@index([l0ItemId])
   @@index([l1ItemId])
 }
@@ -84,10 +86,9 @@ model BomL1L2 {
   l2ItemId String
   qty      Float
 
-  l1 Item @relation("BomL1L2_L1", fields: [l1ItemId], references: [id], onDelete: Cascade)
-  l2 Item @relation("BomL1L2_L2", fields: [l2ItemId], references: [id], onDelete: Cascade)
+  l1 Item @relation("BomL1L2_L1", fields: [l1ItemId], references: [id])
+  l2 Item @relation("BomL1L2_L2", fields: [l2ItemId], references: [id])
 
-  @@unique([l1ItemId, l2ItemId])
   @@index([l1ItemId])
   @@index([l2ItemId])
 }
@@ -98,12 +99,24 @@ model BomL1L3 {
   l3ItemId String
   qty      Float
 
-  l1 Item @relation("BomL1L3_L1", fields: [l1ItemId], references: [id], onDelete: Cascade)
-  l3 Item @relation("BomL1L3_L3", fields: [l3ItemId], references: [id], onDelete: Cascade)
+  l1 Item @relation("BomL1L3_L1", fields: [l1ItemId], references: [id])
+  l3 Item @relation("BomL1L3_L3", fields: [l3ItemId], references: [id])
 
-  @@unique([l1ItemId, l3ItemId])
   @@index([l1ItemId])
   @@index([l3ItemId])
+}
+
+model BomL2L2 {
+  id             String @id @default(cuid())
+  parentL2ItemId String
+  childL2ItemId  String
+  qty            Float
+
+  parentL2 Item @relation("BomL2L2_Parent", fields: [parentL2ItemId], references: [id])
+  childL2  Item @relation("BomL2L2_Child", fields: [childL2ItemId], references: [id])
+
+  @@index([parentL2ItemId])
+  @@index([childL2ItemId])
 }
 
 model BomL2L3 {
@@ -112,10 +125,9 @@ model BomL2L3 {
   l3ItemId String
   qty      Float
 
-  l2 Item @relation("BomL2L3_L2", fields: [l2ItemId], references: [id], onDelete: Cascade)
-  l3 Item @relation("BomL2L3_L3", fields: [l3ItemId], references: [id], onDelete: Cascade)
+  l2 Item @relation("BomL2L3_L2", fields: [l2ItemId], references: [id])
+  l3 Item @relation("BomL2L3_L3", fields: [l3ItemId], references: [id])
 
-  @@unique([l2ItemId, l3ItemId])
   @@index([l2ItemId])
   @@index([l3ItemId])
 }
@@ -162,8 +174,6 @@ model PrepBatch {
   expiryAt   DateTime?
 
   item Item @relation(fields: [itemId], references: [id])
-
-  @@index([itemId])
 }
 
 model Sale {
@@ -174,9 +184,6 @@ model Sale {
   cost   Float    @default(0)
 
   item Item @relation(fields: [itemId], references: [id])
-
-  @@index([itemId])
-  @@index([soldAt])
 }
 
 model Waste {
@@ -187,9 +194,6 @@ model Waste {
   reason String?
 
   item Item @relation(fields: [itemId], references: [id])
-
-  @@index([itemId])
-  @@index([date])
 }
 
 model Forecast {
@@ -208,11 +212,8 @@ model ForecastLine {
   itemId     String
   qty        Float
 
-  forecast Forecast @relation(fields: [forecastId], references: [id], onDelete: Cascade)
+  forecast Forecast @relation(fields: [forecastId], references: [id])
   item     Item     @relation(fields: [itemId], references: [id])
-
-  @@index([forecastId])
-  @@index([itemId])
 }
 
 model SopDocument {
@@ -222,7 +223,7 @@ model SopDocument {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  item Item @relation(fields: [itemId], references: [id])
 }
 
 model SupplierProduct {
@@ -242,7 +243,6 @@ model SupplierProduct {
   priceHistory SupplierProductPriceHistory[]
 
   @@index([supplier, supplierSku])
-  @@index([linkedItemId])
 }
 
 model SupplierImportBatch {

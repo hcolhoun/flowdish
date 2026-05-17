@@ -1,6 +1,3 @@
-export const dynamic = 'force-dynamic'
-export const runtime = 'nodejs'
-
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
@@ -18,10 +15,7 @@ function daysBetween(from: Date, to: Date) {
   return Math.ceil(ms / (1000 * 60 * 60 * 24))
 }
 
-async function getStockPosition(
-  itemId: string,
-  forecastEndDate: Date
-): Promise<StockPosition> {
+async function getStockPosition(itemId: string, forecastEndDate: Date): Promise<StockPosition> {
   const now = new Date()
 
   const lots = await prisma.inventoryLot.findMany({
@@ -29,7 +23,10 @@ async function getStockPosition(
       itemId,
       qtyRemaining: { gt: 0 },
     },
-    orderBy: [{ expiryAt: 'asc' }, { createdAt: 'asc' }],
+    orderBy: [
+      { expiryAt: 'asc' },
+      { createdAt: 'asc' },
+    ],
   })
 
   let totalStock = 0
@@ -38,7 +35,7 @@ async function getStockPosition(
   let expiredStock = 0
   let nextExpiry: Date | null = null
 
-  for (const lot of lots) {
+  for (const lot of lots as any[]) {
     totalStock += lot.qtyRemaining
 
     if (lot.expiryAt && !nextExpiry) {
@@ -50,7 +47,7 @@ async function getStockPosition(
       continue
     }
 
-    if (lot.expiryAt && lot.expiryAt < forecastEndDate) {
+    if (lot.expiryAt && lot.expiryAt <= forecastEndDate) {
       expiringBeforeForecastEnd += lot.qtyRemaining
       continue
     }
@@ -71,18 +68,6 @@ async function getStockPosition(
 function makeableFrom(stock: number, qtyPerUnit: number) {
   if (!qtyPerUnit || qtyPerUnit <= 0) return 0
   return Math.floor(stock / qtyPerUnit)
-}
-
-function addToMap(map: Map<string, number>, key: string, qty: number) {
-  map.set(key, (map.get(key) ?? 0) + qty)
-}
-
-function buildExpiryStatus(stock: StockPosition, shortfallQty: number, shortageLabel: string) {
-  if (shortfallQty > 0) return shortageLabel
-  if (stock.expiredStock > 0) return 'EXPIRED STOCK'
-  if (stock.expiringBeforeForecastEnd > 0) return 'EXPIRING BEFORE FORECAST ENDS'
-  if (stock.daysToNextExpiry !== null && stock.daysToNextExpiry <= 2) return 'USE SOON'
-  return 'OK'
 }
 
 export async function GET(req: Request) {
@@ -109,11 +94,10 @@ export async function GET(req: Request) {
 
     const forecastEndDate = forecast.endDate
 
-    const l1Plan = []
+    const l1Plan: any[] = []
     const l2RequiredMap = new Map<string, number>()
-    const directL3RequiredMap = new Map<string, number>()
 
-    for (const line of forecast.lines) {
+    for (const line of forecast.lines as any[]) {
       const l1Item = line.item
 
       if (l1Item.itemType !== 'L1') continue
@@ -130,12 +114,12 @@ export async function GET(req: Request) {
 
       let makeableQty = Number.POSITIVE_INFINITY
 
-      for (const row of bomL1L2) {
+      for (const row of bomL1L2 as any[]) {
         const stock = await getStockPosition(row.l2ItemId, forecastEndDate)
         makeableQty = Math.min(makeableQty, makeableFrom(stock.usableStock, row.qty))
       }
 
-      for (const row of bomL1L3) {
+      for (const row of bomL1L3 as any[]) {
         const stock = await getStockPosition(row.l3ItemId, forecastEndDate)
         makeableQty = Math.min(makeableQty, makeableFrom(stock.usableStock, row.qty))
       }
@@ -156,17 +140,65 @@ export async function GET(req: Request) {
         shortfallQty,
       })
 
-      for (const row of bomL1L2) {
-        addToMap(l2RequiredMap, row.l2ItemId, row.qty * forecastQty)
-      }
-
-      for (const row of bomL1L3) {
-        addToMap(directL3RequiredMap, row.l3ItemId, row.qty * forecastQty)
+      if (shortfallQty > 0) {
+        for (const row of bomL1L2 as any[]) {
+          const requiredQty = row.qty * shortfallQty
+          l2RequiredMap.set(
+            row.l2ItemId,
+            (l2RequiredMap.get(row.l2ItemId) ?? 0) + requiredQty
+          )
+        }
       }
     }
 
-    const l2Plan = []
-    const l2ShortfallMap = new Map<string, number>()
+    const processedL2Ids = new Set<string>()
+    let safetyCounter = 0
+
+    while (true) {
+      safetyCounter++
+
+      if (safetyCounter > 200) {
+        throw new Error('Nested L2 planning stopped because a recipe chain is too deep.')
+      }
+
+      const nextL2Id = Array.from(l2RequiredMap.keys()).find(
+        (id) => !processedL2Ids.has(id)
+      )
+
+      if (!nextL2Id) break
+
+      processedL2Ids.add(nextL2Id)
+
+      const item = await prisma.item.findUnique({
+        where: { id: nextL2Id },
+      })
+
+      if (!item || item.itemType !== 'L2') continue
+
+      const requiredQty = l2RequiredMap.get(nextL2Id) ?? 0
+      const stock = await getStockPosition(nextL2Id, forecastEndDate)
+      const shortfallQty = Math.max(0, requiredQty - stock.usableStock)
+
+      if (shortfallQty <= 0) continue
+
+      if (!item.standardBatchOutput || item.standardBatchOutput <= 0) continue
+
+      const scaleFactor = shortfallQty / item.standardBatchOutput
+
+      const childL2Rows = await prisma.bomL2L2.findMany({
+        where: { parentL2ItemId: nextL2Id },
+      })
+
+      for (const row of childL2Rows) {
+        const childRequiredQty = row.qty * scaleFactor
+        l2RequiredMap.set(
+          row.childL2ItemId,
+          (l2RequiredMap.get(row.childL2ItemId) ?? 0) + childRequiredQty
+        )
+      }
+    }
+
+    const l2Plan: any[] = []
 
     for (const [l2ItemId, requiredQty] of l2RequiredMap.entries()) {
       const item = await prisma.item.findUnique({
@@ -176,6 +208,7 @@ export async function GET(req: Request) {
       if (!item) continue
 
       const stock = await getStockPosition(l2ItemId, forecastEndDate)
+
       const shortfallQty = Math.max(0, requiredQty - stock.usableStock)
       const standardBatchOutput = item.standardBatchOutput ?? null
 
@@ -184,8 +217,16 @@ export async function GET(req: Request) {
           ? Math.ceil(shortfallQty / standardBatchOutput)
           : 0
 
+      let expiryStatus = 'OK'
+
       if (shortfallQty > 0) {
-        l2ShortfallMap.set(l2ItemId, shortfallQty)
+        expiryStatus = 'PREP REQUIRED'
+      } else if (stock.expiredStock > 0) {
+        expiryStatus = 'EXPIRED STOCK'
+      } else if (stock.expiringBeforeForecastEnd > 0) {
+        expiryStatus = 'EXPIRING BEFORE FORECAST ENDS'
+      } else if (stock.daysToNextExpiry !== null && stock.daysToNextExpiry <= 2) {
+        expiryStatus = 'USE SOON'
       }
 
       l2Plan.push({
@@ -204,85 +245,26 @@ export async function GET(req: Request) {
         shelfLifeDays: item.shelfLifeDays ?? null,
         nextExpiry: stock.nextExpiry,
         daysToNextExpiry: stock.daysToNextExpiry,
-        expiryStatus: buildExpiryStatus(stock, shortfallQty, 'PREP REQUIRED'),
-      })
-    }
-
-    const l3RequiredMap = new Map<string, number>()
-
-    for (const [l3ItemId, requiredQty] of directL3RequiredMap.entries()) {
-      addToMap(l3RequiredMap, l3ItemId, requiredQty)
-    }
-
-    for (const [l2ItemId, l2ShortfallQty] of l2ShortfallMap.entries()) {
-      const bomL2L3 = await prisma.bomL2L3.findMany({
-        where: { l2ItemId },
-        include: { l3: true },
-      })
-
-      for (const row of bomL2L3) {
-        addToMap(l3RequiredMap, row.l3ItemId, row.qty * l2ShortfallQty)
-      }
-    }
-
-    const l3Plan = []
-
-    for (const [l3ItemId, requiredQty] of l3RequiredMap.entries()) {
-      const item = await prisma.item.findUnique({
-        where: { id: l3ItemId },
-      })
-
-      if (!item) continue
-
-      const stock = await getStockPosition(l3ItemId, forecastEndDate)
-      const shortfallQty = Math.max(0, requiredQty - stock.usableStock)
-
-      l3Plan.push({
-        itemId: item.id,
-        sku: item.sku,
-        name: item.name,
-        unitType: item.unitType,
-        requiredQty,
-        totalStock: stock.totalStock,
-        usableStock: stock.usableStock,
-        expiringBeforeForecastEnd: stock.expiringBeforeForecastEnd,
-        expiredStock: stock.expiredStock,
-        shortfallQty,
-        shelfLifeDays: item.shelfLifeDays ?? null,
-        nextExpiry: stock.nextExpiry,
-        daysToNextExpiry: stock.daysToNextExpiry,
-        expiryStatus: buildExpiryStatus(stock, shortfallQty, 'ORDER REQUIRED'),
+        expiryStatus,
       })
     }
 
     l2Plan.sort((a, b) => {
-      if (b.shortfallQty !== a.shortfallQty) return b.shortfallQty - a.shortfallQty
+      if (a.shortfallQty > 0 && b.shortfallQty <= 0) return -1
+      if (a.shortfallQty <= 0 && b.shortfallQty > 0) return 1
       return a.name.localeCompare(b.name)
     })
 
-    l3Plan.sort((a, b) => {
-      if (b.shortfallQty !== a.shortfallQty) return b.shortfallQty - a.shortfallQty
-      return a.name.localeCompare(b.name)
-    })
-
-    return NextResponse.json(
-      {
-        forecast: {
-          id: forecast.id,
-          name: forecast.name,
-          startDate: forecast.startDate,
-          endDate: forecast.endDate,
-        },
-        l1Plan,
-        l2Plan,
-        l3Plan,
+    return NextResponse.json({
+      forecast: {
+        id: forecast.id,
+        name: forecast.name,
+        startDate: forecast.startDate,
+        endDate: forecast.endDate,
       },
-      {
-        headers: {
-          'Cache-Control': 'no-store',
-        },
-      }
-    )
+      l1Plan,
+      l2Plan,
+    })
   } catch (error) {
     console.error('GET /api/prep-plan failed:', error)
     return NextResponse.json({ error: 'Failed to build prep plan' }, { status: 500 })
