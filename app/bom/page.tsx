@@ -1194,6 +1194,21 @@ export default function BomPage() {
         return
       }
 
+      const hasNoBomRows =
+        l2ToL2Rows.filter((row) => row.childId && row.qty !== '').length === 0 &&
+        l2ToL3Rows.filter((row) => row.childId && row.qty !== '').length === 0
+
+      if (buildStatus === 'BUILT' && hasNoBomRows) {
+        const confirmed = window.confirm(
+          'This L2 has no ingredients or prep components.\n\nSave as built anyway?\n\nUse this only for free/byproduct prep stock such as fish trim, meat trim, offcuts, breadcrumbs from waste bread, rendered fat, or similar zero-cost prep stock.'
+        )
+
+        if (!confirmed) {
+          setMessage('')
+          return
+        }
+      }
+
       await patchParentItem(buildStatus)
 
       const payloadL2L2 = {

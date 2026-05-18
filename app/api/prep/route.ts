@@ -7,12 +7,6 @@ type RequiredComponent = {
   label: string
 }
 
-function sameDate(a: Date | null, b: Date | null) {
-  if (!a && !b) return true
-  if (!a || !b) return false
-  return a.getTime() === b.getTime()
-}
-
 export async function GET() {
   try {
     const prepBatches = await prisma.prepBatch.findMany({
@@ -84,9 +78,14 @@ export async function POST(req: Request) {
       }),
     ])
 
-    if (l2Rows.length === 0 && l3Rows.length === 0) {
+    const hasNoBomRows = l2Rows.length === 0 && l3Rows.length === 0
+
+    if (hasNoBomRows && l2Item.buildStatus !== 'BUILT') {
       return NextResponse.json(
-        { error: 'No L2 BOM found for this prep item' },
+        {
+          error:
+            'This L2 has no BOM and has not been saved as built. Open it in BOM Builder and click Save L2 as Built first.',
+        },
         { status: 400 }
       )
     }
