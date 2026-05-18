@@ -225,8 +225,17 @@ export async function getItemById(itemId: string) {
   })
 }
 
-export async function getItemBySku(sku: string) {
-  return prisma.item.findUnique({
+export async function getItemBySku(sku: string, restaurantId?: string) {
+  if (restaurantId) {
+    return prisma.item.findFirst({
+      where: {
+        sku,
+        restaurantId,
+      },
+    })
+  }
+
+  return prisma.item.findFirst({
     where: { sku },
   })
 }
