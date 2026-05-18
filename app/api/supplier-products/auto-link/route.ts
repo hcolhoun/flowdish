@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 type BaseUnit = 'g' | 'ml' | 'each'
 
@@ -89,7 +90,9 @@ function inferUnitType(product: any): 'g' | 'ml' | 'each' {
   if (parsedWeight?.unitType === 'g') return 'g'
   if (parsedWeight?.unitType === 'ml') return 'ml'
 
-  const text = `${product.name || ''} ${product.packSize || ''} ${product.weight || ''}`.toLowerCase()
+  const text = `${product.name || ''} ${product.packSize || ''} ${
+    product.weight || ''
+  }`.toLowerCase()
 
   if (/\d+(\.\d+)?\s?(kg|g)\b/.test(text)) return 'g'
   if (/\d+(\.\d+)?\s?(l|ml)\b/.test(text)) return 'ml'
@@ -98,9 +101,12 @@ function inferUnitType(product: any): 'g' | 'ml' | 'each' {
 }
 
 function inferShelfLifeDays(product: any): number {
-  const text = `${product.name || ''} ${product.packSize || ''} ${product.weight || ''}`.toLowerCase()
+  const text = `${product.name || ''} ${product.packSize || ''} ${
+    product.weight || ''
+  }`.toLowerCase()
 
   const isVacuum = text.includes('vac') || text.includes('vacuum')
+
   const isMeat =
     text.includes('beef') ||
     text.includes('chicken') ||
@@ -137,18 +143,28 @@ function makeSku(product: any) {
     .replace(/^-+|-+$/g, '')
 }
 
-async function createOrLinkL3(product: any) {
+async function createOrLinkL3({
+  restaurantId,
+  product,
+}: {
+  restaurantId: string
+  product: any
+}) {
   const sku = makeSku(product)
   const unitType = inferUnitType(product)
   const shelfLifeDays = inferShelfLifeDays(product)
 
-  let item = await prisma.item.findUnique({
-    where: { sku },
+  let item = await prisma.item.findFirst({
+    where: {
+      restaurantId,
+      sku,
+    },
   })
 
   if (!item) {
     item = await prisma.item.create({
       data: {
+        restaurantId,
         sku,
         name: product.name,
         itemType: 'L3',
@@ -156,6 +172,7 @@ async function createOrLinkL3(product: any) {
         shelfLifeDays,
         sellingPrice: null,
         standardBatchOutput: null,
+        buildStatus: 'BUILT',
       },
     })
   } else if (item.itemType === 'L3' && item.unitType !== unitType) {
@@ -168,14 +185,21 @@ async function createOrLinkL3(product: any) {
   return item
 }
 
-async function findExistingSupplierProduct(cleanProduct: {
-  supplier: string
-  supplierSku: string | null
-  name: string
+async function findExistingSupplierProduct({
+  restaurantId,
+  cleanProduct,
+}: {
+  restaurantId: string
+  cleanProduct: {
+    supplier: string
+    supplierSku: string | null
+    name: string
+  }
 }) {
   if (cleanProduct.supplierSku) {
     const bySku = await prisma.supplierProduct.findFirst({
       where: {
+        restaurantId,
         supplier: cleanProduct.supplier,
         supplierSku: cleanProduct.supplierSku,
       },
@@ -189,6 +213,7 @@ async function findExistingSupplierProduct(cleanProduct: {
 
   return prisma.supplierProduct.findFirst({
     where: {
+      restaurantId,
       supplier: cleanProduct.supplier,
       supplierSku: cleanProduct.supplierSku,
       name: cleanProduct.name,
@@ -201,14 +226,22 @@ async function findExistingSupplierProduct(cleanProduct: {
 
 export async function GET() {
   try {
+    const tenant = await requireTenant()
+
     const products = await prisma.supplierProduct.findMany({
+      where: {
+        restaurantId: tenant.restaurantId,
+      },
       include: { linkedItem: true },
       orderBy: { createdAt: 'desc' },
     })
 
     return NextResponse.json(products)
   } catch (error) {
-    console.error('GET /api/supplier-products failed:', error)
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
+    console.error('GET /api/supplier-products/auto-link failed:', error)
     return NextResponse.json(
       { error: 'Failed to load supplier products' },
       { status: 500 }
@@ -218,6 +251,15 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to update supplier products.' },
+        { status: 403 }
+      )
+    }
+
     const body = await req.json()
     const products = body.products
 
@@ -269,8 +311,15 @@ export async function POST(req: Request) {
         continue
       }
 
-      const linkedItem = await createOrLinkL3(cleanProduct)
-      const existing = await findExistingSupplierProduct(cleanProduct)
+      const linkedItem = await createOrLinkL3({
+        restaurantId: tenant.restaurantId,
+        product: cleanProduct,
+      })
+
+      const existing = await findExistingSupplierProduct({
+        restaurantId: tenant.restaurantId,
+        cleanProduct,
+      })
 
       if (existing) {
         await prisma.supplierProduct.update({
@@ -285,6 +334,7 @@ export async function POST(req: Request) {
       } else {
         await prisma.supplierProduct.create({
           data: {
+            restaurantId: tenant.restaurantId,
             ...cleanProduct,
             linkedItemId: linkedItem.id,
           },
@@ -304,7 +354,10 @@ export async function POST(req: Request) {
       skippedCount,
     })
   } catch (error) {
-    console.error('POST /api/supplier-products failed:', error)
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
+    console.error('POST /api/supplier-products/auto-link failed:', error)
     return NextResponse.json(
       { error: 'Failed to save supplier products' },
       { status: 500 }
@@ -314,6 +367,15 @@ export async function POST(req: Request) {
 
 export async function PATCH(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to update supplier products.' },
+        { status: 403 }
+      )
+    }
+
     const body = await req.json()
 
     const id = String(body.id || '')
@@ -323,15 +385,42 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: 'Missing supplier product id' }, { status: 400 })
     }
 
+    const existingProduct = await prisma.supplierProduct.findFirst({
+      where: {
+        id,
+        restaurantId: tenant.restaurantId,
+      },
+    })
+
+    if (!existingProduct) {
+      return NextResponse.json({ error: 'Supplier product not found' }, { status: 404 })
+    }
+
+    if (linkedItemId) {
+      const linkedItem = await prisma.item.findFirst({
+        where: {
+          id: linkedItemId,
+          restaurantId: tenant.restaurantId,
+        },
+      })
+
+      if (!linkedItem) {
+        return NextResponse.json({ error: 'Linked item not found' }, { status: 404 })
+      }
+    }
+
     const product = await prisma.supplierProduct.update({
-      where: { id },
+      where: { id: existingProduct.id },
       data: { linkedItemId },
       include: { linkedItem: true },
     })
 
     return NextResponse.json(product)
   } catch (error) {
-    console.error('PATCH /api/supplier-products failed:', error)
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
+    console.error('PATCH /api/supplier-products/auto-link failed:', error)
     return NextResponse.json(
       { error: 'Failed to update supplier product link' },
       { status: 500 }
