@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 function startOfToday() {
   const now = new Date()
@@ -19,9 +20,10 @@ function dateStamp() {
   return `${yyyy}-${mm}-${dd}`
 }
 
-async function generateForecastName() {
+async function generateForecastName(restaurantId: string) {
   const countToday = await prisma.forecast.count({
     where: {
+      restaurantId,
       createdAt: {
         gte: startOfToday(),
         lt: startOfTomorrow(),
@@ -34,7 +36,12 @@ async function generateForecastName() {
 
 export async function GET() {
   try {
+    const tenant = await requireTenant()
+
     const forecasts = await prisma.forecast.findMany({
+      where: {
+        restaurantId: tenant.restaurantId,
+      },
       include: {
         lines: {
           include: {
@@ -47,6 +54,9 @@ export async function GET() {
 
     return NextResponse.json(forecasts)
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('GET /api/forecasts failed:', error)
     return NextResponse.json({ error: 'Failed to load forecasts' }, { status: 500 })
   }
@@ -54,10 +64,19 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to create forecasts.' },
+        { status: 403 }
+      )
+    }
+
     const body = await req.json()
 
     const suppliedName = String(body.name || '').trim()
-    const name = suppliedName || (await generateForecastName())
+    const name = suppliedName || (await generateForecastName(tenant.restaurantId))
 
     const startDate = new Date(body.startDate)
     const endDate = new Date(body.endDate)
@@ -85,24 +104,66 @@ export async function POST(req: Request) {
       )
     }
 
-    const forecast = await prisma.forecast.create({
-      data: {
-        name,
-        startDate,
-        endDate,
-        lines: {
-          create: validLines,
-        },
+    const itemIds = validLines.map((line: any) => line.itemId)
+
+    const validItems = await prisma.item.findMany({
+      where: {
+        restaurantId: tenant.restaurantId,
+        id: { in: itemIds },
       },
-      include: {
-        lines: {
-          include: { item: true },
-        },
+      select: {
+        id: true,
       },
+    })
+
+    const validItemIds = new Set(validItems.map((item) => item.id))
+
+    const invalidLine = validLines.find((line: any) => !validItemIds.has(line.itemId))
+
+    if (invalidLine) {
+      return NextResponse.json(
+        { error: 'One or more forecast items do not belong to this restaurant.' },
+        { status: 400 }
+      )
+    }
+
+    const forecast = await prisma.$transaction(async (tx: any) => {
+      const createdForecast = await tx.forecast.create({
+        data: {
+          restaurantId: tenant.restaurantId,
+          name,
+          startDate,
+          endDate,
+        },
+      })
+
+      await tx.forecastLine.createMany({
+        data: validLines.map((line: any) => ({
+          restaurantId: tenant.restaurantId,
+          forecastId: createdForecast.id,
+          itemId: line.itemId,
+          qty: line.qty,
+        })),
+      })
+
+      return tx.forecast.findFirst({
+        where: {
+          id: createdForecast.id,
+          restaurantId: tenant.restaurantId,
+        },
+        include: {
+          lines: {
+            include: { item: true },
+          },
+        },
+      })
     })
 
     return NextResponse.json(forecast)
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('POST /api/forecasts failed:', error)
     return NextResponse.json({ error: 'Failed to save forecast' }, { status: 500 })
   }
@@ -110,6 +171,15 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to delete forecasts.' },
+        { status: 403 }
+      )
+    }
+
     const { searchParams } = new URL(req.url)
     const id = searchParams.get('id')
 
@@ -117,22 +187,38 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: 'Missing forecast id' }, { status: 400 })
     }
 
-    await prisma.$transaction(async (tx) => {
+    const forecast = await prisma.forecast.findFirst({
+      where: {
+        id,
+        restaurantId: tenant.restaurantId,
+      },
+    })
+
+    if (!forecast) {
+      return NextResponse.json({ error: 'Forecast not found' }, { status: 404 })
+    }
+
+    await prisma.$transaction(async (tx: any) => {
       await tx.forecastLine.deleteMany({
-        where: { forecastId: id },
+        where: {
+          restaurantId: tenant.restaurantId,
+          forecastId: forecast.id,
+        },
       })
 
       await tx.forecast.delete({
-        where: { id },
+        where: {
+          id: forecast.id,
+        },
       })
     })
 
     return NextResponse.json({ success: true })
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('DELETE /api/forecasts failed:', error)
-    return NextResponse.json(
-      { error: 'Failed to delete forecast' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to delete forecast' }, { status: 500 })
   }
 }
