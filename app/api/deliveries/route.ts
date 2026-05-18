@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 type InventoryLotForDelete = {
   id: string
@@ -15,44 +16,14 @@ function sameDate(a: Date | null, b: Date | null) {
   return a.getTime() === b.getTime()
 }
 
-function parseNullableDate(value: unknown) {
-  if (!value || !String(value).trim()) return null
-  const date = new Date(String(value))
-  return Number.isNaN(date.getTime()) ? null : date
-}
-
-async function findDeliveryLots(delivery: {
-  id: string
-  itemId: string
-  qty: number
-  expiryAt: Date | null
-}) {
-  let lotsToMatch = (await prisma.inventoryLot.findMany({
-    where: {
-      deliveryId: delivery.id,
-    } as any,
-    orderBy: { createdAt: 'asc' },
-  })) as InventoryLotForDelete[]
-
-  if (lotsToMatch.length === 0) {
-    const fallbackLots = (await prisma.inventoryLot.findMany({
-      where: {
-        itemId: delivery.itemId,
-        sourceType: 'DELIVERY',
-        qtyInitial: delivery.qty,
-      },
-      orderBy: { createdAt: 'asc' },
-    })) as InventoryLotForDelete[]
-
-    lotsToMatch = fallbackLots.filter((lot) => sameDate(lot.expiryAt, delivery.expiryAt))
-  }
-
-  return lotsToMatch
-}
-
 export async function GET() {
   try {
+    const tenant = await requireTenant()
+
     const deliveries = await prisma.delivery.findMany({
+      where: {
+        restaurantId: tenant.restaurantId,
+      },
       include: {
         item: true,
       },
@@ -61,6 +32,9 @@ export async function GET() {
 
     return NextResponse.json(deliveries)
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('GET /api/deliveries failed:', error)
     return NextResponse.json({ error: 'Failed to load deliveries' }, { status: 500 })
   }
@@ -68,10 +42,22 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to create deliveries.' },
+        { status: 403 }
+      )
+    }
+
     const body = await req.json()
 
-    const item = await prisma.item.findUnique({
-      where: { id: body.itemId },
+    const item = await prisma.item.findFirst({
+      where: {
+        id: body.itemId,
+        restaurantId: tenant.restaurantId,
+      },
     })
 
     if (!item) {
@@ -106,17 +92,21 @@ export async function POST(req: Request) {
 
     const unitCost = totalCost / qty
 
-    const expiryAtFromBody = parseNullableDate(body.expiryAt)
-
     const expiryAt =
-      expiryAtFromBody ??
-      (item.shelfLifeDays != null
-        ? new Date(deliveredAt.getTime() + item.shelfLifeDays * 24 * 60 * 60 * 1000)
-        : null)
+      body.expiryAt !== undefined && body.expiryAt !== null && body.expiryAt !== ''
+        ? new Date(body.expiryAt)
+        : item.shelfLifeDays != null
+          ? new Date(deliveredAt.getTime() + item.shelfLifeDays * 24 * 60 * 60 * 1000)
+          : null
 
-    const delivery = await prisma.$transaction(async (tx) => {
+    if (expiryAt && Number.isNaN(expiryAt.getTime())) {
+      return NextResponse.json({ error: 'Valid expiry date is required' }, { status: 400 })
+    }
+
+    const delivery = await prisma.$transaction(async (tx: any) => {
       const createdDelivery = await tx.delivery.create({
         data: {
+          restaurantId: tenant.restaurantId,
           deliveredAt,
           itemId: item.id,
           qty,
@@ -130,6 +120,7 @@ export async function POST(req: Request) {
 
       await tx.inventoryLot.create({
         data: {
+          restaurantId: tenant.restaurantId,
           itemId: item.id,
           qtyInitial: qty,
           qtyRemaining: qty,
@@ -138,7 +129,7 @@ export async function POST(req: Request) {
           sourceType: 'DELIVERY',
           unitCost,
           deliveryId: createdDelivery.id,
-        } as any,
+        },
       })
 
       return createdDelivery
@@ -146,103 +137,25 @@ export async function POST(req: Request) {
 
     return NextResponse.json(delivery)
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('POST /api/deliveries failed:', error)
     return NextResponse.json({ error: 'Failed to save delivery' }, { status: 500 })
   }
 }
 
-export async function PATCH(req: Request) {
+export async function DELETE(req: Request) {
   try {
-    const body = await req.json()
+    const tenant = await requireTenant()
 
-    const id = String(body.id || '')
-    const deliveredAt = new Date(body.deliveredAt)
-    const qty = Number(body.qty)
-    const totalCost = Number(body.totalCost)
-    const supplier = body.supplier ? String(body.supplier) : null
-    const expiryAt = parseNullableDate(body.expiryAt)
-
-    if (!id) {
-      return NextResponse.json({ error: 'Missing delivery id' }, { status: 400 })
-    }
-
-    if (Number.isNaN(deliveredAt.getTime())) {
-      return NextResponse.json({ error: 'Valid delivery date is required' }, { status: 400 })
-    }
-
-    if (!qty || qty <= 0 || Number.isNaN(qty)) {
-      return NextResponse.json({ error: 'Quantity must be greater than 0' }, { status: 400 })
-    }
-
-    if (!totalCost || totalCost <= 0 || Number.isNaN(totalCost)) {
+    if (!canWrite(tenant.role)) {
       return NextResponse.json(
-        { error: 'Total delivery cost must be greater than 0' },
-        { status: 400 }
+        { error: 'You do not have permission to delete deliveries.' },
+        { status: 403 }
       )
     }
 
-    const existing = await prisma.delivery.findUnique({
-      where: { id },
-      include: { item: true },
-    })
-
-    if (!existing) {
-      return NextResponse.json({ error: 'Delivery not found' }, { status: 404 })
-    }
-
-    const lotsToUpdate = await findDeliveryLots(existing)
-
-    for (const lot of lotsToUpdate) {
-      if (lot.qtyRemaining !== lot.qtyInitial) {
-        return NextResponse.json(
-          {
-            error:
-              'Cannot edit this delivery because some of its stock has already been used.',
-          },
-          { status: 400 }
-        )
-      }
-    }
-
-    const unitCost = totalCost / qty
-
-    const updated = await prisma.$transaction(async (tx) => {
-      const delivery = await tx.delivery.update({
-        where: { id },
-        data: {
-          deliveredAt,
-          qty,
-          supplier,
-          price: totalCost,
-          expiryAt,
-        },
-        include: { item: true },
-      })
-
-      for (const lot of lotsToUpdate) {
-        await tx.inventoryLot.update({
-          where: { id: lot.id },
-          data: {
-            qtyInitial: qty,
-            qtyRemaining: qty,
-            expiryAt,
-            unitCost,
-          },
-        })
-      }
-
-      return delivery
-    })
-
-    return NextResponse.json(updated)
-  } catch (error) {
-    console.error('PATCH /api/deliveries failed:', error)
-    return NextResponse.json({ error: 'Failed to update delivery' }, { status: 500 })
-  }
-}
-
-export async function DELETE(req: Request) {
-  try {
     const { searchParams } = new URL(req.url)
     const id = searchParams.get('id')
 
@@ -250,15 +163,40 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: 'Missing delivery id' }, { status: 400 })
     }
 
-    const delivery = await prisma.delivery.findUnique({
-      where: { id },
+    const delivery = await prisma.delivery.findFirst({
+      where: {
+        id,
+        restaurantId: tenant.restaurantId,
+      },
     })
 
     if (!delivery) {
       return NextResponse.json({ error: 'Delivery not found' }, { status: 404 })
     }
 
-    const lotsToDelete = await findDeliveryLots(delivery)
+    let lotsToDelete = (await prisma.inventoryLot.findMany({
+      where: {
+        restaurantId: tenant.restaurantId,
+        deliveryId: delivery.id,
+      },
+      orderBy: { createdAt: 'asc' },
+    })) as InventoryLotForDelete[]
+
+    if (lotsToDelete.length === 0) {
+      const fallbackLots = (await prisma.inventoryLot.findMany({
+        where: {
+          restaurantId: tenant.restaurantId,
+          itemId: delivery.itemId,
+          sourceType: 'DELIVERY',
+          qtyInitial: delivery.qty,
+        },
+        orderBy: { createdAt: 'asc' },
+      })) as InventoryLotForDelete[]
+
+      lotsToDelete = fallbackLots.filter((lot: InventoryLotForDelete) =>
+        sameDate(lot.expiryAt, delivery.expiryAt)
+      )
+    }
 
     for (const lot of lotsToDelete) {
       if (lot.qtyRemaining !== lot.qtyInitial) {
@@ -269,10 +207,11 @@ export async function DELETE(req: Request) {
       }
     }
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       if (lotsToDelete.length > 0) {
         await tx.inventoryLot.deleteMany({
           where: {
+            restaurantId: tenant.restaurantId,
             id: {
               in: lotsToDelete.map((lot) => lot.id),
             },
@@ -281,12 +220,15 @@ export async function DELETE(req: Request) {
       }
 
       await tx.delivery.delete({
-        where: { id },
+        where: { id: delivery.id },
       })
     })
 
     return NextResponse.json({ success: true })
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('DELETE /api/deliveries failed:', error)
     return NextResponse.json({ error: 'Failed to delete delivery' }, { status: 500 })
   }

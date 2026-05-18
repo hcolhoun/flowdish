@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 const TARGET_MARGIN_PERCENT = 75
 
@@ -25,14 +26,24 @@ function statusForMargin(newMargin: number | null) {
   return 'RED'
 }
 
-async function getMinPriceMaps(importBatchId: string) {
+async function getMinPriceMaps({
+  restaurantId,
+  importBatchId,
+}: {
+  restaurantId: string
+  importBatchId: string
+}) {
   const allSupplierProducts = await prisma.supplierProduct.findMany({
     where: {
+      restaurantId,
       linkedItemId: { not: null },
     },
     include: {
       priceHistory: {
-        where: { importBatchId },
+        where: {
+          restaurantId,
+          importBatchId,
+        },
       },
     },
   })
@@ -73,20 +84,61 @@ async function getMinPriceMaps(importBatchId: string) {
   return { oldPriceByL3, newPriceByL3 }
 }
 
-async function calculateL2UnitCost(l2ItemId: string, priceByL3: Map<string, number>) {
-  const l2 = await prisma.item.findUnique({
-    where: { id: l2ItemId },
+async function calculateL2UnitCost({
+  restaurantId,
+  l2ItemId,
+  priceByL3,
+  stack = new Set<string>(),
+}: {
+  restaurantId: string
+  l2ItemId: string
+  priceByL3: Map<string, number>
+  stack?: Set<string>
+}) {
+  if (stack.has(l2ItemId)) return 0
+
+  const nextStack = new Set(stack)
+  nextStack.add(l2ItemId)
+
+  const l2 = await prisma.item.findFirst({
+    where: {
+      id: l2ItemId,
+      restaurantId,
+    },
   })
 
   if (!l2?.standardBatchOutput || l2.standardBatchOutput <= 0) return 0
 
-  const rows = await prisma.bomL2L3.findMany({
-    where: { l2ItemId },
-  })
+  const [l2Rows, l3Rows] = await Promise.all([
+    prisma.bomL2L2.findMany({
+      where: {
+        restaurantId,
+        parentL2ItemId: l2ItemId,
+      },
+    }),
+
+    prisma.bomL2L3.findMany({
+      where: {
+        restaurantId,
+        l2ItemId,
+      },
+    }),
+  ])
 
   let batchCost = 0
 
-  for (const row of rows) {
+  for (const row of l2Rows) {
+    const childUnitCost = await calculateL2UnitCost({
+      restaurantId,
+      l2ItemId: row.childL2ItemId,
+      priceByL3,
+      stack: nextStack,
+    })
+
+    batchCost += row.qty * childUnitCost
+  }
+
+  for (const row of l3Rows) {
     const unitPrice = priceByL3.get(row.l3ItemId) ?? 0
     batchCost += row.qty * unitPrice
   }
@@ -94,13 +146,27 @@ async function calculateL2UnitCost(l2ItemId: string, priceByL3: Map<string, numb
   return batchCost / l2.standardBatchOutput
 }
 
-async function calculateL1Cogs(l1ItemId: string, priceByL3: Map<string, number>) {
+async function calculateL1Cogs({
+  restaurantId,
+  l1ItemId,
+  priceByL3,
+}: {
+  restaurantId: string
+  l1ItemId: string
+  priceByL3: Map<string, number>
+}) {
   const directRows = await prisma.bomL1L3.findMany({
-    where: { l1ItemId },
+    where: {
+      restaurantId,
+      l1ItemId,
+    },
   })
 
   const l2Rows = await prisma.bomL1L2.findMany({
-    where: { l1ItemId },
+    where: {
+      restaurantId,
+      l1ItemId,
+    },
   })
 
   let cogs = 0
@@ -111,7 +177,12 @@ async function calculateL1Cogs(l1ItemId: string, priceByL3: Map<string, number>)
   }
 
   for (const row of l2Rows) {
-    const l2UnitCost = await calculateL2UnitCost(row.l2ItemId, priceByL3)
+    const l2UnitCost = await calculateL2UnitCost({
+      restaurantId,
+      l2ItemId: row.l2ItemId,
+      priceByL3,
+    })
+
     cogs += row.qty * l2UnitCost
   }
 
@@ -120,6 +191,8 @@ async function calculateL1Cogs(l1ItemId: string, priceByL3: Map<string, number>)
 
 export async function GET(req: Request) {
   try {
+    const tenant = await requireTenant()
+
     const { searchParams } = new URL(req.url)
     const importBatchId = searchParams.get('importBatchId')
 
@@ -127,8 +200,11 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Missing importBatchId' }, { status: 400 })
     }
 
-    const importBatch = await prisma.supplierImportBatch.findUnique({
-      where: { id: importBatchId },
+    const importBatch = await prisma.supplierImportBatch.findFirst({
+      where: {
+        id: importBatchId,
+        restaurantId: tenant.restaurantId,
+      },
     })
 
     if (!importBatch) {
@@ -136,7 +212,10 @@ export async function GET(req: Request) {
     }
 
     const priceChanges = await prisma.supplierProductPriceHistory.findMany({
-      where: { importBatchId },
+      where: {
+        restaurantId: tenant.restaurantId,
+        importBatchId,
+      },
       include: {
         supplierProduct: {
           include: {
@@ -163,6 +242,7 @@ export async function GET(req: Request) {
 
     const directL1Rows = await prisma.bomL1L3.findMany({
       where: {
+        restaurantId: tenant.restaurantId,
         l3ItemId: { in: changedL3Ids },
       },
       include: {
@@ -173,6 +253,7 @@ export async function GET(req: Request) {
 
     const affectedL2Rows = await prisma.bomL2L3.findMany({
       where: {
+        restaurantId: tenant.restaurantId,
         l3ItemId: { in: changedL3Ids },
       },
       include: {
@@ -189,6 +270,7 @@ export async function GET(req: Request) {
       affectedL2Ids.length > 0
         ? await prisma.bomL1L2.findMany({
             where: {
+              restaurantId: tenant.restaurantId,
               l2ItemId: { in: affectedL2Ids },
             },
             include: {
@@ -226,13 +308,25 @@ export async function GET(req: Request) {
       })
     }
 
-    const { oldPriceByL3, newPriceByL3 } = await getMinPriceMaps(importBatchId)
+    const { oldPriceByL3, newPriceByL3 } = await getMinPriceMaps({
+      restaurantId: tenant.restaurantId,
+      importBatchId,
+    })
 
     const affectedL1s = []
 
     for (const l1 of affectedL1Map.values()) {
-      const oldCogs = await calculateL1Cogs(l1.id, oldPriceByL3)
-      const newCogs = await calculateL1Cogs(l1.id, newPriceByL3)
+      const oldCogs = await calculateL1Cogs({
+        restaurantId: tenant.restaurantId,
+        l1ItemId: l1.id,
+        priceByL3: oldPriceByL3,
+      })
+
+      const newCogs = await calculateL1Cogs({
+        restaurantId: tenant.restaurantId,
+        l1ItemId: l1.id,
+        priceByL3: newPriceByL3,
+      })
 
       const oldGrossMarginPercent = marginPercent(l1.sellingPrice, oldCogs)
       const newGrossMarginPercent = marginPercent(l1.sellingPrice, newCogs)
@@ -315,6 +409,9 @@ export async function GET(req: Request) {
       affectedL1s,
     })
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('GET /api/supplier-products/import-impact failed:', error)
     return NextResponse.json(
       { error: 'Failed to load import impact report' },

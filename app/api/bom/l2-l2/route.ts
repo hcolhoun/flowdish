@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 type BomRowInput = {
   childId: string
@@ -46,6 +47,7 @@ function canReachTarget(
 
 export async function GET(req: Request) {
   try {
+    const tenant = await requireTenant()
     const { searchParams } = new URL(req.url)
     const parentId = searchParams.get('parentId')
 
@@ -53,8 +55,23 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Missing parentId' }, { status: 400 })
     }
 
+    const parent = await prisma.item.findFirst({
+      where: {
+        id: parentId,
+        restaurantId: tenant.restaurantId,
+        itemType: 'L2',
+      },
+    })
+
+    if (!parent) {
+      return NextResponse.json({ error: 'L2 parent not found' }, { status: 404 })
+    }
+
     const rows = await prisma.bomL2L2.findMany({
-      where: { parentL2ItemId: parentId },
+      where: {
+        restaurantId: tenant.restaurantId,
+        parentL2ItemId: parentId,
+      },
       include: {
         parentL2: true,
         childL2: true,
@@ -64,13 +81,22 @@ export async function GET(req: Request) {
 
     return NextResponse.json(rows)
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('GET /api/bom/l2-l2 failed:', error)
-    return NextResponse.json({ error: 'Failed to load L2 -> L2 BOM' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to load L2 → L2 BOM' }, { status: 500 })
   }
 }
 
 export async function POST(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json({ error: 'You do not have permission to update BOMs.' }, { status: 403 })
+    }
+
     const body = await req.json()
 
     const parentId = String(body.parentId || '')
@@ -80,11 +106,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing parentId' }, { status: 400 })
     }
 
-    const parentItem = await prisma.item.findUnique({
-      where: { id: parentId },
+    const parentItem = await prisma.item.findFirst({
+      where: {
+        id: parentId,
+        restaurantId: tenant.restaurantId,
+        itemType: 'L2',
+      },
     })
 
-    if (!parentItem || parentItem.itemType !== 'L2') {
+    if (!parentItem) {
       return NextResponse.json({ error: 'Parent must be an L2 item' }, { status: 400 })
     }
 
@@ -103,11 +133,15 @@ export async function POST(req: Request) {
         )
       }
 
-      const childItem = await prisma.item.findUnique({
-        where: { id: row.childId },
+      const childItem = await prisma.item.findFirst({
+        where: {
+          id: row.childId,
+          restaurantId: tenant.restaurantId,
+          itemType: 'L2',
+        },
       })
 
-      if (!childItem || childItem.itemType !== 'L2') {
+      if (!childItem) {
         return NextResponse.json(
           { error: 'Every child row must be an L2 item.' },
           { status: 400 }
@@ -117,6 +151,7 @@ export async function POST(req: Request) {
 
     const existingRows = await prisma.bomL2L2.findMany({
       where: {
+        restaurantId: tenant.restaurantId,
         parentL2ItemId: {
           not: parentId,
         },
@@ -148,12 +183,16 @@ export async function POST(req: Request) {
 
     await prisma.$transaction(async (tx: any) => {
       await tx.bomL2L2.deleteMany({
-        where: { parentL2ItemId: parentId },
+        where: {
+          restaurantId: tenant.restaurantId,
+          parentL2ItemId: parentId,
+        },
       })
 
       if (cleanRows.length > 0) {
         await tx.bomL2L2.createMany({
           data: cleanRows.map((row) => ({
+            restaurantId: tenant.restaurantId,
             parentL2ItemId: parentId,
             childL2ItemId: row.childId,
             qty: row.qty,
@@ -164,7 +203,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true })
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('POST /api/bom/l2-l2 failed:', error)
-    return NextResponse.json({ error: 'Failed to save L2 -> L2 BOM' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to save L2 → L2 BOM' }, { status: 500 })
   }
 }

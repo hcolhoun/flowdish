@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 export async function GET(req: Request) {
   try {
+    const tenant = await requireTenant()
+
     const { searchParams } = new URL(req.url)
     const itemId = searchParams.get('itemId')
 
@@ -10,8 +13,11 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Missing itemId' }, { status: 400 })
     }
 
-    const item = await prisma.item.findUnique({
-      where: { id: itemId },
+    const item = await prisma.item.findFirst({
+      where: {
+        id: itemId,
+        restaurantId: tenant.restaurantId,
+      },
     })
 
     if (!item) {
@@ -20,6 +26,7 @@ export async function GET(req: Request) {
 
     const products = await prisma.supplierProduct.findMany({
       where: {
+        restaurantId: tenant.restaurantId,
         OR: [
           { linkedItemId: item.id },
           { supplierSku: item.sku },
@@ -58,6 +65,9 @@ export async function GET(req: Request) {
       },
     })
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('GET /api/supplier-products/latest failed:', error)
     return NextResponse.json(
       { error: 'Failed to load latest supplier price' },

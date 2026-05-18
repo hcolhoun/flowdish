@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 type RequiredComponent = {
   itemId: string
@@ -9,13 +10,21 @@ type RequiredComponent = {
 
 export async function GET() {
   try {
+    const tenant = await requireTenant()
+
     const prepBatches = await prisma.prepBatch.findMany({
+      where: {
+        restaurantId: tenant.restaurantId,
+      },
       include: { item: true },
       orderBy: { preparedAt: 'desc' },
     })
 
     return NextResponse.json(prepBatches)
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('GET /api/prep failed:', error)
     return NextResponse.json({ error: 'Failed to load prep batches' }, { status: 500 })
   }
@@ -23,6 +32,15 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to record prep.' },
+        { status: 403 }
+      )
+    }
+
     const body = await req.json()
 
     const itemId = String(body.itemId || '')
@@ -44,8 +62,11 @@ export async function POST(req: Request) {
       )
     }
 
-    const l2Item = await prisma.item.findUnique({
-      where: { id: itemId },
+    const l2Item = await prisma.item.findFirst({
+      where: {
+        id: itemId,
+        restaurantId: tenant.restaurantId,
+      },
     })
 
     if (!l2Item) {
@@ -68,12 +89,18 @@ export async function POST(req: Request) {
 
     const [l2Rows, l3Rows] = await Promise.all([
       prisma.bomL2L2.findMany({
-        where: { parentL2ItemId: l2Item.id },
+        where: {
+          restaurantId: tenant.restaurantId,
+          parentL2ItemId: l2Item.id,
+        },
         include: { childL2: true },
       }),
 
       prisma.bomL2L3.findMany({
-        where: { l2ItemId: l2Item.id },
+        where: {
+          restaurantId: tenant.restaurantId,
+          l2ItemId: l2Item.id,
+        },
         include: { l3: true },
       }),
     ])
@@ -121,6 +148,7 @@ export async function POST(req: Request) {
     for (const component of requiredByItemId.values()) {
       const lots = await prisma.inventoryLot.findMany({
         where: {
+          restaurantId: tenant.restaurantId,
           itemId: component.itemId,
           qtyRemaining: { gt: 0 },
         },
@@ -164,6 +192,7 @@ export async function POST(req: Request) {
 
         const lots = await tx.inventoryLot.findMany({
           where: {
+            restaurantId: tenant.restaurantId,
             itemId: component.itemId,
             qtyRemaining: { gt: 0 },
           },
@@ -195,6 +224,7 @@ export async function POST(req: Request) {
 
       const prepBatch = await tx.prepBatch.create({
         data: {
+          restaurantId: tenant.restaurantId,
           preparedAt,
           itemId: l2Item.id,
           qtyOutput,
@@ -205,6 +235,7 @@ export async function POST(req: Request) {
 
       await tx.inventoryLot.create({
         data: {
+          restaurantId: tenant.restaurantId,
           itemId: l2Item.id,
           qtyInitial: qtyOutput,
           qtyRemaining: qtyOutput,
@@ -220,6 +251,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json(result)
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('POST /api/prep failed:', error)
     return NextResponse.json({ error: 'Failed to save prep batch' }, { status: 500 })
   }

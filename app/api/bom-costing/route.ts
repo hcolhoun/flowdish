@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 type ItemRow = {
   id: string
@@ -26,14 +27,20 @@ function numberValue(value: unknown) {
 
 export async function GET() {
   try {
+    const tenant = await requireTenant()
+
     const [itemsRaw, supplierProducts, l2ToL2RowsRaw, l2ToL3RowsRaw] =
       await Promise.all([
         prisma.item.findMany({
+          where: {
+            restaurantId: tenant.restaurantId,
+          },
           orderBy: { name: 'asc' },
         }),
 
         prisma.supplierProduct.findMany({
           where: {
+            restaurantId: tenant.restaurantId,
             unitPrice: {
               gt: 0,
             },
@@ -42,6 +49,9 @@ export async function GET() {
         }),
 
         prisma.bomL2L2.findMany({
+          where: {
+            restaurantId: tenant.restaurantId,
+          },
           include: {
             parentL2: true,
             childL2: true,
@@ -50,6 +60,9 @@ export async function GET() {
         }),
 
         prisma.bomL2L3.findMany({
+          where: {
+            restaurantId: tenant.restaurantId,
+          },
           include: {
             l2: true,
             l3: true,
@@ -233,6 +246,9 @@ export async function GET() {
       l2CostsByItemId,
     })
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('GET /api/bom-costing failed:', error)
     return NextResponse.json(
       { error: 'Failed to load BOM costing data' },

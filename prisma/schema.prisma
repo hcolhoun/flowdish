@@ -29,9 +29,61 @@ enum BuildStatus {
   BUILT
 }
 
+enum MembershipRole {
+  OWNER
+  ADMIN
+  CHEF
+  VIEWER
+}
+
+model Restaurant {
+  id         String   @id @default(cuid())
+  name       String
+  slug       String?  @unique
+  isTemplate Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  memberships UserMembership[]
+
+  items                       Item[]
+  bomL0L1Rows                 BomL0L1[]
+  bomL1L2Rows                 BomL1L2[]
+  bomL1L3Rows                 BomL1L3[]
+  bomL2L2Rows                 BomL2L2[]
+  bomL2L3Rows                 BomL2L3[]
+  deliveries                  Delivery[]
+  inventoryLots               InventoryLot[]
+  prepBatches                 PrepBatch[]
+  sales                       Sale[]
+  wastes                      Waste[]
+  forecasts                   Forecast[]
+  forecastLines               ForecastLine[]
+  sopDocuments                SopDocument[]
+  supplierProducts            SupplierProduct[]
+  supplierImportBatches       SupplierImportBatch[]
+  supplierProductPriceHistory SupplierProductPriceHistory[]
+}
+
+model UserMembership {
+  id           String         @id @default(cuid())
+  authUserId   String
+  email        String?
+  restaurantId String
+  role         MembershipRole @default(OWNER)
+  createdAt    DateTime       @default(now())
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([authUserId, restaurantId])
+  @@index([authUserId])
+  @@index([restaurantId])
+}
+
 model Item {
   id                  String      @id @default(cuid())
-  sku                 String      @unique
+  restaurantId        String
+  sku                 String
   name                String
   itemType            ItemType
   unitType            UnitType
@@ -40,6 +92,8 @@ model Item {
   standardBatchOutput Float?
   buildStatus         BuildStatus @default(UNBUILT)
   createdAt           DateTime    @default(now())
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
 
   bomL0L1Parents  BomL0L1[] @relation("BomL0L1_L0")
   bomL0L1Children BomL0L1[] @relation("BomL0L1_L1")
@@ -65,89 +119,113 @@ model Item {
   sopDocument   SopDocument?
 
   supplierProducts SupplierProduct[] @relation("SupplierProduct_LinkedItem")
+
+  @@unique([restaurantId, sku])
+  @@index([restaurantId])
 }
 
 model BomL0L1 {
-  id       String @id @default(cuid())
-  l0ItemId String
-  l1ItemId String
-  qty      Float
+  id           String @id @default(cuid())
+  restaurantId String
+  l0ItemId     String
+  l1ItemId     String
+  qty          Float
 
-  l0 Item @relation("BomL0L1_L0", fields: [l0ItemId], references: [id])
-  l1 Item @relation("BomL0L1_L1", fields: [l1ItemId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  l0         Item       @relation("BomL0L1_L0", fields: [l0ItemId], references: [id])
+  l1         Item       @relation("BomL0L1_L1", fields: [l1ItemId], references: [id])
 
+  @@index([restaurantId])
   @@index([l0ItemId])
   @@index([l1ItemId])
 }
 
 model BomL1L2 {
-  id       String @id @default(cuid())
-  l1ItemId String
-  l2ItemId String
-  qty      Float
+  id           String @id @default(cuid())
+  restaurantId String
+  l1ItemId     String
+  l2ItemId     String
+  qty          Float
 
-  l1 Item @relation("BomL1L2_L1", fields: [l1ItemId], references: [id])
-  l2 Item @relation("BomL1L2_L2", fields: [l2ItemId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  l1         Item       @relation("BomL1L2_L1", fields: [l1ItemId], references: [id])
+  l2         Item       @relation("BomL1L2_L2", fields: [l2ItemId], references: [id])
 
+  @@index([restaurantId])
   @@index([l1ItemId])
   @@index([l2ItemId])
 }
 
 model BomL1L3 {
-  id       String @id @default(cuid())
-  l1ItemId String
-  l3ItemId String
-  qty      Float
+  id           String @id @default(cuid())
+  restaurantId String
+  l1ItemId     String
+  l3ItemId     String
+  qty          Float
 
-  l1 Item @relation("BomL1L3_L1", fields: [l1ItemId], references: [id])
-  l3 Item @relation("BomL1L3_L3", fields: [l3ItemId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  l1         Item       @relation("BomL1L3_L1", fields: [l1ItemId], references: [id])
+  l3         Item       @relation("BomL1L3_L3", fields: [l3ItemId], references: [id])
 
+  @@index([restaurantId])
   @@index([l1ItemId])
   @@index([l3ItemId])
 }
 
 model BomL2L2 {
   id             String @id @default(cuid())
+  restaurantId   String
   parentL2ItemId String
   childL2ItemId  String
   qty            Float
 
-  parentL2 Item @relation("BomL2L2_Parent", fields: [parentL2ItemId], references: [id])
-  childL2  Item @relation("BomL2L2_Child", fields: [childL2ItemId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  parentL2   Item       @relation("BomL2L2_Parent", fields: [parentL2ItemId], references: [id])
+  childL2    Item       @relation("BomL2L2_Child", fields: [childL2ItemId], references: [id])
 
+  @@index([restaurantId])
   @@index([parentL2ItemId])
   @@index([childL2ItemId])
 }
 
 model BomL2L3 {
-  id       String @id @default(cuid())
-  l2ItemId String
-  l3ItemId String
-  qty      Float
+  id           String @id @default(cuid())
+  restaurantId String
+  l2ItemId     String
+  l3ItemId     String
+  qty          Float
 
-  l2 Item @relation("BomL2L3_L2", fields: [l2ItemId], references: [id])
-  l3 Item @relation("BomL2L3_L3", fields: [l3ItemId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  l2         Item       @relation("BomL2L3_L2", fields: [l2ItemId], references: [id])
+  l3         Item       @relation("BomL2L3_L3", fields: [l3ItemId], references: [id])
 
+  @@index([restaurantId])
   @@index([l2ItemId])
   @@index([l3ItemId])
 }
 
 model Delivery {
-  id          String    @id @default(cuid())
-  deliveredAt DateTime
-  itemId      String
-  qty         Float
-  unitType    UnitType
-  supplier    String?
-  price       Float?
-  expiryAt    DateTime?
+  id           String    @id @default(cuid())
+  restaurantId String
+  deliveredAt  DateTime
+  itemId       String
+  qty          Float
+  unitType     UnitType
+  supplier     String?
+  price        Float?
+  expiryAt     DateTime?
 
+  restaurant    Restaurant     @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   item          Item           @relation(fields: [itemId], references: [id])
   inventoryLots InventoryLot[]
+
+  @@index([restaurantId])
+  @@index([itemId])
 }
 
 model InventoryLot {
   id           String              @id @default(cuid())
+  restaurantId String
   itemId       String
   qtyInitial   Float
   qtyRemaining Float
@@ -160,93 +238,128 @@ model InventoryLot {
   deliveryId String?
   delivery   Delivery? @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
 
-  item Item @relation(fields: [itemId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  item       Item       @relation(fields: [itemId], references: [id])
 
+  @@index([restaurantId])
   @@index([deliveryId])
   @@index([itemId])
 }
 
 model PrepBatch {
-  id         String    @id @default(cuid())
-  preparedAt DateTime
-  itemId     String
-  qtyOutput  Float
-  expiryAt   DateTime?
+  id           String    @id @default(cuid())
+  restaurantId String
+  preparedAt   DateTime
+  itemId       String
+  qtyOutput    Float
+  expiryAt     DateTime?
 
-  item Item @relation(fields: [itemId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  item       Item       @relation(fields: [itemId], references: [id])
+
+  @@index([restaurantId])
+  @@index([itemId])
 }
 
 model Sale {
-  id     String   @id @default(cuid())
-  soldAt DateTime
-  itemId String
-  qty    Float
-  cost   Float    @default(0)
+  id           String   @id @default(cuid())
+  restaurantId String
+  soldAt       DateTime
+  itemId       String
+  qty          Float
+  cost         Float    @default(0)
 
-  item Item @relation(fields: [itemId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  item       Item       @relation(fields: [itemId], references: [id])
+
+  @@index([restaurantId])
+  @@index([itemId])
 }
 
 model Waste {
-  id     String   @id @default(cuid())
-  date   DateTime
-  itemId String
-  qty    Float
-  reason String?
+  id           String   @id @default(cuid())
+  restaurantId String
+  date         DateTime
+  itemId       String
+  qty          Float
+  reason       String?
 
-  item Item @relation(fields: [itemId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  item       Item       @relation(fields: [itemId], references: [id])
+
+  @@index([restaurantId])
+  @@index([itemId])
 }
 
 model Forecast {
-  id        String   @id @default(cuid())
-  name      String
-  startDate DateTime
-  endDate   DateTime
-  createdAt DateTime @default(now())
+  id           String   @id @default(cuid())
+  restaurantId String
+  name         String
+  startDate    DateTime
+  endDate      DateTime
+  createdAt    DateTime @default(now())
 
-  lines ForecastLine[]
+  restaurant Restaurant     @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  lines      ForecastLine[]
+
+  @@index([restaurantId])
 }
 
 model ForecastLine {
-  id         String @id @default(cuid())
-  forecastId String
-  itemId     String
-  qty        Float
+  id           String @id @default(cuid())
+  restaurantId String
+  forecastId   String
+  itemId       String
+  qty          Float
 
-  forecast Forecast @relation(fields: [forecastId], references: [id])
-  item     Item     @relation(fields: [itemId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  forecast   Forecast   @relation(fields: [forecastId], references: [id], onDelete: Cascade)
+  item       Item       @relation(fields: [itemId], references: [id])
+
+  @@index([restaurantId])
+  @@index([forecastId])
+  @@index([itemId])
 }
 
 model SopDocument {
   id           String   @id @default(cuid())
+  restaurantId String
   itemId       String   @unique
   instructions String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  item Item @relation(fields: [itemId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  item       Item       @relation(fields: [itemId], references: [id])
+
+  @@index([restaurantId])
 }
 
 model SupplierProduct {
-  id          String   @id @default(cuid())
-  supplier    String
-  supplierSku String?
-  name        String
-  packSize    String?
-  weight      String?
-  packPrice   Float?
-  unitPrice   Float?
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  restaurantId String
+  supplier     String
+  supplierSku  String?
+  name         String
+  packSize     String?
+  weight       String?
+  packPrice    Float?
+  unitPrice    Float?
+  createdAt    DateTime @default(now())
 
   linkedItemId String?
   linkedItem   Item?   @relation("SupplierProduct_LinkedItem", fields: [linkedItemId], references: [id])
 
+  restaurant   Restaurant                    @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   priceHistory SupplierProductPriceHistory[]
 
-  @@index([supplier, supplierSku])
+  @@index([restaurantId])
+  @@index([restaurantId, supplier, supplierSku])
 }
 
 model SupplierImportBatch {
   id               String   @id @default(cuid())
+  restaurantId     String
   supplier         String
   fileName         String?
   parsedCount      Int      @default(0)
@@ -255,11 +368,15 @@ model SupplierImportBatch {
   priceChangeCount Int      @default(0)
   createdAt        DateTime @default(now())
 
+  restaurant   Restaurant                    @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   priceChanges SupplierProductPriceHistory[]
+
+  @@index([restaurantId])
 }
 
 model SupplierProductPriceHistory {
   id                String  @id @default(cuid())
+  restaurantId      String
   supplierProductId String
   importBatchId     String?
 
@@ -270,9 +387,11 @@ model SupplierProductPriceHistory {
 
   changedAt DateTime @default(now())
 
+  restaurant      Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   supplierProduct SupplierProduct      @relation(fields: [supplierProductId], references: [id], onDelete: Cascade)
   importBatch     SupplierImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
 
+  @@index([restaurantId])
   @@index([supplierProductId])
   @@index([importBatchId])
 }

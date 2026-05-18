@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 type SupplierPrice = {
   supplier: string
@@ -43,8 +44,23 @@ function getBestPriceForItem(
 
 export async function GET(req: Request) {
   try {
+    const tenant = await requireTenant()
+
     const { searchParams } = new URL(req.url)
     const itemId = searchParams.get('itemId')
+
+    if (itemId) {
+      const item = await prisma.item.findFirst({
+        where: {
+          id: itemId,
+          restaurantId: tenant.restaurantId,
+        },
+      })
+
+      if (!item) {
+        return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+      }
+    }
 
     const [
       items,
@@ -55,20 +71,26 @@ export async function GET(req: Request) {
       supplierProducts,
     ] = await Promise.all([
       prisma.item.findMany({
-        where: itemId
-          ? {
-              OR: [
-                { id: itemId },
-                { itemType: 'L2' },
-                { itemType: 'L3' },
-              ],
-            }
-          : undefined,
+        where: {
+          restaurantId: tenant.restaurantId,
+          ...(itemId
+            ? {
+                OR: [
+                  { id: itemId },
+                  { itemType: 'L2' },
+                  { itemType: 'L3' },
+                ],
+              }
+            : {}),
+        },
         orderBy: { name: 'asc' },
       }),
 
       prisma.bomL1L2.findMany({
-        where: itemId ? { l1ItemId: itemId } : undefined,
+        where: {
+          restaurantId: tenant.restaurantId,
+          ...(itemId ? { l1ItemId: itemId } : {}),
+        },
         include: {
           l1: true,
           l2: true,
@@ -77,7 +99,10 @@ export async function GET(req: Request) {
       }),
 
       prisma.bomL1L3.findMany({
-        where: itemId ? { l1ItemId: itemId } : undefined,
+        where: {
+          restaurantId: tenant.restaurantId,
+          ...(itemId ? { l1ItemId: itemId } : {}),
+        },
         include: {
           l1: true,
           l3: true,
@@ -86,6 +111,9 @@ export async function GET(req: Request) {
       }),
 
       prisma.bomL2L2.findMany({
+        where: {
+          restaurantId: tenant.restaurantId,
+        },
         include: {
           parentL2: true,
           childL2: true,
@@ -94,6 +122,9 @@ export async function GET(req: Request) {
       }),
 
       prisma.bomL2L3.findMany({
+        where: {
+          restaurantId: tenant.restaurantId,
+        },
         include: {
           l2: true,
           l3: true,
@@ -103,6 +134,7 @@ export async function GET(req: Request) {
 
       prisma.supplierProduct.findMany({
         where: {
+          restaurantId: tenant.restaurantId,
           unitPrice: {
             gt: 0,
           },
@@ -117,9 +149,6 @@ export async function GET(req: Request) {
     const typedItems = items as ItemLike[]
 
     const l1Items = typedItems.filter((item: ItemLike) => item.itemType === 'L1')
-    const itemById = new Map<string, ItemLike>(
-      typedItems.map((item: ItemLike) => [item.id, item])
-    )
 
     const pricesByItemId = new Map<string, SupplierPrice[]>()
     const pricesBySku = new Map<string, SupplierPrice[]>()
@@ -415,6 +444,9 @@ export async function GET(req: Request) {
 
     return NextResponse.json(itemId ? results[0] ?? null : results)
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('GET /api/costing/l1 failed:', error)
     return NextResponse.json(
       { error: 'Failed to calculate L1 costing' },

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 type StockPosition = {
   totalStock: number
@@ -15,11 +16,20 @@ function daysBetween(from: Date, to: Date) {
   return Math.ceil(ms / (1000 * 60 * 60 * 24))
 }
 
-async function getStockPosition(itemId: string, forecastEndDate: Date): Promise<StockPosition> {
+async function getStockPosition({
+  restaurantId,
+  itemId,
+  forecastEndDate,
+}: {
+  restaurantId: string
+  itemId: string
+  forecastEndDate: Date
+}): Promise<StockPosition> {
   const now = new Date()
 
   const lots = await prisma.inventoryLot.findMany({
     where: {
+      restaurantId,
       itemId,
       qtyRemaining: { gt: 0 },
     },
@@ -47,7 +57,11 @@ async function getStockPosition(itemId: string, forecastEndDate: Date): Promise<
       continue
     }
 
-    if (lot.expiryAt && lot.expiryAt <= forecastEndDate) {
+    const expiryWarningDate = lot.expiryAt
+      ? new Date(lot.expiryAt.getTime() + 24 * 60 * 60 * 1000)
+      : null
+
+    if (expiryWarningDate && expiryWarningDate <= forecastEndDate) {
       expiringBeforeForecastEnd += lot.qtyRemaining
       continue
     }
@@ -72,6 +86,8 @@ function makeableFrom(stock: number, qtyPerUnit: number) {
 
 export async function GET(req: Request) {
   try {
+    const tenant = await requireTenant()
+
     const { searchParams } = new URL(req.url)
     const forecastId = searchParams.get('forecastId')
 
@@ -79,8 +95,11 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Missing forecastId' }, { status: 400 })
     }
 
-    const forecast = await prisma.forecast.findUnique({
-      where: { id: forecastId },
+    const forecast = await prisma.forecast.findFirst({
+      where: {
+        id: forecastId,
+        restaurantId: tenant.restaurantId,
+      },
       include: {
         lines: {
           include: { item: true },
@@ -103,24 +122,40 @@ export async function GET(req: Request) {
       if (l1Item.itemType !== 'L1') continue
 
       const bomL1L2 = await prisma.bomL1L2.findMany({
-        where: { l1ItemId: l1Item.id },
+        where: {
+          restaurantId: tenant.restaurantId,
+          l1ItemId: l1Item.id,
+        },
         include: { l2: true },
       })
 
       const bomL1L3 = await prisma.bomL1L3.findMany({
-        where: { l1ItemId: l1Item.id },
+        where: {
+          restaurantId: tenant.restaurantId,
+          l1ItemId: l1Item.id,
+        },
         include: { l3: true },
       })
 
       let makeableQty = Number.POSITIVE_INFINITY
 
       for (const row of bomL1L2 as any[]) {
-        const stock = await getStockPosition(row.l2ItemId, forecastEndDate)
+        const stock = await getStockPosition({
+          restaurantId: tenant.restaurantId,
+          itemId: row.l2ItemId,
+          forecastEndDate,
+        })
+
         makeableQty = Math.min(makeableQty, makeableFrom(stock.usableStock, row.qty))
       }
 
       for (const row of bomL1L3 as any[]) {
-        const stock = await getStockPosition(row.l3ItemId, forecastEndDate)
+        const stock = await getStockPosition({
+          restaurantId: tenant.restaurantId,
+          itemId: row.l3ItemId,
+          forecastEndDate,
+        })
+
         makeableQty = Math.min(makeableQty, makeableFrom(stock.usableStock, row.qty))
       }
 
@@ -169,24 +204,35 @@ export async function GET(req: Request) {
 
       processedL2Ids.add(nextL2Id)
 
-      const item = await prisma.item.findUnique({
-        where: { id: nextL2Id },
+      const item = await prisma.item.findFirst({
+        where: {
+          id: nextL2Id,
+          restaurantId: tenant.restaurantId,
+        },
       })
 
       if (!item || item.itemType !== 'L2') continue
 
       const requiredQty = l2RequiredMap.get(nextL2Id) ?? 0
-      const stock = await getStockPosition(nextL2Id, forecastEndDate)
+
+      const stock = await getStockPosition({
+        restaurantId: tenant.restaurantId,
+        itemId: nextL2Id,
+        forecastEndDate,
+      })
+
       const shortfallQty = Math.max(0, requiredQty - stock.usableStock)
 
       if (shortfallQty <= 0) continue
-
       if (!item.standardBatchOutput || item.standardBatchOutput <= 0) continue
 
       const scaleFactor = shortfallQty / item.standardBatchOutput
 
       const childL2Rows = await prisma.bomL2L2.findMany({
-        where: { parentL2ItemId: nextL2Id },
+        where: {
+          restaurantId: tenant.restaurantId,
+          parentL2ItemId: nextL2Id,
+        },
       })
 
       for (const row of childL2Rows) {
@@ -201,13 +247,20 @@ export async function GET(req: Request) {
     const l2Plan: any[] = []
 
     for (const [l2ItemId, requiredQty] of l2RequiredMap.entries()) {
-      const item = await prisma.item.findUnique({
-        where: { id: l2ItemId },
+      const item = await prisma.item.findFirst({
+        where: {
+          id: l2ItemId,
+          restaurantId: tenant.restaurantId,
+        },
       })
 
       if (!item) continue
 
-      const stock = await getStockPosition(l2ItemId, forecastEndDate)
+      const stock = await getStockPosition({
+        restaurantId: tenant.restaurantId,
+        itemId: l2ItemId,
+        forecastEndDate,
+      })
 
       const shortfallQty = Math.max(0, requiredQty - stock.usableStock)
       const standardBatchOutput = item.standardBatchOutput ?? null
@@ -266,6 +319,9 @@ export async function GET(req: Request) {
       l2Plan,
     })
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('GET /api/prep-plan failed:', error)
     return NextResponse.json({ error: 'Failed to build prep plan' }, { status: 500 })
   }

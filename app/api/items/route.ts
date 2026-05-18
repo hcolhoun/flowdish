@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 import { NextResponse } from 'next/server'
 
 function makeSkuPrefix(itemType: string) {
@@ -29,12 +30,20 @@ function nullableNumber(value: unknown) {
 
 export async function GET() {
   try {
+    const tenant = await requireTenant()
+
     const items = await prisma.item.findMany({
+      where: {
+        restaurantId: tenant.restaurantId,
+      },
       orderBy: { createdAt: 'desc' },
     })
 
     return NextResponse.json(items)
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('GET /api/items failed:', error)
     return NextResponse.json({ error: 'Failed to load items' }, { status: 500 })
   }
@@ -42,6 +51,12 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json({ error: 'You do not have permission to create items.' }, { status: 403 })
+    }
+
     const body = await req.json()
 
     const name = String(body.name || '').trim()
@@ -85,6 +100,7 @@ export async function POST(req: Request) {
 
     const item = await prisma.item.create({
       data: {
+        restaurantId: tenant.restaurantId,
         sku,
         name,
         itemType,
@@ -100,10 +116,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json(item)
   } catch (error: any) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('POST /api/items failed:', error)
 
     if (error?.code === 'P2002') {
-      return NextResponse.json({ error: 'That SKU already exists' }, { status: 400 })
+      return NextResponse.json({ error: 'That SKU already exists in this restaurant.' }, { status: 400 })
     }
 
     return NextResponse.json({ error: 'Failed to save item' }, { status: 500 })
@@ -112,6 +131,12 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json({ error: 'You do not have permission to delete items.' }, { status: 403 })
+    }
+
     const { searchParams } = new URL(req.url)
     const id = searchParams.get('id')
 
@@ -119,7 +144,12 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: 'Missing item id' }, { status: 400 })
     }
 
-    const item = await prisma.item.findUnique({ where: { id } })
+    const item = await prisma.item.findFirst({
+      where: {
+        id,
+        restaurantId: tenant.restaurantId,
+      },
+    })
 
     if (!item) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 })
@@ -143,22 +173,22 @@ export async function DELETE(req: Request) {
       wastes,
       forecastLines,
     ] = await Promise.all([
-      prisma.bomL0L1.count({ where: { l0ItemId: id } }),
-      prisma.bomL0L1.count({ where: { l1ItemId: id } }),
-      prisma.bomL1L2.count({ where: { l1ItemId: id } }),
-      prisma.bomL1L2.count({ where: { l2ItemId: id } }),
-      prisma.bomL1L3.count({ where: { l1ItemId: id } }),
-      prisma.bomL1L3.count({ where: { l3ItemId: id } }),
-      prisma.bomL2L2.count({ where: { parentL2ItemId: id } }),
-      prisma.bomL2L2.count({ where: { childL2ItemId: id } }),
-      prisma.bomL2L3.count({ where: { l2ItemId: id } }),
-      prisma.bomL2L3.count({ where: { l3ItemId: id } }),
-      prisma.delivery.count({ where: { itemId: id } }),
-      prisma.inventoryLot.count({ where: { itemId: id } }),
-      prisma.prepBatch.count({ where: { itemId: id } }),
-      prisma.sale.count({ where: { itemId: id } }),
-      prisma.waste.count({ where: { itemId: id } }),
-      prisma.forecastLine.count({ where: { itemId: id } }),
+      prisma.bomL0L1.count({ where: { restaurantId: tenant.restaurantId, l0ItemId: id } }),
+      prisma.bomL0L1.count({ where: { restaurantId: tenant.restaurantId, l1ItemId: id } }),
+      prisma.bomL1L2.count({ where: { restaurantId: tenant.restaurantId, l1ItemId: id } }),
+      prisma.bomL1L2.count({ where: { restaurantId: tenant.restaurantId, l2ItemId: id } }),
+      prisma.bomL1L3.count({ where: { restaurantId: tenant.restaurantId, l1ItemId: id } }),
+      prisma.bomL1L3.count({ where: { restaurantId: tenant.restaurantId, l3ItemId: id } }),
+      prisma.bomL2L2.count({ where: { restaurantId: tenant.restaurantId, parentL2ItemId: id } }),
+      prisma.bomL2L2.count({ where: { restaurantId: tenant.restaurantId, childL2ItemId: id } }),
+      prisma.bomL2L3.count({ where: { restaurantId: tenant.restaurantId, l2ItemId: id } }),
+      prisma.bomL2L3.count({ where: { restaurantId: tenant.restaurantId, l3ItemId: id } }),
+      prisma.delivery.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
+      prisma.inventoryLot.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
+      prisma.prepBatch.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
+      prisma.sale.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
+      prisma.waste.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
+      prisma.forecastLine.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
     ])
 
     const usageCount =
@@ -193,6 +223,9 @@ export async function DELETE(req: Request) {
 
     return NextResponse.json({ success: true })
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('DELETE /api/items failed:', error)
     return NextResponse.json({ error: 'Failed to delete item' }, { status: 500 })
   }
@@ -200,6 +233,12 @@ export async function DELETE(req: Request) {
 
 export async function PATCH(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json({ error: 'You do not have permission to update items.' }, { status: 403 })
+    }
+
     const body = await req.json()
 
     const id = String(body.id || '').trim()
@@ -208,8 +247,11 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: 'Missing item id' }, { status: 400 })
     }
 
-    const existing = await prisma.item.findUnique({
-      where: { id },
+    const existing = await prisma.item.findFirst({
+      where: {
+        id,
+        restaurantId: tenant.restaurantId,
+      },
     })
 
     if (!existing) {
@@ -285,10 +327,13 @@ export async function PATCH(req: Request) {
 
     return NextResponse.json(item)
   } catch (error: any) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
     console.error('PATCH /api/items failed:', error)
 
     if (error?.code === 'P2002') {
-      return NextResponse.json({ error: 'That SKU already exists' }, { status: 400 })
+      return NextResponse.json({ error: 'That SKU already exists in this restaurant.' }, { status: 400 })
     }
 
     return NextResponse.json({ error: 'Failed to update item' }, { status: 500 })

@@ -1,38 +1,47 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
-class StockError extends Error {
-  status = 400
+export async function GET() {
+  try {
+    const tenant = await requireTenant()
+
+    const sales = await prisma.sale.findMany({
+      where: {
+        restaurantId: tenant.restaurantId,
+      },
+      include: { item: true },
+      orderBy: { soldAt: 'desc' },
+    })
+
+    return NextResponse.json(sales)
+  } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
+    console.error('GET /api/sales failed:', error)
+    return NextResponse.json({ error: 'Failed to load sales' }, { status: 500 })
+  }
 }
 
-type StockRequirement = {
+async function consumeInventoryForItem({
+  tx,
+  restaurantId,
+  itemId,
+  qty,
+}: {
+  tx: any
+  restaurantId: string
   itemId: string
   qty: number
-  name: string
-  sku: string
-  unitType: string
-}
+}) {
+  let totalCost = 0
+  let qtyNeeded = qty
 
-function combineRequirements(requirements: StockRequirement[]) {
-  const map = new Map<string, StockRequirement>()
-
-  for (const req of requirements) {
-    const existing = map.get(req.itemId)
-
-    if (existing) {
-      existing.qty += req.qty
-    } else {
-      map.set(req.itemId, { ...req })
-    }
-  }
-
-  return Array.from(map.values())
-}
-
-async function consumeItemStock(tx: any, requirement: StockRequirement) {
   const lots = await tx.inventoryLot.findMany({
     where: {
-      itemId: requirement.itemId,
+      restaurantId,
+      itemId,
       qtyRemaining: { gt: 0 },
     },
     orderBy: [
@@ -41,132 +50,105 @@ async function consumeItemStock(tx: any, requirement: StockRequirement) {
     ],
   })
 
-  const availableQty = lots.reduce(
-    (sum: number, lot: any) => sum + Number(lot.qtyRemaining),
-    0
-  )
-
-  if (availableQty < requirement.qty) {
-    throw new StockError(
-      `Not enough stock for ${requirement.name} [${requirement.sku}]. Required ${requirement.qty} ${requirement.unitType}, available ${availableQty} ${requirement.unitType}.`
-    )
-  }
-
-  let qtyNeeded = requirement.qty
-  let totalCost = 0
-
   for (const lot of lots) {
     if (qtyNeeded <= 0) break
 
-    const takeQty = Math.min(Number(lot.qtyRemaining), qtyNeeded)
+    const takeQty = Math.min(lot.qtyRemaining, qtyNeeded)
 
-    totalCost += takeQty * Number(lot.unitCost ?? 0)
+    totalCost += takeQty * (lot.unitCost ?? 0)
 
     await tx.inventoryLot.update({
       where: { id: lot.id },
       data: {
-        qtyRemaining: Number(lot.qtyRemaining) - takeQty,
+        qtyRemaining: lot.qtyRemaining - takeQty,
       },
     })
 
     qtyNeeded -= takeQty
   }
 
+  if (qtyNeeded > 0) {
+    throw new Error('NOT_ENOUGH_STOCK')
+  }
+
   return totalCost
 }
 
-async function buildL1Requirements(l1ItemId: string, saleQty: number) {
+async function calculateAndConsumeL1Sale({
+  tx,
+  restaurantId,
+  l1ItemId,
+  qtySold,
+}: {
+  tx: any
+  restaurantId: string
+  l1ItemId: string
+  qtySold: number
+}) {
+  let totalCost = 0
+
   const [l1ToL2Rows, l1ToL3Rows] = await Promise.all([
-    prisma.bomL1L2.findMany({
-      where: { l1ItemId },
-      include: { l2: true },
+    tx.bomL1L2.findMany({
+      where: {
+        restaurantId,
+        l1ItemId,
+      },
+      include: {
+        l2: true,
+      },
     }),
 
-    prisma.bomL1L3.findMany({
-      where: { l1ItemId },
-      include: { l3: true },
+    tx.bomL1L3.findMany({
+      where: {
+        restaurantId,
+        l1ItemId,
+      },
+      include: {
+        l3: true,
+      },
     }),
   ])
 
-  const requirements: StockRequirement[] = []
+  if (l1ToL2Rows.length === 0 && l1ToL3Rows.length === 0) {
+    throw new Error('NO_BOM')
+  }
 
   for (const row of l1ToL2Rows) {
-    requirements.push({
+    const requiredQty = row.qty * qtySold
+
+    totalCost += await consumeInventoryForItem({
+      tx,
+      restaurantId,
       itemId: row.l2ItemId,
-      qty: row.qty * saleQty,
-      name: row.l2.name,
-      sku: row.l2.sku,
-      unitType: row.l2.unitType,
+      qty: requiredQty,
     })
   }
 
   for (const row of l1ToL3Rows) {
-    requirements.push({
+    const requiredQty = row.qty * qtySold
+
+    totalCost += await consumeInventoryForItem({
+      tx,
+      restaurantId,
       itemId: row.l3ItemId,
-      qty: row.qty * saleQty,
-      name: row.l3.name,
-      sku: row.l3.sku,
-      unitType: row.l3.unitType,
+      qty: requiredQty,
     })
   }
 
-  return combineRequirements(requirements)
-}
-
-function startOfDay(date: Date) {
-  const copy = new Date(date)
-  copy.setHours(0, 0, 0, 0)
-  return copy
-}
-
-function endOfDay(date: Date) {
-  const copy = new Date(date)
-  copy.setHours(23, 59, 59, 999)
-  return copy
-}
-
-export async function GET(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url)
-
-    const startDateParam = searchParams.get('startDate')
-    const endDateParam = searchParams.get('endDate')
-
-    const where: any = {}
-
-    if (startDateParam || endDateParam) {
-      where.soldAt = {}
-
-      if (startDateParam) {
-        const startDate = new Date(startDateParam)
-        if (!Number.isNaN(startDate.getTime())) {
-          where.soldAt.gte = startOfDay(startDate)
-        }
-      }
-
-      if (endDateParam) {
-        const endDate = new Date(endDateParam)
-        if (!Number.isNaN(endDate.getTime())) {
-          where.soldAt.lte = endOfDay(endDate)
-        }
-      }
-    }
-
-    const sales = await prisma.sale.findMany({
-      where,
-      include: { item: true },
-      orderBy: { soldAt: 'desc' },
-    })
-
-    return NextResponse.json(sales)
-  } catch (error) {
-    console.error('GET /api/sales failed:', error)
-    return NextResponse.json({ error: 'Failed to load sales' }, { status: 500 })
-  }
+  return totalCost
 }
 
 export async function POST(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to record sales.' },
+        { status: 403 }
+      )
+    }
+
     const body = await req.json()
 
     const soldAt = new Date(body.soldAt)
@@ -174,77 +156,77 @@ export async function POST(req: Request) {
     const qty = Number(body.qty)
 
     if (!itemId) {
-      return NextResponse.json({ error: 'Missing item' }, { status: 400 })
+      return NextResponse.json({ error: 'Missing sale item' }, { status: 400 })
     }
 
     if (Number.isNaN(soldAt.getTime())) {
-      return NextResponse.json({ error: 'Valid sale date is required' }, { status: 400 })
+      return NextResponse.json({ error: 'Valid sold date is required' }, { status: 400 })
     }
 
     if (!qty || qty <= 0 || Number.isNaN(qty)) {
-      return NextResponse.json({ error: 'Quantity must be greater than 0' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Quantity sold must be greater than 0' },
+        { status: 400 }
+      )
     }
 
-    const item = await prisma.item.findUnique({
-      where: { id: itemId },
+    const item = await prisma.item.findFirst({
+      where: {
+        id: itemId,
+        restaurantId: tenant.restaurantId,
+      },
     })
 
     if (!item) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 })
     }
 
-    let requirements: StockRequirement[] = []
-
-    if (item.itemType === 'L1') {
-      requirements = await buildL1Requirements(item.id, qty)
-
-      if (requirements.length === 0) {
-        return NextResponse.json(
-          {
-            error:
-              'This L1 has no BOM rows. Add L1 → L2 or L1 → L3 rows in BOM Builder before recording sales.',
-          },
-          { status: 400 }
-        )
-      }
-    } else {
-      requirements = [
-        {
-          itemId: item.id,
-          qty,
-          name: item.name,
-          sku: item.sku,
-          unitType: item.unitType,
-        },
-      ]
+    if (item.itemType !== 'L1') {
+      return NextResponse.json(
+        { error: 'Sales can only be recorded for L1 dishes.' },
+        { status: 400 }
+      )
     }
 
-    const sale = await prisma.$transaction(async (tx) => {
-      let totalCost = 0
-
-      for (const requirement of requirements) {
-        totalCost += await consumeItemStock(tx, requirement)
-      }
+    const sale = await prisma.$transaction(async (tx: any) => {
+      const totalCost = await calculateAndConsumeL1Sale({
+        tx,
+        restaurantId: tenant.restaurantId,
+        l1ItemId: item.id,
+        qtySold: qty,
+      })
 
       return tx.sale.create({
         data: {
+          restaurantId: tenant.restaurantId,
           soldAt,
           itemId: item.id,
           qty,
           cost: totalCost,
         },
-        include: { item: true },
+        include: {
+          item: true,
+        },
       })
     })
 
     return NextResponse.json(sale)
   } catch (error) {
-    console.error('POST /api/sales failed:', error)
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
 
-    if (error instanceof StockError) {
-      return NextResponse.json({ error: error.message }, { status: error.status })
+    if (error instanceof Error && error.message === 'NOT_ENOUGH_STOCK') {
+      return NextResponse.json({ error: 'Not enough stock for sale' }, { status: 400 })
     }
 
+    if (error instanceof Error && error.message === 'NO_BOM') {
+      return NextResponse.json(
+        { error: 'This L1 has no BOM. Build the dish before recording sales.' },
+        { status: 400 }
+      )
+    }
+
+    console.error('POST /api/sales failed:', error)
     return NextResponse.json({ error: 'Failed to save sale' }, { status: 500 })
   }
 }
