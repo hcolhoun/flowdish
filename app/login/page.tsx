@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
@@ -75,9 +76,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm">
         <div className="text-center">
           <h1 className="text-3xl font-semibold text-slate-900">Flowdish</h1>
-          <p className="mt-2 text-sm text-slate-600">
-            Sign in to continue.
-          </p>
+          <p className="mt-2 text-sm text-slate-600">Sign in to continue.</p>
         </div>
 
         {error ? (
@@ -148,13 +147,23 @@ export default function LoginPage() {
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
+
+        <div className="mt-5 flex flex-col gap-2 text-center text-sm">
+          <Link
+            href="/signup"
+            className="font-medium text-slate-700 hover:text-slate-900"
+          >
+            Head Chef sign up
+          </Link>
+
+          <Link
+            href="/staff-login"
+            className="font-medium text-slate-700 hover:text-slate-900"
+          >
+            Staff PIN login
+          </Link>
+        </div>
       </div>
     </main>
   )
 }
-
-<Link href="/signup" className="font-medium text-slate-700 hover:text-slate-900">
-  Head Chef sign up
-</Link>
-
-import Link from 'next/link'
