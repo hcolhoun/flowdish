@@ -7,7 +7,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
 type AccessProfile = {
-  role: 'OWNER' | 'ADMIN' | 'CHEF' | 'VIEWER'
+  role: 'OWNER' | 'ADMIN' | 'CHEF' | 'VIEWER' | 'STAFF'
   labels: {
     roleLabel: string
   }
@@ -45,14 +45,14 @@ const staffLinks = [
   { href: '/waste', label: 'Waste' },
 ]
 
+const hiddenRoutes = ['/login', '/reset-password', '/staff-login']
+
 export default function NavBar() {
   const pathname = usePathname()
   const router = useRouter()
 
   const [access, setAccess] = useState<AccessProfile | null>(null)
   const [loaded, setLoaded] = useState(false)
-
-  const hiddenRoutes = ['/login', '/reset-password']
 
   useEffect(() => {
     if (hiddenRoutes.includes(pathname)) {
@@ -85,8 +85,13 @@ export default function NavBar() {
   }, [pathname])
 
   async function handleLogout() {
+    await fetch('/api/staff-login', {
+      method: 'DELETE',
+    })
+
     const supabase = createClient()
     await supabase.auth.signOut()
+
     router.push('/login')
     router.refresh()
   }
@@ -103,7 +108,7 @@ export default function NavBar() {
     return staffLinks
   }, [access])
 
-  if (pathname === '/login' || pathname === '/reset-password') return null
+  if (hiddenRoutes.includes(pathname)) return null
 
   return (
     <div className="border-b bg-white">

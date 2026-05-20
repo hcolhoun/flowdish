@@ -7,6 +7,15 @@ type Membership = {
   authUserId: string
   email: string | null
   role: 'OWNER' | 'ADMIN' | 'CHEF' | 'VIEWER'
+  displayRole?: string
+  createdAt: string
+}
+
+type StaffUser = {
+  id: string
+  username: string
+  displayName: string
+  active: boolean
   createdAt: string
 }
 
@@ -15,16 +24,10 @@ type Restaurant = {
   name: string
   slug: string | null
   isTemplate: boolean
+  plan: 'BASIC' | 'PREMIUM'
+  staffLoginCode: string
   createdAt: string
   updatedAt: string
-}
-
-type TemplateRestaurant = {
-  id: string
-  name: string
-  slug: string | null
-  isTemplate: boolean
-  createdAt: string
 }
 
 type AdminData = {
@@ -32,23 +35,35 @@ type AdminData = {
     authUserId: string
     email: string | null
     role: 'OWNER' | 'ADMIN' | 'CHEF' | 'VIEWER'
+    isSystemOwner: boolean
+    isHeadChef: boolean
   }
   restaurant: Restaurant
   memberships: Membership[]
-  templateRestaurants: TemplateRestaurant[]
+  staffUsers: StaffUser[]
+  staffLimits: {
+    plan: 'BASIC' | 'PREMIUM'
+    activeStaffCount: number
+    maxStaffUsers: number | null
+    remainingStaffUsers: number | null
+  }
+  permissions: {
+    canCreateRestaurants: boolean
+    canManageRestaurantMembers: boolean
+    canCreateStaffUsers: boolean
+  }
 }
 
-type CreateResult = {
+type CreateRestaurantResult = {
   success?: boolean
   mode?: string
-  restaurant?: Restaurant
-  membership?: {
+  restaurant?: {
     id: string
-    authUserId: string
+    name: string
+  }
+  membership?: {
     email: string | null
-    restaurantId: string
     role: string
-    restaurant?: Restaurant
   }
   frontloadResult?: {
     itemCount: number
@@ -58,17 +73,32 @@ type CreateResult = {
   error?: string
 }
 
+type CreateStaffResult = {
+  success?: boolean
+  staffUser?: StaffUser
+  login?: {
+    restaurantCode: string
+    username: string
+  }
+  error?: string
+}
+
 export default function AdminPage() {
   const [data, setData] = useState<AdminData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [savingRestaurant, setSavingRestaurant] = useState(false)
+  const [savingStaff, setSavingStaff] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  const [email, setEmail] = useState('')
-  const [restaurantName, setRestaurantName] = useState('')
-  const [mode, setMode] = useState<'EMPTY' | 'FRONTLOAD'>('EMPTY')
-  const [result, setResult] = useState<CreateResult | null>(null)
+  const [newRestaurantEmail, setNewRestaurantEmail] = useState('')
+  const [newRestaurantName, setNewRestaurantName] = useState('')
+  const [newRestaurantMode, setNewRestaurantMode] = useState<'EMPTY' | 'FRONTLOAD'>('EMPTY')
+  const [restaurantResult, setRestaurantResult] = useState<CreateRestaurantResult | null>(null)
+
+  const [staffDisplayName, setStaffDisplayName] = useState('')
+  const [staffPin, setStaffPin] = useState('')
+  const [staffResult, setStaffResult] = useState<CreateStaffResult | null>(null)
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -111,20 +141,18 @@ export default function AdminPage() {
     e.preventDefault()
 
     try {
-      setSaving(true)
+      setSavingRestaurant(true)
       setError('')
       setMessage('')
-      setResult(null)
+      setRestaurantResult(null)
 
       const res = await fetch('/api/admin/create-restaurant-for-user', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email,
-          restaurantName,
-          mode,
+          email: newRestaurantEmail,
+          restaurantName: newRestaurantName,
+          mode: newRestaurantMode,
         }),
       })
 
@@ -134,22 +162,60 @@ export default function AdminPage() {
         throw new Error(json?.error || 'Failed to create restaurant')
       }
 
-      setResult(json)
+      setRestaurantResult(json)
       setMessage(
-        mode === 'FRONTLOAD'
+        newRestaurantMode === 'FRONTLOAD'
           ? 'Restaurant created and frontloaded from template.'
           : 'Empty restaurant created for user.'
       )
 
-      setEmail('')
-      setRestaurantName('')
-      setMode('EMPTY')
+      setNewRestaurantEmail('')
+      setNewRestaurantName('')
+      setNewRestaurantMode('EMPTY')
 
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
-      setSaving(false)
+      setSavingRestaurant(false)
+    }
+  }
+
+  async function handleCreateStaffUser(e: React.FormEvent) {
+    e.preventDefault()
+
+    try {
+      setSavingStaff(true)
+      setError('')
+      setMessage('')
+      setStaffResult(null)
+
+      const res = await fetch('/api/admin/create-staff-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          displayName: staffDisplayName,
+          pin: staffPin,
+        }),
+      })
+
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to create staff user')
+      }
+
+      setStaffResult(json)
+      setMessage(`Staff user created: ${json.login?.username}`)
+
+      setStaffDisplayName('')
+      setStaffPin('')
+
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSavingStaff(false)
     }
   }
 
@@ -168,7 +234,7 @@ export default function AdminPage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Admin</h1>
             <p className="mt-2 text-slate-700">
-              Manage restaurant accounts, members, and new user setup.
+              Manage restaurant access, staff PIN users, and system-owner onboarding.
             </p>
           </div>
 
@@ -202,56 +268,45 @@ export default function AdminPage() {
         {data ? (
           <>
             <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <h2 className="text-xl font-semibold text-slate-900">
-                    Current Restaurant
-                  </h2>
+              <h2 className="text-xl font-semibold text-slate-900">Current Restaurant</h2>
 
-                  <div className="mt-4 space-y-2 text-sm text-slate-700">
-                    <div>
-                      <span className="font-medium text-slate-900">Name:</span>{' '}
-                      {data.restaurant.name}
-                    </div>
+              <div className="mt-5 grid gap-4 md:grid-cols-4">
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Restaurant</div>
+                  <div className="mt-1 font-semibold text-slate-900">{data.restaurant.name}</div>
+                </div>
 
-                    <div>
-                      <span className="font-medium text-slate-900">Restaurant ID:</span>{' '}
-                      <span className="font-mono text-xs">{data.restaurant.id}</span>
-                    </div>
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Plan</div>
+                  <div className="mt-1 font-semibold text-slate-900">{data.restaurant.plan}</div>
+                </div>
 
-                    <div>
-                      <span className="font-medium text-slate-900">Template:</span>{' '}
-                      {data.restaurant.isTemplate ? 'Yes' : 'No'}
-                    </div>
-
-                    <div>
-                      <span className="font-medium text-slate-900">Your role:</span>{' '}
-                      {data.currentUser.role}
-                    </div>
-
-                    <div>
-                      <span className="font-medium text-slate-900">Your email:</span>{' '}
-                      {data.currentUser.email || 'Unknown'}
-                    </div>
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Staff Login Code</div>
+                  <div className="mt-1 font-mono text-sm font-semibold text-slate-900">
+                    {data.restaurant.staffLoginCode}
                   </div>
                 </div>
 
-                <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  <div className="font-medium text-slate-900">Templates available</div>
-                  <div className="mt-1">
-                    {data.templateRestaurants.length === 0
-                      ? 'No template restaurants found.'
-                      : `${data.templateRestaurants.length} template restaurant(s) found.`}
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Staff Users</div>
+                  <div className="mt-1 font-semibold text-slate-900">
+                    {data.staffLimits.activeStaffCount}
+                    {data.staffLimits.maxStaffUsers === null
+                      ? ' / unlimited'
+                      : ` / ${data.staffLimits.maxStaffUsers}`}
                   </div>
                 </div>
+              </div>
+
+              <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                Staff users log in at <span className="font-mono">/staff-login</span> using
+                the staff login code, username, and 4-digit PIN. Staff sessions expire after 2 hours.
               </div>
             </section>
 
             <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">Members</h2>
-              <p className="mt-1 text-sm text-slate-600">
-                These users currently have access to this restaurant account.
-              </p>
+              <h2 className="text-xl font-semibold text-slate-900">Head Chef / Owner Members</h2>
 
               <div className="mt-5 overflow-hidden rounded-xl border">
                 <table className="w-full text-left text-sm">
@@ -260,147 +315,201 @@ export default function AdminPage() {
                       <th className="px-4 py-3">Email</th>
                       <th className="px-4 py-3">Role</th>
                       <th className="px-4 py-3">Added</th>
-                      <th className="px-4 py-3">Auth User ID</th>
                     </tr>
                   </thead>
-
                   <tbody>
-                    {data.memberships.length === 0 ? (
-                      <tr>
-                        <td className="px-4 py-3 text-slate-600" colSpan={4}>
-                          No members found.
+                    {data.memberships.map((member) => (
+                      <tr key={member.id} className="border-t">
+                        <td className="px-4 py-3">{member.email || 'Unknown'}</td>
+                        <td className="px-4 py-3">
+                          <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                            {member.displayRole || member.role}
+                          </span>
                         </td>
+                        <td className="px-4 py-3">{formatDate(member.createdAt)}</td>
                       </tr>
-                    ) : (
-                      data.memberships.map((member) => (
-                        <tr key={member.id} className="border-t">
-                          <td className="px-4 py-3">{member.email || 'Unknown'}</td>
-                          <td className="px-4 py-3">
-                            <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-                              {member.role}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">{formatDate(member.createdAt)}</td>
-                          <td className="px-4 py-3 font-mono text-xs text-slate-500">
-                            {member.authUserId}
-                          </td>
-                        </tr>
-                      ))
-                    )}
+                    ))}
                   </tbody>
                 </table>
               </div>
             </section>
 
             <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">
-                Create Restaurant for User
-              </h2>
-
+              <h2 className="text-xl font-semibold text-slate-900">Staff PIN Users</h2>
               <p className="mt-1 text-sm text-slate-600">
-                The user must already exist in Supabase Auth. Ask them to sign up first,
-                then create either an empty account or a frontloaded copy of the template.
+                Staff users can only access Prep and Waste.
               </p>
 
-              <form onSubmit={handleCreateRestaurant} className="mt-6 grid gap-4 md:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-900">
-                    User Email
-                  </label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full rounded-xl border px-3 py-2"
-                    placeholder="newuser@example.com"
-                    required
-                  />
-                </div>
+              <div className="mt-5 overflow-hidden rounded-xl border">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-100 text-slate-700">
+                    <tr>
+                      <th className="px-4 py-3">Display Name</th>
+                      <th className="px-4 py-3">Username</th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.staffUsers.length === 0 ? (
+                      <tr>
+                        <td className="px-4 py-3 text-slate-600" colSpan={4}>
+                          No staff PIN users yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      data.staffUsers.map((staff) => (
+                        <tr key={staff.id} className="border-t">
+                          <td className="px-4 py-3">{staff.displayName}</td>
+                          <td className="px-4 py-3 font-mono text-xs">{staff.username}</td>
+                          <td className="px-4 py-3">
+                            {staff.active ? (
+                              <span className="rounded-lg bg-green-50 px-2 py-1 text-xs font-semibold text-green-700">
+                                Active
+                              </span>
+                            ) : (
+                              <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
+                                Inactive
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">{formatDate(staff.createdAt)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
 
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-900">
-                    Restaurant Name
-                  </label>
-                  <input
-                    type="text"
-                    value={restaurantName}
-                    onChange={(e) => setRestaurantName(e.target.value)}
-                    className="w-full rounded-xl border px-3 py-2"
-                    placeholder="Customer Restaurant Name"
-                    required
-                  />
-                </div>
+              {data.permissions.canCreateStaffUsers ? (
+                <form onSubmit={handleCreateStaffUser} className="mt-6 grid gap-4 md:grid-cols-3">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Staff First Name
+                    </label>
+                    <input
+                      value={staffDisplayName}
+                      onChange={(e) => setStaffDisplayName(e.target.value)}
+                      className="w-full rounded-xl border px-3 py-2"
+                      placeholder="John"
+                      required
+                    />
+                  </div>
 
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-900">
-                    Setup Type
-                  </label>
-                  <select
-                    value={mode}
-                    onChange={(e) => setMode(e.target.value as 'EMPTY' | 'FRONTLOAD')}
-                    className="w-full rounded-xl border px-3 py-2"
-                  >
-                    <option value="EMPTY">Empty restaurant</option>
-                    <option value="FRONTLOAD">Frontload from Flowdish template</option>
-                  </select>
-                </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      4 Digit PIN
+                    </label>
+                    <input
+                      value={staffPin}
+                      onChange={(e) => setStaffPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                      className="w-full rounded-xl border px-3 py-2"
+                      placeholder="1234"
+                      inputMode="numeric"
+                      maxLength={4}
+                      required
+                    />
+                  </div>
 
-                <div className="flex items-end">
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="rounded-xl bg-slate-900 px-5 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {saving ? 'Creating…' : 'Create Restaurant'}
-                  </button>
-                </div>
-              </form>
+                  <div className="flex items-end">
+                    <button
+                      type="submit"
+                      disabled={savingStaff}
+                      className="rounded-xl bg-slate-900 px-5 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {savingStaff ? 'Creating…' : 'Create Staff User'}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
 
-              {mode === 'FRONTLOAD' ? (
-                <div className="mt-5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  Frontload copies template items, supplier products, BOMs, and SOPs.
-                  It does not copy live stock, deliveries, sales, waste, or forecasts.
+              {staffResult?.login ? (
+                <div className="mt-5 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800">
+                  Created staff login:{' '}
+                  <span className="font-mono">
+                    {staffResult.login.restaurantCode} / {staffResult.login.username}
+                  </span>
                 </div>
               ) : null}
             </section>
 
-            {result ? (
-              <section className="mt-8 rounded-2xl border border-green-300 bg-green-50 p-6 shadow-sm">
-                <h2 className="text-xl font-semibold text-green-900">
-                  Created Successfully
+            {data.permissions.canCreateRestaurants ? (
+              <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-semibold text-slate-900">
+                  System Owner: Create Restaurant
                 </h2>
 
-                <div className="mt-4 space-y-2 text-sm text-green-900">
+                <p className="mt-1 text-sm text-slate-600">
+                  The Head Chef user must already exist in Supabase Auth. Create empty or frontloaded restaurant accounts here.
+                </p>
+
+                <form onSubmit={handleCreateRestaurant} className="mt-6 grid gap-4 md:grid-cols-2">
                   <div>
-                    <span className="font-medium">Mode:</span> {result.mode}
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Head Chef Email
+                    </label>
+                    <input
+                      type="email"
+                      value={newRestaurantEmail}
+                      onChange={(e) => setNewRestaurantEmail(e.target.value)}
+                      className="w-full rounded-xl border px-3 py-2"
+                      placeholder="chef@example.com"
+                      required
+                    />
                   </div>
 
                   <div>
-                    <span className="font-medium">Restaurant:</span>{' '}
-                    {result.restaurant?.name || 'Unknown'}
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Restaurant Name
+                    </label>
+                    <input
+                      value={newRestaurantName}
+                      onChange={(e) => setNewRestaurantName(e.target.value)}
+                      className="w-full rounded-xl border px-3 py-2"
+                      placeholder="Customer Restaurant"
+                      required
+                    />
                   </div>
 
                   <div>
-                    <span className="font-medium">Assigned user:</span>{' '}
-                    {result.membership?.email || email}
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Setup Type
+                    </label>
+                    <select
+                      value={newRestaurantMode}
+                      onChange={(e) =>
+                        setNewRestaurantMode(e.target.value as 'EMPTY' | 'FRONTLOAD')
+                      }
+                      className="w-full rounded-xl border px-3 py-2"
+                    >
+                      <option value="EMPTY">Empty restaurant</option>
+                      <option value="FRONTLOAD">Frontload from Flowdish template</option>
+                    </select>
                   </div>
 
-                  <div>
-                    <span className="font-medium">Role:</span>{' '}
-                    {result.membership?.role || 'OWNER'}
+                  <div className="flex items-end">
+                    <button
+                      type="submit"
+                      disabled={savingRestaurant}
+                      className="rounded-xl bg-slate-900 px-5 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {savingRestaurant ? 'Creating…' : 'Create Restaurant'}
+                    </button>
                   </div>
+                </form>
 
-                  {result.frontloadResult ? (
-                    <div className="pt-2">
-                      <div className="font-medium">Frontload copied:</div>
-                      <div>
-                        {result.frontloadResult.itemCount} item(s),{' '}
-                        {result.frontloadResult.supplierProductCount} supplier product(s),{' '}
-                        {result.frontloadResult.sopCount} SOP(s)
+                {restaurantResult ? (
+                  <div className="mt-5 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800">
+                    Restaurant created: {restaurantResult.restaurant?.name || 'Unknown'}
+                    {restaurantResult.frontloadResult ? (
+                      <div className="mt-1">
+                        Copied {restaurantResult.frontloadResult.itemCount} item(s),{' '}
+                        {restaurantResult.frontloadResult.supplierProductCount} supplier product(s),{' '}
+                        {restaurantResult.frontloadResult.sopCount} SOP(s).
                       </div>
-                    </div>
-                  ) : null}
-                </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </section>
             ) : null}
           </>

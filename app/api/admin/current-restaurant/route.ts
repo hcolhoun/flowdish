@@ -23,6 +23,18 @@ export async function GET() {
             createdAt: 'asc',
           },
         },
+        staffUsers: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            active: true,
+            createdAt: true,
+          },
+        },
       },
     })
 
@@ -48,6 +60,8 @@ export async function GET() {
         })
       : []
 
+    const activeStaffCount = restaurant.staffUsers.filter((staff) => staff.active).length
+
     return NextResponse.json({
       currentUser: {
         authUserId: tenant.authUserId,
@@ -61,10 +75,12 @@ export async function GET() {
         name: restaurant.name,
         slug: restaurant.slug,
         isTemplate: restaurant.isTemplate,
+        plan: restaurant.plan,
+        staffLoginCode: restaurant.slug || restaurant.id,
         createdAt: restaurant.createdAt,
         updatedAt: restaurant.updatedAt,
       },
-      memberships: restaurant.memberships.map((membership) => ({
+      memberships: restaurant.memberships.map((membership: any) => ({
         id: membership.id,
         authUserId: membership.authUserId,
         email: membership.email,
@@ -77,10 +93,25 @@ export async function GET() {
               : 'Viewer',
         createdAt: membership.createdAt,
       })),
+      staffUsers: restaurant.staffUsers.map((staff) => ({
+        id: staff.id,
+        username: staff.username,
+        displayName: staff.displayName,
+        active: staff.active,
+        createdAt: staff.createdAt,
+      })),
+      staffLimits: {
+        plan: restaurant.plan,
+        activeStaffCount,
+        maxStaffUsers: restaurant.plan === 'BASIC' ? 3 : null,
+        remainingStaffUsers:
+          restaurant.plan === 'BASIC' ? Math.max(0, 3 - activeStaffCount) : null,
+      },
       templateRestaurants,
       permissions: {
         canCreateRestaurants: isSystemOwner,
         canManageRestaurantMembers: isSystemOwner || isHeadChef,
+        canCreateStaffUsers: isSystemOwner || isHeadChef,
       },
     })
   } catch (error) {

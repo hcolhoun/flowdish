@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { requireKitchenAccess, kitchenAccessErrorResponse } from '@/lib/kitchen-access'
 
 type RequiredComponent = {
   itemId: string
@@ -10,7 +10,7 @@ type RequiredComponent = {
 
 export async function GET() {
   try {
-    const tenant = await requireTenant()
+    const tenant = await requireKitchenAccess()
 
     const prepBatches = await prisma.prepBatch.findMany({
       where: {
@@ -22,8 +22,8 @@ export async function GET() {
 
     return NextResponse.json(prepBatches)
   } catch (error) {
-    const tenantError = tenantErrorResponse(error)
-    if (tenantError) return tenantError
+    const accessError = kitchenAccessErrorResponse(error)
+    if (accessError) return accessError
 
     console.error('GET /api/prep failed:', error)
     return NextResponse.json({ error: 'Failed to load prep batches' }, { status: 500 })
@@ -32,9 +32,9 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const tenant = await requireTenant()
+    const tenant = await requireKitchenAccess()
 
-    if (!canWrite(tenant.role)) {
+    if (!tenant.canRecordPrepWaste) {
       return NextResponse.json(
         { error: 'You do not have permission to record prep.' },
         { status: 403 }
@@ -251,8 +251,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json(result)
   } catch (error) {
-    const tenantError = tenantErrorResponse(error)
-    if (tenantError) return tenantError
+    const accessError = kitchenAccessErrorResponse(error)
+    if (accessError) return accessError
 
     console.error('POST /api/prep failed:', error)
     return NextResponse.json({ error: 'Failed to save prep batch' }, { status: 500 })

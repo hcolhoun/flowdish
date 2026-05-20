@@ -1,0 +1,32 @@
+CREATE TABLE IF NOT EXISTS "BomL0L1" (
+  "id" TEXT NOT NULL,
+  "l0ItemId" TEXT NOT NULL,
+  "l1ItemId" TEXT NOT NULL,
+  "qty" DOUBLE PRECISION NOT NULL,
+
+  CONSTRAINT "BomL0L1_pkey" PRIMARY KEY ("id")
+);
+
+CREATE INDEX IF NOT EXISTS "BomL0L1_l0ItemId_idx" ON "BomL0L1"("l0ItemId");
+CREATE INDEX IF NOT EXISTS "BomL0L1_l1ItemId_idx" ON "BomL0L1"("l1ItemId");
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'BomL0L1_l0ItemId_fkey'
+  ) THEN
+    ALTER TABLE "BomL0L1"
+    ADD CONSTRAINT "BomL0L1_l0ItemId_fkey"
+    FOREIGN KEY ("l0ItemId") REFERENCES "Item"("id")
+    ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'BomL0L1_l1ItemId_fkey'
+  ) THEN
+    ALTER TABLE "BomL0L1"
+    ADD CONSTRAINT "BomL0L1_l1ItemId_fkey"
+    FOREIGN KEY ("l1ItemId") REFERENCES "Item"("id")
+    ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;

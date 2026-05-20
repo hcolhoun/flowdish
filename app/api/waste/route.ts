@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { requireKitchenAccess, kitchenAccessErrorResponse } from '@/lib/kitchen-access'
 
 async function ensureEnoughStock({
   restaurantId,
@@ -76,7 +76,7 @@ async function consumeInventoryFifo({
 
 export async function GET() {
   try {
-    const tenant = await requireTenant()
+    const tenant = await requireKitchenAccess()
 
     const wastes = await prisma.waste.findMany({
       where: {
@@ -88,8 +88,8 @@ export async function GET() {
 
     return NextResponse.json(wastes)
   } catch (error) {
-    const tenantError = tenantErrorResponse(error)
-    if (tenantError) return tenantError
+    const accessError = kitchenAccessErrorResponse(error)
+    if (accessError) return accessError
 
     console.error('GET /api/waste failed:', error)
     return NextResponse.json({ error: 'Failed to load waste records' }, { status: 500 })
@@ -98,9 +98,9 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const tenant = await requireTenant()
+    const tenant = await requireKitchenAccess()
 
-    if (!canWrite(tenant.role)) {
+    if (!tenant.canRecordPrepWaste) {
       return NextResponse.json(
         { error: 'You do not have permission to record waste.' },
         { status: 403 }
@@ -172,8 +172,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json(waste)
   } catch (error) {
-    const tenantError = tenantErrorResponse(error)
-    if (tenantError) return tenantError
+    const accessError = kitchenAccessErrorResponse(error)
+    if (accessError) return accessError
 
     if (error instanceof Error && error.message === 'NOT_ENOUGH_STOCK') {
       return NextResponse.json({ error: 'Insufficient stock for waste record.' }, { status: 400 })

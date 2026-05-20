@@ -36,15 +36,22 @@ enum MembershipRole {
   VIEWER
 }
 
+enum RestaurantPlan {
+  BASIC
+  PREMIUM
+}
+
 model Restaurant {
   id         String   @id @default(cuid())
   name       String
   slug       String?  @unique
-  isTemplate Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  isTemplate Boolean        @default(false)
+  plan       RestaurantPlan @default(BASIC)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
 
   memberships UserMembership[]
+  staffUsers StaffUser[]
 
   items                       Item[]
   bomL0L1Rows                 BomL0L1[]
@@ -77,6 +84,21 @@ model UserMembership {
 
   @@unique([authUserId, restaurantId])
   @@index([authUserId])
+  @@index([restaurantId])
+}
+
+model StaffUser {
+  id           String   @id @default(cuid())
+  restaurantId String
+  username     String
+  displayName  String
+  pinHash      String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([restaurantId, username])
   @@index([restaurantId])
 }
 
