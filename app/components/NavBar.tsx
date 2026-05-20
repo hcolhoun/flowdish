@@ -17,6 +17,7 @@ const links = [
   { href: '/sales', label: 'Sales' },
   { href: '/waste', label: 'Waste' },
   { href: '/planning', label: 'Planning' },
+  { href: '/admin', label: 'Admin' },
 ]
 
 export default function NavBar() {
@@ -35,34 +36,38 @@ export default function NavBar() {
   return (
     <div className="border-b bg-white">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2 px-6 py-4">
-        <Link href="/" className="mr-4 flex items-center">
+        <Link href="/" className="mr-4 flex shrink-0 items-center">
           <Image
             src="/flowdish-banner-logo.png"
             alt="Flowdish"
-            width={180}
-            height={56}
+            width={210}
+            height={65}
             priority
-            className="h-14 w-auto object-contain"
+            className="h-16 w-auto object-contain"
           />
         </Link>
 
-        {links.map((link) => {
-          const active = pathname === link.href
+        <nav className="flex flex-wrap items-center gap-2">
+          {links.map((link) => {
+            const active =
+              pathname === link.href ||
+              (link.href !== '/' && pathname.startsWith(`${link.href}/`))
 
-          return (
-            <Link
-              key={link.href}
-              href={link.href}
-              className={`rounded-xl px-4 py-2 text-sm font-medium ${
-                active
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
-              }`}
-            >
-              {link.label}
-            </Link>
-          )
-        })}
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                  active
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+                }`}
+              >
+                {link.label}
+              </Link>
+            )
+          })}
+        </nav>
 
         <button
           type="button"
