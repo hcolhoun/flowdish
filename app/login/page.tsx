@@ -152,3 +152,9 @@ export default function LoginPage() {
     </main>
   )
 }
+
+<Link href="/signup" className="font-medium text-slate-700 hover:text-slate-900">
+  Head Chef sign up
+</Link>
+
+import Link from 'next/link'
