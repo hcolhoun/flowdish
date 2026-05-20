@@ -2,10 +2,31 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
+import { useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
-const links = [
+type AccessProfile = {
+  role: 'OWNER' | 'ADMIN' | 'CHEF' | 'VIEWER'
+  labels: {
+    roleLabel: string
+  }
+  restaurant: {
+    id: string
+    name: string
+  }
+  permissions: {
+    isSystemOwner: boolean
+    isHeadChef: boolean
+    isChefStaff: boolean
+    isViewer: boolean
+    canSeeAdmin: boolean
+    canSeeFullKitchenSystem: boolean
+    canSeePrepWasteOnly: boolean
+  }
+}
+
+const fullLinks = [
   { href: '/', label: 'Dashboard' },
   { href: '/items', label: 'Items' },
   { href: '/bom', label: 'BOM' },
@@ -17,12 +38,51 @@ const links = [
   { href: '/sales', label: 'Sales' },
   { href: '/waste', label: 'Waste' },
   { href: '/planning', label: 'Planning' },
-  { href: '/admin', label: 'Admin' },
+]
+
+const staffLinks = [
+  { href: '/prep', label: 'Prep' },
+  { href: '/waste', label: 'Waste' },
 ]
 
 export default function NavBar() {
   const pathname = usePathname()
   const router = useRouter()
+
+  const [access, setAccess] = useState<AccessProfile | null>(null)
+  const [loaded, setLoaded] = useState(false)
+
+  const hiddenRoutes = ['/login', '/reset-password']
+
+  useEffect(() => {
+    if (hiddenRoutes.includes(pathname)) {
+      setLoaded(true)
+      return
+    }
+
+    async function loadAccess() {
+      try {
+        const res = await fetch('/api/access', {
+          cache: 'no-store',
+        })
+
+        if (!res.ok) {
+          setAccess(null)
+          setLoaded(true)
+          return
+        }
+
+        const json = await res.json()
+        setAccess(json)
+      } catch {
+        setAccess(null)
+      } finally {
+        setLoaded(true)
+      }
+    }
+
+    loadAccess()
+  }, [pathname])
 
   async function handleLogout() {
     const supabase = createClient()
@@ -30,6 +90,18 @@ export default function NavBar() {
     router.push('/login')
     router.refresh()
   }
+
+  const links = useMemo(() => {
+    if (!access) return []
+
+    if (access.permissions.canSeeFullKitchenSystem) {
+      return access.permissions.canSeeAdmin
+        ? [...fullLinks, { href: '/admin', label: 'Admin' }]
+        : fullLinks
+    }
+
+    return staffLinks
+  }, [access])
 
   if (pathname === '/login' || pathname === '/reset-password') return null
 
@@ -47,32 +119,53 @@ export default function NavBar() {
           />
         </Link>
 
-        <nav className="flex flex-wrap items-center gap-2">
-          {links.map((link) => {
-            const active =
-              pathname === link.href ||
-              (link.href !== '/' && pathname.startsWith(`${link.href}/`))
+        {!loaded ? (
+          <div className="rounded-xl bg-slate-100 px-4 py-2 text-sm text-slate-600">
+            Loading…
+          </div>
+        ) : null}
 
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={`rounded-xl px-4 py-2 text-sm font-medium ${
-                  active
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
-                }`}
-              >
-                {link.label}
-              </Link>
-            )
-          })}
-        </nav>
+        {loaded && access ? (
+          <>
+            <nav className="flex flex-wrap items-center gap-2">
+              {links.map((link) => {
+                const active =
+                  pathname === link.href ||
+                  (link.href !== '/' && pathname.startsWith(`${link.href}/`))
+
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                      active
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+                    }`}
+                  >
+                    {link.label}
+                  </Link>
+                )
+              })}
+            </nav>
+
+            <div className="ml-auto hidden rounded-xl border bg-slate-50 px-3 py-2 text-xs text-slate-600 lg:block">
+              <div className="font-medium text-slate-900">{access.restaurant.name}</div>
+              <div>{access.labels.roleLabel}</div>
+            </div>
+          </>
+        ) : null}
+
+        {loaded && !access ? (
+          <div className="ml-auto rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            Not logged in
+          </div>
+        ) : null}
 
         <button
           type="button"
           onClick={handleLogout}
-          className="ml-auto rounded-xl border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+          className="rounded-xl border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
         >
           Logout
         </button>

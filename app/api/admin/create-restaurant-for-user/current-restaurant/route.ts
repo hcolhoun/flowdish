@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { canAdmin, requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { isSystemOwnerEmail } from '@/lib/system-owner'
 
 export async function GET() {
   try {
     const tenant = await requireTenant()
+    const isSystemOwner = isSystemOwnerEmail(tenant.email)
+    const isHeadChef = canAdmin(tenant.role)
 
-    if (!canAdmin(tenant.role)) {
+    if (!isSystemOwner && !isHeadChef) {
       return NextResponse.json({ error: 'Admin access required.' }, { status: 403 })
     }
 
@@ -27,27 +30,31 @@ export async function GET() {
       return NextResponse.json({ error: 'Restaurant not found.' }, { status: 404 })
     }
 
-    const templateRestaurants = await prisma.restaurant.findMany({
-      where: {
-        isTemplate: true,
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        isTemplate: true,
-        createdAt: true,
-      },
-    })
+    const templateRestaurants = isSystemOwner
+      ? await prisma.restaurant.findMany({
+          where: {
+            isTemplate: true,
+          },
+          orderBy: {
+            createdAt: 'asc',
+          },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            isTemplate: true,
+            createdAt: true,
+          },
+        })
+      : []
 
     return NextResponse.json({
       currentUser: {
         authUserId: tenant.authUserId,
         email: tenant.email,
         role: tenant.role,
+        isSystemOwner,
+        isHeadChef,
       },
       restaurant: {
         id: restaurant.id,
@@ -62,9 +69,19 @@ export async function GET() {
         authUserId: membership.authUserId,
         email: membership.email,
         role: membership.role,
+        displayRole:
+          membership.role === 'OWNER' || membership.role === 'ADMIN'
+            ? 'Head Chef'
+            : membership.role === 'CHEF'
+              ? 'Chef Staff'
+              : 'Viewer',
         createdAt: membership.createdAt,
       })),
       templateRestaurants,
+      permissions: {
+        canCreateRestaurants: isSystemOwner,
+        canManageRestaurantMembers: isSystemOwner || isHeadChef,
+      },
     })
   } catch (error) {
     const tenantError = tenantErrorResponse(error)

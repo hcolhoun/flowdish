@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { canAdmin, requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { isSystemOwnerEmail } from '@/lib/system-owner'
 
 const TEMPLATE_RESTAURANT_ID = 'base_template_restaurant'
 
@@ -55,14 +56,14 @@ async function copyTemplateRestaurant({
     itemIdMap.set(item.id, copied.id)
   }
 
-  const supplierProducts = await prisma.supplierProduct.findMany({
+  const templateSupplierProducts = await prisma.supplierProduct.findMany({
     where: { restaurantId: templateRestaurantId },
     orderBy: { createdAt: 'asc' },
   })
 
   let supplierProductCount = 0
 
-  for (const product of supplierProducts) {
+  for (const product of templateSupplierProducts) {
     await prisma.supplierProduct.create({
       data: {
         restaurantId: targetRestaurantId,
@@ -73,7 +74,9 @@ async function copyTemplateRestaurant({
         weight: product.weight,
         packPrice: product.packPrice,
         unitPrice: product.unitPrice,
-        linkedItemId: product.linkedItemId ? itemIdMap.get(product.linkedItemId) ?? null : null,
+        linkedItemId: product.linkedItemId
+          ? itemIdMap.get(product.linkedItemId) ?? null
+          : null,
       },
     })
 
@@ -213,8 +216,11 @@ export async function POST(req: Request) {
   try {
     const tenant = await requireTenant()
 
-    if (!canAdmin(tenant.role)) {
-      return NextResponse.json({ error: 'Admin access required.' }, { status: 403 })
+    if (!isSystemOwnerEmail(tenant.email)) {
+      return NextResponse.json(
+        { error: 'System owner access required.' },
+        { status: 403 }
+      )
     }
 
     const body = await req.json()
@@ -268,25 +274,25 @@ export async function POST(req: Request) {
       )
     }
 
-    const result = await prisma.$transaction(async (tx: any) => {
-      const restaurant = await tx.restaurant.create({
-        data: {
-          name: restaurantName,
-          isTemplate: false,
-          memberships: {
-            create: {
-              authUserId: authUser.id,
-              email: authUser.email,
-              role: 'OWNER',
-            },
+    const restaurant = await prisma.restaurant.create({
+      data: {
+        name: restaurantName,
+        isTemplate: false,
+        memberships: {
+          create: {
+            authUserId: authUser.id,
+            email: authUser.email,
+            role: 'OWNER',
           },
         },
-      })
-
-      return restaurant
+      },
     })
 
-    let frontloadResult = null
+    let frontloadResult: null | {
+      itemCount: number
+      supplierProductCount: number
+      sopCount: number
+    } = null
 
     if (mode === 'FRONTLOAD') {
       const template = await prisma.restaurant.findFirst({
@@ -299,8 +305,7 @@ export async function POST(req: Request) {
       if (!template) {
         return NextResponse.json(
           {
-            error:
-              'Template restaurant was not found or is not marked as template.',
+            error: 'Template restaurant was not found or is not marked as template.',
           },
           { status: 400 }
         )
@@ -308,14 +313,14 @@ export async function POST(req: Request) {
 
       frontloadResult = await copyTemplateRestaurant({
         templateRestaurantId: template.id,
-        targetRestaurantId: result.id,
+        targetRestaurantId: restaurant.id,
       })
     }
 
     const membership = await prisma.userMembership.findFirst({
       where: {
         authUserId: authUser.id,
-        restaurantId: result.id,
+        restaurantId: restaurant.id,
       },
       include: {
         restaurant: true,
@@ -325,7 +330,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       mode,
-      restaurant: result,
+      restaurant,
       membership,
       frontloadResult,
     })
