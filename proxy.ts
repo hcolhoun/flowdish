@@ -1,34 +1,64 @@
+import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-export function proxy(req: NextRequest) {
-  const path = req.nextUrl.pathname
+const publicRoutes = [
+  '/login',
+  '/signup',
+  '/reset-password',
+  '/staff-login',
+]
 
-  const isLogin = path.startsWith('/login')
-  const isStatic =
+function isPublicPath(path: string) {
+  return (
+    publicRoutes.some((route) => path === route || path.startsWith(`${route}/`)) ||
     path.startsWith('/_next') ||
     path.startsWith('/favicon') ||
-    path.includes('.')
+    path.startsWith('/prawn.png') ||
+    path.startsWith('/flowdish-banner-logo.png')
+  )
+}
 
-  if (isLogin || isStatic) {
-    return NextResponse.next()
-  }
+export async function proxy(req: NextRequest) {
+  const path = req.nextUrl.pathname
+  const res = NextResponse.next()
 
-  const hasSupabaseCookie = req.cookies
-    .getAll()
-    .some((cookie) => cookie.name.startsWith('sb-'))
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get: (key) => req.cookies.get(key)?.value,
+        set: (key, value, options) => {
+          res.cookies.set({ name: key, value, ...options })
+        },
+        remove: (key, options) => {
+          res.cookies.set({ name: key, value: '', ...options })
+        },
+      },
+    }
+  )
 
-  if (!hasSupabaseCookie) {
-    if (path.startsWith('/api')) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (isPublicPath(path)) {
+    if (user && (path === '/login' || path === '/signup')) {
+      return NextResponse.redirect(new URL('/', req.url))
     }
 
+    return res
+  }
+
+  if (!user) {
     return NextResponse.redirect(new URL('/login', req.url))
   }
 
-  return NextResponse.next()
+  return res
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
 }
