@@ -2,12 +2,30 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
+const publicRoutes = [
+  '/login',
+  '/signup',
+  '/reset-password',
+  '/staff-login',
+]
+
+function isPublicPath(path: string) {
+  return (
+    publicRoutes.some((route) => path === route || path.startsWith(`${route}/`)) ||
+    path.startsWith('/_next') ||
+    path.startsWith('/favicon') ||
+    path.startsWith('/prawn.png') ||
+    path.startsWith('/flowdish-banner-logo.png')
+  )
+}
+
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next()
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
         get: (key) => req.cookies.get(key)?.value,
@@ -27,24 +45,21 @@ export async function middleware(req: NextRequest) {
 
   const path = req.nextUrl.pathname
 
-  // Allow login page and static files
-  if (
-    path.startsWith('/login') ||
-    path.startsWith('/_next') ||
-    path.startsWith('/favicon')
-  ) {
+  if (isPublicPath(path)) {
+    if (user && (path === '/login' || path === '/signup')) {
+      return NextResponse.redirect(new URL('/', req.url))
+    }
+
     return res
   }
 
-  // Not logged in → force login
   if (!user) {
     return NextResponse.redirect(new URL('/login', req.url))
   }
 
-  // Logged in → prevent going back to login
-  if (user && path === '/login') {
-    return NextResponse.redirect(new URL('/', req.url))
-  }
-
   return res
+}
+
+export const config = {
+  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
 }
