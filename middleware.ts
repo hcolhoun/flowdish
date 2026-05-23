@@ -20,6 +20,7 @@ function isPublicPath(path: string) {
 }
 
 export async function middleware(req: NextRequest) {
+  const path = req.nextUrl.pathname
   const res = NextResponse.next()
 
   const supabase = createServerClient(
@@ -42,8 +43,6 @@ export async function middleware(req: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser()
-
-  const path = req.nextUrl.pathname
 
   if (isPublicPath(path)) {
     if (user && (path === '/login' || path === '/signup')) {
