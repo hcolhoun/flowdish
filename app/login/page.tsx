@@ -149,12 +149,12 @@ export default function LoginPage() {
         </form>
 
         <div className="mt-5 flex flex-col gap-2 text-center text-sm">
-          <Link
-            href="/signup"
-            className="font-medium text-slate-700 hover:text-slate-900"
-          >
-            Head Chef sign up
-          </Link>
+            <a
+              href="/signup"
+              className="font-medium text-slate-700 hover:text-slate-900"
+            >
+              Head Chef sign up
+            </a>
 
           <Link
             href="/staff-login"
