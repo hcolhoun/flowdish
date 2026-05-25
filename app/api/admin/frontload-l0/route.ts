@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 import { isSystemOwnerEmail } from '@/lib/system-owner'
 
-const TEMPLATE_RESTAURANT_ID = 'base_template_restaurant'
+const FRONTLOAD_SOURCE_RESTAURANT_ID = 'flowdish_admin_live'
 
 type ItemCopy = {
   id: string
@@ -19,40 +19,38 @@ type ItemCopy = {
 
 async function createOrReuseItem(
   targetRestaurantId: string,
-  templateItem: ItemCopy,
+  sourceItem: ItemCopy,
   itemIdMap: Map<string, string>
 ) {
   const existing = await prisma.item.findUnique({
     where: {
       restaurantId_sku: {
         restaurantId: targetRestaurantId,
-        sku: templateItem.sku,
+        sku: sourceItem.sku,
       },
     },
   })
 
   if (existing) {
-    itemIdMap.set(templateItem.id, existing.id)
-
+    itemIdMap.set(sourceItem.id, existing.id)
     return existing
   }
 
   const created = await prisma.item.create({
     data: {
       restaurantId: targetRestaurantId,
-      sku: templateItem.sku,
-      name: templateItem.name,
-      itemType: templateItem.itemType,
-      unitType: templateItem.unitType,
-      shelfLifeDays: templateItem.shelfLifeDays,
-      sellingPrice: templateItem.sellingPrice,
-      standardBatchOutput: templateItem.standardBatchOutput,
-      buildStatus: templateItem.buildStatus,
+      sku: sourceItem.sku,
+      name: sourceItem.name,
+      itemType: sourceItem.itemType,
+      unitType: sourceItem.unitType,
+      shelfLifeDays: sourceItem.shelfLifeDays,
+      sellingPrice: sourceItem.sellingPrice,
+      standardBatchOutput: sourceItem.standardBatchOutput,
+      buildStatus: sourceItem.buildStatus,
     },
   })
 
-  itemIdMap.set(templateItem.id, created.id)
-
+  itemIdMap.set(sourceItem.id, created.id)
   return created
 }
 
@@ -75,7 +73,6 @@ async function upsertBomL0L1(data: {
       where: { id: existing.id },
       data: { qty: data.qty },
     })
-
     return
   }
 
@@ -101,7 +98,6 @@ async function upsertBomL1L2(data: {
       where: { id: existing.id },
       data: { qty: data.qty },
     })
-
     return
   }
 
@@ -127,7 +123,6 @@ async function upsertBomL1L3(data: {
       where: { id: existing.id },
       data: { qty: data.qty },
     })
-
     return
   }
 
@@ -153,7 +148,6 @@ async function upsertBomL2L2(data: {
       where: { id: existing.id },
       data: { qty: data.qty },
     })
-
     return
   }
 
@@ -179,7 +173,6 @@ async function upsertBomL2L3(data: {
       where: { id: existing.id },
       data: { qty: data.qty },
     })
-
     return
   }
 
@@ -229,16 +222,23 @@ export async function POST(req: Request) {
       )
     }
 
+    if (targetRestaurant.id === FRONTLOAD_SOURCE_RESTAURANT_ID) {
+      return NextResponse.json(
+        { error: 'Cannot frontload Flowdish Admin into itself.' },
+        { status: 400 }
+      )
+    }
+
     if (targetRestaurant.isTemplate) {
       return NextResponse.json(
-        { error: 'Cannot frontload into the template restaurant.' },
+        { error: 'Cannot frontload into a template restaurant.' },
         { status: 400 }
       )
     }
 
     const selectedL0Items = await prisma.item.findMany({
       where: {
-        restaurantId: TEMPLATE_RESTAURANT_ID,
+        restaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
         itemType: 'L0',
         id: {
           in: l0ItemIds,
@@ -247,15 +247,39 @@ export async function POST(req: Request) {
     })
 
     if (selectedL0Items.length !== l0ItemIds.length) {
+      const availableL0Items = await prisma.item.findMany({
+        where: {
+          restaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
+          itemType: 'L0',
+        },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+        },
+        orderBy: {
+          name: 'asc',
+        },
+      })
+
       return NextResponse.json(
-        { error: 'One or more selected L0 menus were not found in the template restaurant.' },
+        {
+          error:
+            'One or more selected L0 menus were not found in the Flowdish Admin frontload source.',
+          debug: {
+            sourceRestaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
+            requestedL0ItemIds: l0ItemIds,
+            foundL0ItemIds: selectedL0Items.map((item) => item.id),
+            availableL0Items,
+          },
+        },
         { status: 400 }
       )
     }
 
     const bomL0L1Rows = await prisma.bomL0L1.findMany({
       where: {
-        restaurantId: TEMPLATE_RESTAURANT_ID,
+        restaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
         l0ItemId: {
           in: l0ItemIds,
         },
@@ -265,7 +289,6 @@ export async function POST(req: Request) {
     const neededItemIds = new Set<string>()
     const neededL1Ids = new Set<string>()
     const neededL2Ids = new Set<string>()
-    const neededL3Ids = new Set<string>()
 
     for (const item of selectedL0Items) {
       neededItemIds.add(item.id)
@@ -279,7 +302,7 @@ export async function POST(req: Request) {
 
     const bomL1L2Rows = await prisma.bomL1L2.findMany({
       where: {
-        restaurantId: TEMPLATE_RESTAURANT_ID,
+        restaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
         l1ItemId: {
           in: Array.from(neededL1Ids),
         },
@@ -288,7 +311,7 @@ export async function POST(req: Request) {
 
     const bomL1L3Rows = await prisma.bomL1L3.findMany({
       where: {
-        restaurantId: TEMPLATE_RESTAURANT_ID,
+        restaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
         l1ItemId: {
           in: Array.from(neededL1Ids),
         },
@@ -304,7 +327,6 @@ export async function POST(req: Request) {
     for (const row of bomL1L3Rows) {
       neededItemIds.add(row.l1ItemId)
       neededItemIds.add(row.l3ItemId)
-      neededL3Ids.add(row.l3ItemId)
     }
 
     const bomL2L2Rows: Awaited<ReturnType<typeof prisma.bomL2L2.findMany>> = []
@@ -327,20 +349,22 @@ export async function POST(req: Request) {
         (id) => !processedL2Ids.has(id)
       )
 
-      if (!nextL2Id) break
+      if (!nextL2Id) {
+        break
+      }
 
       processedL2Ids.add(nextL2Id)
 
       const childL2Rows = await prisma.bomL2L2.findMany({
         where: {
-          restaurantId: TEMPLATE_RESTAURANT_ID,
+          restaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
           parentL2ItemId: nextL2Id,
         },
       })
 
       const childL3Rows = await prisma.bomL2L3.findMany({
         where: {
-          restaurantId: TEMPLATE_RESTAURANT_ID,
+          restaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
           l2ItemId: nextL2Id,
         },
       })
@@ -357,13 +381,12 @@ export async function POST(req: Request) {
       for (const row of childL3Rows) {
         neededItemIds.add(row.l2ItemId)
         neededItemIds.add(row.l3ItemId)
-        neededL3Ids.add(row.l3ItemId)
       }
     }
 
-    const templateItems = await prisma.item.findMany({
+    const sourceItems = await prisma.item.findMany({
       where: {
-        restaurantId: TEMPLATE_RESTAURANT_ID,
+        restaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
         id: {
           in: Array.from(neededItemIds),
         },
@@ -375,7 +398,7 @@ export async function POST(req: Request) {
 
     const itemIdMap = new Map<string, string>()
 
-    for (const item of templateItems as ItemCopy[]) {
+    for (const item of sourceItems as ItemCopy[]) {
       await createOrReuseItem(targetRestaurantId, item, itemIdMap)
     }
 
@@ -449,16 +472,16 @@ export async function POST(req: Request) {
       })
     }
 
-    const templateSops = await prisma.sopDocument.findMany({
+    const sourceSops = await prisma.sopDocument.findMany({
       where: {
-        restaurantId: TEMPLATE_RESTAURANT_ID,
+        restaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
         itemId: {
           in: Array.from(neededItemIds),
         },
       },
     })
 
-    for (const sop of templateSops) {
+    for (const sop of sourceSops) {
       const targetItemId = itemIdMap.get(sop.itemId)
 
       if (!targetItemId) continue
@@ -479,9 +502,9 @@ export async function POST(req: Request) {
       })
     }
 
-    const templateSupplierProducts = await prisma.supplierProduct.findMany({
+    const sourceSupplierProducts = await prisma.supplierProduct.findMany({
       where: {
-        restaurantId: TEMPLATE_RESTAURANT_ID,
+        restaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
         linkedItemId: {
           in: Array.from(neededItemIds),
         },
@@ -491,7 +514,7 @@ export async function POST(req: Request) {
     let createdSupplierProducts = 0
     let updatedSupplierProducts = 0
 
-    for (const product of templateSupplierProducts) {
+    for (const product of sourceSupplierProducts) {
       const targetLinkedItemId = product.linkedItemId
         ? itemIdMap.get(product.linkedItemId)
         : null
@@ -556,9 +579,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
+      sourceRestaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
       targetRestaurantId,
       selectedL0Count: selectedL0Items.length,
-      copiedOrReusedItems: templateItems.length,
+      copiedOrReusedItems: sourceItems.length,
       copiedBomRows: {
         l0l1: bomL0L1Rows.length,
         l1l2: bomL1L2Rows.length,
@@ -566,7 +590,7 @@ export async function POST(req: Request) {
         l2l2: bomL2L2Rows.length,
         l2l3: bomL2L3Rows.length,
       },
-      copiedSops: templateSops.length,
+      copiedSops: sourceSops.length,
       supplierProducts: {
         created: createdSupplierProducts,
         updated: updatedSupplierProducts,
