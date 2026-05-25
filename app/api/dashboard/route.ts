@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 export async function GET() {
   try {
+    const tenant = await requireTenant()
+    const restaurantId = tenant.restaurantId
+
     const now = new Date()
     const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
 
@@ -19,41 +23,70 @@ export async function GET() {
       deliveries,
       waste,
     ] = await Promise.all([
-      prisma.item.count(),
-      prisma.inventoryLot.count(),
+      prisma.item.count({
+        where: { restaurantId },
+      }),
+
+      prisma.inventoryLot.count({
+        where: { restaurantId },
+      }),
+
       prisma.inventoryLot.findMany({
-        where: { qtyRemaining: { gt: 0 } },
+        where: {
+          restaurantId,
+          qtyRemaining: { gt: 0 },
+        },
         include: { item: true },
         orderBy: { expiryAt: 'asc' },
       }),
+
       prisma.delivery.findMany({
+        where: { restaurantId },
         take: 5,
         orderBy: { deliveredAt: 'desc' },
         include: { item: true },
       }),
+
       prisma.prepBatch.findMany({
+        where: { restaurantId },
         take: 5,
         orderBy: { preparedAt: 'desc' },
         include: { item: true },
       }),
+
       prisma.sale.findMany({
+        where: { restaurantId },
         take: 5,
         orderBy: { soldAt: 'desc' },
         include: { item: true },
       }),
+
       prisma.waste.findMany({
+        where: { restaurantId },
         take: 5,
         orderBy: { date: 'desc' },
         include: { item: true },
       }),
+
       prisma.item.findMany({
-        where: { itemType: 'L2' },
+        where: {
+          restaurantId,
+          itemType: 'L2',
+        },
       }),
+
       prisma.sale.findMany({
+        where: { restaurantId },
         include: { item: true },
       }),
-      prisma.delivery.findMany(),
-      prisma.waste.findMany(),
+
+      prisma.delivery.findMany({
+        where: { restaurantId },
+      }),
+
+      prisma.waste.findMany({
+        where: { restaurantId },
+      }),
     ])
 
     const totalRevenue = sales.reduce(
@@ -72,7 +105,6 @@ export async function GET() {
     const grossMarginPercent =
       totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
 
-    // Delivery.price now means TOTAL DELIVERY COST, not unit price.
     const totalSpend = deliveries.reduce(
       (sum: number, d: any) => sum + (d.price ?? 0),
       0
@@ -89,8 +121,7 @@ export async function GET() {
       return sum + w.qty * (lot?.unitCost ?? 0)
     }, 0)
 
-    const wastePercent =
-      totalSpend > 0 ? (wasteCost / totalSpend) * 100 : 0
+    const wastePercent = totalSpend > 0 ? (wasteCost / totalSpend) * 100 : 0
 
     const baselineWastePercent = 10
 
@@ -207,7 +238,14 @@ export async function GET() {
       recentWaste,
     })
   } catch (error) {
+    const tenantResponse = tenantErrorResponse(error)
+
+    if (tenantResponse) {
+      return tenantResponse
+    }
+
     console.error('GET /api/dashboard failed:', error)
+
     return NextResponse.json(
       { error: 'Failed to load dashboard' },
       { status: 500 }
