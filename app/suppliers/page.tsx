@@ -523,6 +523,79 @@ export default function SuppliersPage() {
     }
   }
 
+async function handlePriceOnlySave() {
+  try {
+    setError('')
+    setMessage('')
+    setImpactReport(null)
+    setSaving(true)
+
+    if (preview.length === 0) {
+      setError('No parsed price rows to apply. Parse the file first.')
+      return
+    }
+
+    const rowsToApply = preview
+      .filter((row) => row.supplierSku && (row.packPrice !== null || row.unitPrice !== null))
+      .map((row) => ({
+        supplier: row.supplier || supplier,
+        supplierSku: row.supplierSku,
+        name: row.name,
+        packSize: row.packSize,
+        weight: row.weight,
+        packPrice: row.packPrice,
+        unitPrice: row.unitPrice,
+        selected: true,
+      }))
+
+    if (rowsToApply.length === 0) {
+      setError('No valid price rows to apply. Check supplier SKU and price fields.')
+      return
+    }
+
+    setMessage(
+      'Applying price-only updates. Existing product names, pack sizes, weights, links, and L3s will not be changed.'
+    )
+
+    const res = await fetch('/api/supplier-products/price-import/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        supplier,
+        fileName,
+        rows: rowsToApply,
+      }),
+    })
+
+    const data = await safeJson(res)
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to apply price-only updates')
+    }
+
+    setMessage(
+      `Price-only import complete. ${data.summary?.updatedCount ?? 0} updated, ${
+        data.summary?.unchangedCount ?? 0
+      } unchanged, ${data.summary?.skippedCount ?? 0} skipped.`
+    )
+
+    setPreview([])
+    setRejectedRows([])
+    setSelectedFile(null)
+    setFileName('')
+
+    await loadProducts()
+
+    if (data.importBatchId) {
+      await loadImpactReport(data.importBatchId)
+    }
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Unknown error')
+  } finally {
+    setSaving(false)
+  }
+}
+
   async function handleManualAddProduct(e: React.FormEvent) {
     e.preventDefault()
 
@@ -829,12 +902,31 @@ export default function SuppliersPage() {
 
             <button
               type="button"
+              onClick={handlePriceOnlySave}
+              disabled={preview.length === 0 || saving || parsing}
+              className="rounded-xl bg-blue-700 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+            >
+              {saving ? 'Applying…' : 'Apply Price Updates Only'}
+            </button>
+
+            <button
+              type="button"
               onClick={handleSave}
               disabled={preview.length === 0 || saving || parsing}
               className="rounded-xl bg-green-700 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
             >
-              {saving ? 'Saving…' : 'Save Products + Create/Update L3s'}
+              {saving ? 'Saving…' : 'Full Save + Create/Update L3s'}
             </button>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+            <strong>Use “Apply Price Updates Only” for normal supplier price-list updates.</strong>
+            <br />
+            This updates only pack price and unit price on matching supplier SKUs. It does not overwrite
+            corrected names, pack sizes, weights, links, L3s, BOMs, or SOPs.
+            <br />
+            Use “Full Save + Create/Update L3s” only for first-time setup or when you intentionally want to
+            create/link supplier products and L3 ingredients.
           </div>
         </section>
 
