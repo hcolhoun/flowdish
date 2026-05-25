@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 import { isSystemOwnerEmail } from '@/lib/system-owner'
 
-const TEMPLATE_RESTAURANT_ID = 'base_template_restaurant'
+const TEMPLATE_RESTAURANT_ID = 'flowdish_admin_live'
 
 export async function GET() {
   try {

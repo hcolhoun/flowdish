@@ -17,6 +17,9 @@ export async function GET() {
     const restaurants = await prisma.restaurant.findMany({
       where: {
         isTemplate: false,
+        id: {
+            not: 'flowdish_admin_live',
+        },
       },
       orderBy: {
         createdAt: 'desc',
