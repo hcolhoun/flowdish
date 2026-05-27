@@ -11,9 +11,28 @@ type StockPosition = {
   daysToNextExpiry: number | null
 }
 
+type IngredientRequirement = {
+  itemId: string
+  sku: string
+  name: string
+  unitType: 'g' | 'ml' | 'each'
+  requiredQty: number
+  usableStock: number
+  shortfallQty: number
+}
+
 function daysBetween(from: Date, to: Date) {
   const ms = to.getTime() - from.getTime()
   return Math.ceil(ms / (1000 * 60 * 60 * 24))
+}
+
+function addToMap(map: Map<string, number>, itemId: string, qty: number) {
+  map.set(itemId, (map.get(itemId) ?? 0) + qty)
+}
+
+function makeableFrom(stock: number, qtyPerUnit: number) {
+  if (!qtyPerUnit || qtyPerUnit <= 0) return 0
+  return Math.floor(stock / qtyPerUnit)
 }
 
 async function getStockPosition({
@@ -79,9 +98,136 @@ async function getStockPosition({
   }
 }
 
-function makeableFrom(stock: number, qtyPerUnit: number) {
-  if (!qtyPerUnit || qtyPerUnit <= 0) return 0
-  return Math.floor(stock / qtyPerUnit)
+async function addL3RequirementsForL2Output({
+  restaurantId,
+  l2ItemId,
+  outputQty,
+  l3RequiredMap,
+  stack = new Set<string>(),
+}: {
+  restaurantId: string
+  l2ItemId: string
+  outputQty: number
+  l3RequiredMap: Map<string, number>
+  stack?: Set<string>
+}) {
+  if (outputQty <= 0) return
+  if (stack.has(l2ItemId)) return
+
+  const nextStack = new Set(stack)
+  nextStack.add(l2ItemId)
+
+  const l2Item = await prisma.item.findFirst({
+    where: {
+      id: l2ItemId,
+      restaurantId,
+    },
+  })
+
+  if (!l2Item || l2Item.itemType !== 'L2') return
+  if (!l2Item.standardBatchOutput || l2Item.standardBatchOutput <= 0) return
+
+  const scaleFactor = outputQty / l2Item.standardBatchOutput
+
+  const [childL2Rows, l3Rows] = await Promise.all([
+    prisma.bomL2L2.findMany({
+      where: {
+        restaurantId,
+        parentL2ItemId: l2ItemId,
+      },
+    }),
+
+    prisma.bomL2L3.findMany({
+      where: {
+        restaurantId,
+        l2ItemId,
+      },
+    }),
+  ])
+
+  for (const row of l3Rows as any[]) {
+    addToMap(l3RequiredMap, row.l3ItemId, row.qty * scaleFactor)
+  }
+
+  for (const row of childL2Rows as any[]) {
+    const childOutputRequired = row.qty * scaleFactor
+
+    const childStock = await getStockPosition({
+      restaurantId,
+      itemId: row.childL2ItemId,
+      forecastEndDate: new Date('2999-12-31'),
+    })
+
+    const childShortfall = Math.max(0, childOutputRequired - childStock.usableStock)
+
+    if (childShortfall > 0) {
+      await addL3RequirementsForL2Output({
+        restaurantId,
+        l2ItemId: row.childL2ItemId,
+        outputQty: childShortfall,
+        l3RequiredMap,
+        stack: nextStack,
+      })
+    }
+  }
+}
+
+async function buildIngredientAvailability({
+  restaurantId,
+  forecastEndDate,
+  l2ItemId,
+  prepOutputQty,
+}: {
+  restaurantId: string
+  forecastEndDate: Date
+  l2ItemId: string
+  prepOutputQty: number
+}) {
+  const l3RequiredMap = new Map<string, number>()
+
+  await addL3RequirementsForL2Output({
+    restaurantId,
+    l2ItemId,
+    outputQty: prepOutputQty,
+    l3RequiredMap,
+  })
+
+  const rows: IngredientRequirement[] = []
+
+  for (const [l3ItemId, requiredQty] of l3RequiredMap.entries()) {
+    const item = await prisma.item.findFirst({
+      where: {
+        id: l3ItemId,
+        restaurantId,
+      },
+    })
+
+    if (!item) continue
+
+    const stock = await getStockPosition({
+      restaurantId,
+      itemId: l3ItemId,
+      forecastEndDate,
+    })
+
+    rows.push({
+      itemId: item.id,
+      sku: item.sku,
+      name: item.name,
+      unitType: item.unitType as 'g' | 'ml' | 'each',
+      requiredQty,
+      usableStock: stock.usableStock,
+      shortfallQty: Math.max(0, requiredQty - stock.usableStock),
+    })
+  }
+
+  rows.sort((a, b) => {
+    if (a.shortfallQty > 0 && b.shortfallQty <= 0) return -1
+    if (a.shortfallQty <= 0 && b.shortfallQty > 0) return 1
+    return a.name.localeCompare(b.name)
+  })
+
+  return rows
 }
 
 export async function GET(req: Request) {
@@ -178,10 +324,7 @@ export async function GET(req: Request) {
       if (shortfallQty > 0) {
         for (const row of bomL1L2 as any[]) {
           const requiredQty = row.qty * shortfallQty
-          l2RequiredMap.set(
-            row.l2ItemId,
-            (l2RequiredMap.get(row.l2ItemId) ?? 0) + requiredQty
-          )
+          addToMap(l2RequiredMap, row.l2ItemId, requiredQty)
         }
       }
     }
@@ -190,7 +333,7 @@ export async function GET(req: Request) {
     let safetyCounter = 0
 
     while (true) {
-      safetyCounter++
+      safetyCounter += 1
 
       if (safetyCounter > 200) {
         throw new Error('Nested L2 planning stopped because a recipe chain is too deep.')
@@ -235,12 +378,9 @@ export async function GET(req: Request) {
         },
       })
 
-      for (const row of childL2Rows) {
+      for (const row of childL2Rows as any[]) {
         const childRequiredQty = row.qty * scaleFactor
-        l2RequiredMap.set(
-          row.childL2ItemId,
-          (l2RequiredMap.get(row.childL2ItemId) ?? 0) + childRequiredQty
-        )
+        addToMap(l2RequiredMap, row.childL2ItemId, childRequiredQty)
       }
     }
 
@@ -270,9 +410,30 @@ export async function GET(req: Request) {
           ? Math.ceil(shortfallQty / standardBatchOutput)
           : 0
 
+      const prepOutputQty =
+        standardBatchOutput && standardBatchOutput > 0
+          ? batchesToPrep * standardBatchOutput
+          : shortfallQty
+
+      const ingredientAvailability =
+        shortfallQty > 0 && prepOutputQty > 0
+          ? await buildIngredientAvailability({
+              restaurantId: tenant.restaurantId,
+              forecastEndDate,
+              l2ItemId,
+              prepOutputQty,
+            })
+          : []
+
+      const missingIngredientCount = ingredientAvailability.filter(
+        (row) => row.shortfallQty > 0
+      ).length
+
       let expiryStatus = 'OK'
 
-      if (shortfallQty > 0) {
+      if (shortfallQty > 0 && missingIngredientCount > 0) {
+        expiryStatus = 'MISSING INGREDIENTS'
+      } else if (shortfallQty > 0) {
         expiryStatus = 'PREP REQUIRED'
       } else if (stock.expiredStock > 0) {
         expiryStatus = 'EXPIRED STOCK'
@@ -295,14 +456,20 @@ export async function GET(req: Request) {
         shortfallQty,
         standardBatchOutput,
         batchesToPrep,
+        prepOutputQty,
         shelfLifeDays: item.shelfLifeDays ?? null,
         nextExpiry: stock.nextExpiry,
         daysToNextExpiry: stock.daysToNextExpiry,
         expiryStatus,
+        canPrepNow: shortfallQty > 0 && missingIngredientCount === 0,
+        missingIngredientCount,
+        ingredientAvailability,
       })
     }
 
     l2Plan.sort((a, b) => {
+      if (a.missingIngredientCount > 0 && b.missingIngredientCount <= 0) return -1
+      if (a.missingIngredientCount <= 0 && b.missingIngredientCount > 0) return 1
       if (a.shortfallQty > 0 && b.shortfallQty <= 0) return -1
       if (a.shortfallQty <= 0 && b.shortfallQty > 0) return 1
       return a.name.localeCompare(b.name)

@@ -35,6 +35,16 @@ type L1PlanRow = {
   shortfallQty: number
 }
 
+type IngredientAvailabilityRow = {
+  itemId: string
+  sku: string
+  name: string
+  unitType: 'g' | 'ml' | 'each'
+  requiredQty: number
+  usableStock: number
+  shortfallQty: number
+}
+
 type L2PlanRow = {
   itemId: string
   sku: string
@@ -48,10 +58,14 @@ type L2PlanRow = {
   shortfallQty: number
   standardBatchOutput: number | null
   batchesToPrep: number
+  prepOutputQty?: number
   shelfLifeDays: number | null
   nextExpiry: string | null
   daysToNextExpiry: number | null
   expiryStatus: string
+  canPrepNow?: boolean
+  missingIngredientCount?: number
+  ingredientAvailability?: IngredientAvailabilityRow[]
 }
 
 type PlanResponse = {
@@ -124,11 +138,17 @@ export default function PlanningPage() {
   }
 
   function statusClass(status: string) {
+    if (status === 'MISSING INGREDIENTS') return 'bg-red-100 text-red-800'
     if (status === 'PREP REQUIRED') return 'bg-red-50 text-red-700'
     if (status === 'EXPIRED STOCK') return 'bg-red-50 text-red-700'
     if (status === 'EXPIRING BEFORE FORECAST ENDS') return 'bg-amber-50 text-amber-700'
     if (status === 'USE SOON') return 'bg-amber-50 text-amber-700'
     return 'bg-green-50 text-green-700'
+  }
+
+  function ingredientStatusClass(row: IngredientAvailabilityRow) {
+    if (row.shortfallQty > 0) return 'bg-red-50 text-red-800'
+    return 'bg-green-50 text-green-800'
   }
 
   async function loadData() {
@@ -202,7 +222,9 @@ export default function PlanningPage() {
       const data = (await safeJson(res)) as L0L1BomRow[] | { error?: string }
 
       if (!res.ok) {
-        throw new Error(!Array.isArray(data) ? data?.error || 'Failed to load menu' : 'Failed to load menu')
+        throw new Error(
+          !Array.isArray(data) ? data?.error || 'Failed to load menu' : 'Failed to load menu'
+        )
       }
 
       if (!Array.isArray(data) || data.length === 0) {
@@ -221,7 +243,9 @@ export default function PlanningPage() {
       }
 
       setMessage(
-        `${data.length} L1 dish(es) loaded from ${menu?.name || 'selected menu'}. Edit quantities before saving.`
+        `${data.length} L1 dish(es) loaded from ${
+          menu?.name || 'selected menu'
+        }. Edit quantities before saving.`
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -380,9 +404,7 @@ export default function PlanningPage() {
 
           <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-900">
-                L0 Menu
-              </label>
+              <label className="mb-1 block text-sm font-medium text-slate-900">L0 Menu</label>
               <select
                 value={selectedMenuId}
                 onChange={(e) => setSelectedMenuId(e.target.value)}
@@ -543,7 +565,8 @@ export default function PlanningPage() {
               <option value="">Select forecast</option>
               {forecasts.map((forecast) => (
                 <option key={forecast.id} value={forecast.id}>
-                  {forecast.name} ({formatDate(forecast.startDate)} - {formatDate(forecast.endDate)})
+                  {forecast.name} ({formatDate(forecast.startDate)} -{' '}
+                  {formatDate(forecast.endDate)})
                 </option>
               ))}
             </select>
@@ -589,9 +612,15 @@ export default function PlanningPage() {
                       <tr key={row.itemId} className="border-t">
                         <td className="px-4 py-3 text-slate-800">{row.sku}</td>
                         <td className="px-4 py-3 text-slate-800">{row.name}</td>
-                        <td className="px-4 py-3 text-slate-800">{formatNumber(row.forecastQty)}</td>
-                        <td className="px-4 py-3 text-slate-800">{formatNumber(row.makeableQty)}</td>
-                        <td className="px-4 py-3 text-slate-800">{formatNumber(row.shortfallQty)}</td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {formatNumber(row.forecastQty)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {formatNumber(row.makeableQty)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {formatNumber(row.shortfallQty)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -603,12 +632,13 @@ export default function PlanningPage() {
               <div className="border-b px-6 py-4">
                 <h2 className="text-xl font-semibold text-slate-900">L2 Prep List</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  Required and shortfall quantities are shown in each L2 item’s base unit.
+                  Required and shortfall quantities are shown in each L2 item’s base unit. Missing
+                  L3 ingredients are shown underneath each prep row.
                 </p>
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-left">
+                <table className="min-w-[1200px] w-full text-left">
                   <thead className="bg-slate-100 text-sm">
                     <tr>
                       <th className="px-4 py-3 text-slate-800">SKU</th>
@@ -618,6 +648,7 @@ export default function PlanningPage() {
                       <th className="px-4 py-3 text-slate-800">Shortfall</th>
                       <th className="px-4 py-3 text-slate-800">Std Batch Output</th>
                       <th className="px-4 py-3 text-slate-800">Batches</th>
+                      <th className="px-4 py-3 text-slate-800">Can Prep?</th>
                       <th className="px-4 py-3 text-slate-800">Next Expiry</th>
                       <th className="px-4 py-3 text-slate-800">Status</th>
                     </tr>
@@ -626,42 +657,156 @@ export default function PlanningPage() {
                   <tbody>
                     {plan.l2Plan.length === 0 ? (
                       <tr className="border-t">
-                        <td className="px-4 py-3 text-slate-700" colSpan={9}>
+                        <td className="px-4 py-3 text-slate-700" colSpan={10}>
                           No L2 prep required.
                         </td>
                       </tr>
                     ) : (
-                      plan.l2Plan.map((row) => (
-                        <tr key={row.itemId} className="border-t">
-                          <td className="px-4 py-3 text-slate-800">{row.sku}</td>
-                          <td className="px-4 py-3 text-slate-800">{row.name}</td>
-                          <td className="px-4 py-3 text-slate-800">
-                            {formatNumber(row.requiredQty)} {row.unitType}
-                          </td>
-                          <td className="px-4 py-3 text-slate-800">
-                            {formatNumber(row.usableStock)} {row.unitType}
-                          </td>
-                          <td className="px-4 py-3 text-slate-800">
-                            {formatNumber(row.shortfallQty)} {row.unitType}
-                          </td>
-                          <td className="px-4 py-3 text-slate-800">
-                            {row.standardBatchOutput === null
-                              ? ''
-                              : `${formatNumber(row.standardBatchOutput)} ${row.unitType}`}
-                          </td>
-                          <td className="px-4 py-3 text-slate-800">{row.batchesToPrep}</td>
-                          <td className="px-4 py-3 text-slate-800">
-                            {row.nextExpiry ? formatDate(row.nextExpiry) : ''}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span
-                              className={`rounded-lg px-2 py-1 text-sm font-semibold ${statusClass(row.expiryStatus)}`}
-                            >
-                              {row.expiryStatus}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
+                      plan.l2Plan.map((row) => {
+                        const ingredients = row.ingredientAvailability ?? []
+                        const missingIngredients = ingredients.filter(
+                          (ingredient) => ingredient.shortfallQty > 0
+                        )
+
+                        return (
+                          <>
+                            <tr key={row.itemId} className="border-t align-top">
+                              <td className="px-4 py-3 text-slate-800">{row.sku}</td>
+                              <td className="px-4 py-3 text-slate-800">{row.name}</td>
+                              <td className="px-4 py-3 text-slate-800">
+                                {formatNumber(row.requiredQty)} {row.unitType}
+                              </td>
+                              <td className="px-4 py-3 text-slate-800">
+                                {formatNumber(row.usableStock)} {row.unitType}
+                              </td>
+                              <td className="px-4 py-3 text-slate-800">
+                                {formatNumber(row.shortfallQty)} {row.unitType}
+                              </td>
+                              <td className="px-4 py-3 text-slate-800">
+                                {row.standardBatchOutput === null
+                                  ? ''
+                                  : `${formatNumber(row.standardBatchOutput)} ${row.unitType}`}
+                              </td>
+                              <td className="px-4 py-3 text-slate-800">{row.batchesToPrep}</td>
+                              <td className="px-4 py-3 text-slate-800">
+                                {row.shortfallQty <= 0 ? (
+                                  <span className="rounded-lg bg-green-50 px-2 py-1 text-sm font-semibold text-green-700">
+                                    No prep needed
+                                  </span>
+                                ) : row.canPrepNow ? (
+                                  <span className="rounded-lg bg-green-50 px-2 py-1 text-sm font-semibold text-green-700">
+                                    Yes
+                                  </span>
+                                ) : (
+                                  <span className="rounded-lg bg-red-50 px-2 py-1 text-sm font-semibold text-red-700">
+                                    No — missing {row.missingIngredientCount ?? 0}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-slate-800">
+                                {row.nextExpiry ? formatDate(row.nextExpiry) : ''}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span
+                                  className={`rounded-lg px-2 py-1 text-sm font-semibold ${statusClass(
+                                    row.expiryStatus
+                                  )}`}
+                                >
+                                  {row.expiryStatus}
+                                </span>
+                              </td>
+                            </tr>
+
+                            {row.shortfallQty > 0 ? (
+                              <tr className="border-t bg-slate-50">
+                                <td colSpan={10} className="px-4 py-4">
+                                  <div className="rounded-xl border bg-white p-4">
+                                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                      <div>
+                                        <h3 className="font-semibold text-slate-900">
+                                          L3 ingredient availability for {row.name}
+                                        </h3>
+                                        <p className="mt-1 text-sm text-slate-600">
+                                          Planned prep output:{' '}
+                                          {formatNumber(row.prepOutputQty ?? row.shortfallQty)}{' '}
+                                          {row.unitType}
+                                        </p>
+                                      </div>
+
+                                      {missingIngredients.length > 0 ? (
+                                        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+                                          Cannot prep until missing stock is delivered
+                                        </div>
+                                      ) : (
+                                        <div className="rounded-lg bg-green-50 px-3 py-2 text-sm font-semibold text-green-700">
+                                          Ingredients available
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {ingredients.length === 0 ? (
+                                      <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                                        No L3 ingredient rows found for this L2. Check the L2 BOM.
+                                      </div>
+                                    ) : (
+                                      <div className="mt-4 overflow-x-auto">
+                                        <table className="w-full text-left text-sm">
+                                          <thead className="bg-slate-100">
+                                            <tr>
+                                              <th className="px-3 py-2 text-slate-800">Status</th>
+                                              <th className="px-3 py-2 text-slate-800">L3 SKU</th>
+                                              <th className="px-3 py-2 text-slate-800">L3 Ingredient</th>
+                                              <th className="px-3 py-2 text-slate-800">Required</th>
+                                              <th className="px-3 py-2 text-slate-800">Available</th>
+                                              <th className="px-3 py-2 text-slate-800">Shortfall</th>
+                                            </tr>
+                                          </thead>
+
+                                          <tbody>
+                                            {ingredients.map((ingredient) => (
+                                              <tr key={ingredient.itemId} className="border-t">
+                                                <td className="px-3 py-2">
+                                                  <span
+                                                    className={`rounded-lg px-2 py-1 text-xs font-semibold ${ingredientStatusClass(
+                                                      ingredient
+                                                    )}`}
+                                                  >
+                                                    {ingredient.shortfallQty > 0
+                                                      ? 'Missing'
+                                                      : 'Available'}
+                                                  </span>
+                                                </td>
+                                                <td className="px-3 py-2 text-slate-800">
+                                                  {ingredient.sku}
+                                                </td>
+                                                <td className="px-3 py-2 text-slate-800">
+                                                  {ingredient.name}
+                                                </td>
+                                                <td className="px-3 py-2 text-slate-800">
+                                                  {formatNumber(ingredient.requiredQty)}{' '}
+                                                  {ingredient.unitType}
+                                                </td>
+                                                <td className="px-3 py-2 text-slate-800">
+                                                  {formatNumber(ingredient.usableStock)}{' '}
+                                                  {ingredient.unitType}
+                                                </td>
+                                                <td className="px-3 py-2 text-slate-800">
+                                                  {formatNumber(ingredient.shortfallQty)}{' '}
+                                                  {ingredient.unitType}
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : null}
+                          </>
+                        )
+                      })
                     )}
                   </tbody>
                 </table>
@@ -698,8 +843,12 @@ export default function PlanningPage() {
                   forecasts.map((forecast) => (
                     <tr key={forecast.id} className="border-t">
                       <td className="px-4 py-3 text-slate-800">{forecast.name}</td>
-                      <td className="px-4 py-3 text-slate-800">{formatDate(forecast.startDate)}</td>
-                      <td className="px-4 py-3 text-slate-800">{formatDate(forecast.endDate)}</td>
+                      <td className="px-4 py-3 text-slate-800">
+                        {formatDate(forecast.startDate)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-800">
+                        {formatDate(forecast.endDate)}
+                      </td>
                       <td className="px-4 py-3 text-slate-800">
                         {(forecast.lines ?? [])
                           .map((line) => `${line.item.name} (${formatNumber(line.qty)})`)
