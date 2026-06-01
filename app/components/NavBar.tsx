@@ -156,7 +156,7 @@ export default function NavBar() {
         </div>
 
         {loaded && access ? (
-          <nav className="mt-4 flex flex-wrap items-center gap-2">
+          <nav className="mt-4 flex flex-wrap items-center justify-center gap-2">
             {links.map((link) => {
               const active =
                 pathname === link.href ||
