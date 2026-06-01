@@ -1,8 +1,10 @@
 'use client'
 
+import Image from 'next/image'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import loginLogo from '../login.logo.png'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -74,8 +76,16 @@ export default function LoginPage() {
     <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
       <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm">
         <div className="text-center">
-          <h1 className="text-3xl font-semibold text-slate-900">Flowdish</h1>
-          <p className="mt-2 text-sm text-slate-600">Sign in to continue.</p>
+          <div className="flex justify-center">
+            <Image
+              src={loginLogo}
+              alt="Flowdish"
+              priority
+              className="h-auto w-56"
+            />
+          </div>
+
+          <p className="mt-4 text-sm text-slate-600">Sign in to continue.</p>
         </div>
 
         {error ? (
