@@ -112,68 +112,72 @@ export default function NavBar() {
 
   return (
     <div className="border-b bg-white">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2 px-6 py-4">
-        <Link href="/" className="mr-4 flex shrink-0 items-center">
-          <Image
-            src="/flowdish-banner-logo.png"
-            alt="Flowdish"
-            width={210}
-            height={65}
-            priority
-            className="h-16 w-auto object-contain"
-          />
-        </Link>
+      <div className="mx-auto max-w-7xl px-6 py-4">
+        <div className="flex items-start justify-between gap-4">
+          <Link href="/" className="flex shrink-0 items-center">
+            <Image
+              src="/flowdish-banner-logo.png"
+              alt="Flowdish"
+              width={210}
+              height={65}
+              priority
+              className="h-16 w-auto object-contain"
+            />
+          </Link>
 
-        {!loaded ? (
-          <div className="rounded-xl bg-slate-100 px-4 py-2 text-sm text-slate-600">
-            Loading…
+          <div className="flex items-start gap-3">
+            {!loaded ? (
+              <div className="rounded-xl bg-slate-100 px-4 py-2 text-sm text-slate-600">
+                Loading…
+              </div>
+            ) : null}
+
+            {loaded && access ? (
+              <div className="hidden rounded-xl border bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:block">
+                <div className="font-medium text-slate-900">{access.restaurant.name}</div>
+                <div>{access.labels.roleLabel}</div>
+              </div>
+            ) : null}
+
+            {loaded && !access ? (
+              <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                Not logged in
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded-xl border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+            >
+              Logout
+            </button>
           </div>
-        ) : null}
+        </div>
 
         {loaded && access ? (
-          <>
-            <nav className="flex flex-wrap items-center gap-2">
-              {links.map((link) => {
-                const active =
-                  pathname === link.href ||
-                  (link.href !== '/' && pathname.startsWith(`${link.href}/`))
+          <nav className="mt-4 flex flex-wrap items-center gap-2">
+            {links.map((link) => {
+              const active =
+                pathname === link.href ||
+                (link.href !== '/' && pathname.startsWith(`${link.href}/`))
 
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={`rounded-xl px-4 py-2 text-sm font-medium ${
-                      active
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
-                    }`}
-                  >
-                    {link.label}
-                  </Link>
-                )
-              })}
-            </nav>
-
-            <div className="ml-auto hidden rounded-xl border bg-slate-50 px-3 py-2 text-xs text-slate-600 lg:block">
-              <div className="font-medium text-slate-900">{access.restaurant.name}</div>
-              <div>{access.labels.roleLabel}</div>
-            </div>
-          </>
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className={`rounded-xl px-4 py-2 text-sm font-medium ${
+                    active
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+                  }`}
+                >
+                  {link.label}
+                </Link>
+              )
+            })}
+          </nav>
         ) : null}
-
-        {loaded && !access ? (
-          <div className="ml-auto rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Not logged in
-          </div>
-        ) : null}
-
-        <button
-          type="button"
-          onClick={handleLogout}
-          className="rounded-xl border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
-        >
-          Logout
-        </button>
       </div>
     </div>
   )
