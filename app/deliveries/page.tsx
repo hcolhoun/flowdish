@@ -20,6 +20,9 @@ type Delivery = {
   supplier: string | null
   price: number | null
   expiryAt: string | null
+  createdAt?: string | null
+  enteredByName?: string | null
+  enteredByType?: string | null
   item: Item
 }
 
@@ -228,6 +231,24 @@ export default function DeliveriesPage() {
   function formatDate(value: string | null) {
     if (!value) return ''
     return new Date(value).toLocaleDateString('en-GB')
+  }
+
+  function formatDateTime(value: string | null | undefined) {
+    if (!value) return ''
+
+    return new Date(value).toLocaleString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
+  function enteredByLabel(delivery: Delivery) {
+    const name = delivery.enteredByName || 'Unknown'
+    const date = formatDateTime(delivery.createdAt)
+
+    return date ? `${name} · ${date}` : name
   }
 
   function money(value: number | null | undefined, maximumFractionDigits = 2) {
@@ -1189,7 +1210,7 @@ export default function DeliveriesPage() {
 
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="min-w-[1150px] w-full text-left">
+            <table className="min-w-[1250px] w-full text-left">
               <thead className="bg-slate-100 text-sm">
                 <tr>
                   <th className="px-4 py-3 text-slate-800">Date</th>
@@ -1200,6 +1221,7 @@ export default function DeliveriesPage() {
                   <th className="px-4 py-3 text-slate-800">Total Cost</th>
                   <th className="px-4 py-3 text-slate-800">Cost / Unit</th>
                   <th className="px-4 py-3 text-slate-800">Expiry</th>
+                  <th className="px-4 py-3 text-slate-800">Entered</th>
                   <th className="px-4 py-3 text-slate-800">Actions</th>
                 </tr>
               </thead>
@@ -1207,7 +1229,7 @@ export default function DeliveriesPage() {
               <tbody>
                 {deliveries.length === 0 ? (
                   <tr className="border-t">
-                    <td className="px-4 py-3 text-slate-700" colSpan={9}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={10}>
                       No deliveries yet.
                     </td>
                   </tr>
@@ -1326,6 +1348,12 @@ export default function DeliveriesPage() {
                           ) : (
                             formatDate(delivery.expiryAt)
                           )}
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <div className="text-xs text-slate-500">
+                            {enteredByLabel(delivery)}
+                          </div>
                         </td>
 
                         <td className="px-4 py-3">

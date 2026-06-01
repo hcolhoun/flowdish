@@ -22,6 +22,9 @@ type WasteRecord = {
   itemId: string
   qty: number
   reason: string | null
+  createdAt?: string | null
+  enteredByName?: string | null
+  enteredByType?: string | null
   item: Item
 }
 
@@ -31,6 +34,24 @@ function todayInputValue() {
 
 function formatDate(value: string) {
   return new Date(value).toLocaleDateString('en-GB')
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return ''
+
+  return new Date(value).toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function enteredByLabel(waste: WasteRecord) {
+  const name = waste.enteredByName || 'Unknown'
+  const date = formatDateTime(waste.createdAt)
+
+  return date ? `${name} · ${date}` : name
 }
 
 export default function WastePage() {
@@ -113,10 +134,7 @@ export default function WastePage() {
 
     return l3Items
       .filter((item) => {
-        return (
-          item.name.toLowerCase().includes(q) ||
-          item.sku.toLowerCase().includes(q)
-        )
+        return item.name.toLowerCase().includes(q) || item.sku.toLowerCase().includes(q)
       })
       .slice(0, 25)
   }, [l3Items, itemSearch])
@@ -329,7 +347,7 @@ export default function WastePage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-left">
+            <table className="w-full min-w-[1000px] text-left">
               <thead className="bg-slate-100 text-sm">
                 <tr>
                   <th className="px-4 py-3 text-slate-800">Date</th>
@@ -337,13 +355,14 @@ export default function WastePage() {
                   <th className="px-4 py-3 text-slate-800">SKU</th>
                   <th className="px-4 py-3 text-slate-800">Quantity</th>
                   <th className="px-4 py-3 text-slate-800">Reason</th>
+                  <th className="px-4 py-3 text-slate-800">Entered</th>
                 </tr>
               </thead>
 
               <tbody>
                 {wastes.length === 0 ? (
                   <tr className="border-t">
-                    <td colSpan={5} className="px-4 py-3 text-slate-700">
+                    <td colSpan={6} className="px-4 py-3 text-slate-700">
                       No waste records yet.
                     </td>
                   </tr>
@@ -364,6 +383,9 @@ export default function WastePage() {
                       </td>
                       <td className="px-4 py-3 text-slate-800">
                         {waste.reason ?? ''}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="text-xs text-slate-500">{enteredByLabel(waste)}</div>
                       </td>
                     </tr>
                   ))

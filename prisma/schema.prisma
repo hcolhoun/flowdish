@@ -236,6 +236,13 @@ model Delivery {
   supplier     String?
   price        Float?
   expiryAt     DateTime?
+  createdAt    DateTime  @default(now())
+
+  enteredByType        String?
+  enteredByName        String?
+  enteredByEmail       String?
+  enteredByAuthUserId  String?
+  enteredByStaffUserId String?
 
   restaurant    Restaurant     @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   item          Item           @relation(fields: [itemId], references: [id])
@@ -275,6 +282,13 @@ model PrepBatch {
   itemId       String
   qtyOutput    Float
   expiryAt     DateTime?
+  createdAt    DateTime  @default(now())
+
+  enteredByType        String?
+  enteredByName        String?
+  enteredByEmail       String?
+  enteredByAuthUserId  String?
+  enteredByStaffUserId String?
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   item       Item       @relation(fields: [itemId], references: [id])
@@ -305,6 +319,13 @@ model Waste {
   itemId       String
   qty          Float
   reason       String?
+  createdAt    DateTime @default(now())
+
+  enteredByType        String?
+  enteredByName        String?
+  enteredByEmail       String?
+  enteredByAuthUserId  String?
+  enteredByStaffUserId String?
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   item       Item       @relation(fields: [itemId], references: [id])

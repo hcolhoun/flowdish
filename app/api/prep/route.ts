@@ -8,6 +8,26 @@ type RequiredComponent = {
   label: string
 }
 
+function actorFieldsFromKitchenAccess(tenant: Awaited<ReturnType<typeof requireKitchenAccess>>) {
+  if (tenant.type === 'STAFF') {
+    return {
+      enteredByType: 'STAFF',
+      enteredByName: tenant.displayName,
+      enteredByEmail: null,
+      enteredByAuthUserId: null,
+      enteredByStaffUserId: tenant.staffUserId,
+    }
+  }
+
+  return {
+    enteredByType: tenant.isSystemOwner ? 'SYSTEM_OWNER' : tenant.role,
+    enteredByName: tenant.email || 'Chef',
+    enteredByEmail: tenant.email,
+    enteredByAuthUserId: tenant.authUserId,
+    enteredByStaffUserId: null,
+  }
+}
+
 export async function GET() {
   try {
     const tenant = await requireKitchenAccess()
@@ -229,6 +249,7 @@ export async function POST(req: Request) {
           itemId: l2Item.id,
           qtyOutput,
           expiryAt,
+          ...actorFieldsFromKitchenAccess(tenant),
         },
         include: { item: true },
       })

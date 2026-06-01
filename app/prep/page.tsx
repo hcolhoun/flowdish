@@ -19,6 +19,9 @@ type PrepBatch = {
   preparedAt: string
   qtyOutput: number
   expiryAt: string | null
+  createdAt?: string | null
+  enteredByName?: string | null
+  enteredByType?: string | null
   item: Item
 }
 
@@ -76,6 +79,24 @@ export default function PrepPage() {
   function formatDate(value: string | null) {
     if (!value) return ''
     return new Date(value).toLocaleDateString('en-GB')
+  }
+
+  function formatDateTime(value: string | null | undefined) {
+    if (!value) return ''
+
+    return new Date(value).toLocaleString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
+  function enteredByLabel(batch: PrepBatch) {
+    const name = batch.enteredByName || 'Unknown'
+    const date = formatDateTime(batch.createdAt)
+
+    return date ? `${name} · ${date}` : name
   }
 
   function formatQty(value: number) {
@@ -324,13 +345,14 @@ export default function PrepPage() {
                 <th className="px-4 py-3 text-slate-800">Qty Output</th>
                 <th className="px-4 py-3 text-slate-800">Unit</th>
                 <th className="px-4 py-3 text-slate-800">Expiry</th>
+                <th className="px-4 py-3 text-slate-800">Entered</th>
                 <th className="px-4 py-3 text-slate-800">Actions</th>
               </tr>
             </thead>
             <tbody>
               {prepBatches.length === 0 ? (
                 <tr className="border-t">
-                  <td className="px-4 py-3 text-slate-700" colSpan={6}>
+                  <td className="px-4 py-3 text-slate-700" colSpan={7}>
                     No prep batches yet.
                   </td>
                 </tr>
@@ -402,7 +424,11 @@ export default function PrepPage() {
                       </td>
 
                       <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
+                        <div className="text-xs text-slate-500">{enteredByLabel(batch)}</div>
+                      </td>
+
+<td className="px-4 py-3">
+  <div className="flex flex-wrap gap-2">
                           {isEditing ? (
                             <>
                               <button

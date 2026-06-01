@@ -10,6 +10,16 @@ type InventoryLotForDelete = {
   expiryAt: Date | null
 }
 
+function actorFieldsFromTenant(tenant: Awaited<ReturnType<typeof requireTenant>>) {
+  return {
+    enteredByType: tenant.role,
+    enteredByName: tenant.email || 'Chef',
+    enteredByEmail: tenant.email,
+    enteredByAuthUserId: tenant.authUserId,
+    enteredByStaffUserId: null,
+  }
+}
+
 function sameDate(a: Date | null, b: Date | null) {
   if (!a && !b) return true
   if (!a || !b) return false
@@ -114,6 +124,7 @@ export async function POST(req: Request) {
           supplier: body.supplier || null,
           price: totalCost,
           expiryAt,
+          ...actorFieldsFromTenant(tenant),
         },
         include: { item: true },
       })
