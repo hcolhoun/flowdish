@@ -121,6 +121,7 @@ export default function DeliveriesPage() {
   const [qty, setQty] = useState('')
   const [supplier, setSupplier] = useState('')
   const [totalCost, setTotalCost] = useState('')
+  const [batchCode, setBatchCode] = useState('')
   const [latestSupplierProduct, setLatestSupplierProduct] =
     useState<LatestSupplierProduct | null>(null)
   const [priceManuallyEdited, setPriceManuallyEdited] = useState(false)
@@ -422,6 +423,7 @@ export default function DeliveriesPage() {
           qty: Number(qty),
           supplier,
           totalCost: Number(totalCost),
+          batchCode,
         }),
       })
 
@@ -437,6 +439,7 @@ export default function DeliveriesPage() {
       setQty('')
       setSupplier('')
       setTotalCost('')
+      setBatchCode('')
       setLatestSupplierProduct(null)
       setPriceManuallyEdited(false)
       setSupplierManuallyEdited(false)
@@ -1176,6 +1179,25 @@ export default function DeliveriesPage() {
               }}
               className="w-full rounded-xl border px-3 py-2"
             />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-900">Batch Code</label>
+            <div className="flex gap-2">
+              <input
+                value={batchCode}
+                onChange={(e) => setBatchCode(e.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+                placeholder="Enter batch code"
+              />
+              <button
+                type="button"
+                onClick={() => setBatchCode('N/A')}
+                className="rounded-xl border px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
+              >
+                N/A
+              </button>
+            </div>
           </div>
 
           <div>

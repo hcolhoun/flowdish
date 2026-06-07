@@ -34,6 +34,7 @@ export async function GET() {
       expiryAt: lot.expiryAt,
       sourceType: lot.sourceType,
       unitCost: lot.unitCost,
+      batchCode: lot.batchCode,
       createdAt: lot.createdAt,
       deliveryId: lot.deliveryId,
       delivery: lot.delivery

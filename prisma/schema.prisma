@@ -263,6 +263,7 @@ model InventoryLot {
   sourceType   InventorySourceType
   unitCost     Float               @default(0)
   createdAt    DateTime            @default(now())
+  batchCode    String?
 
   deliveryId String?
   delivery   Delivery? @relation(fields: [deliveryId], references: [id], onDelete: SetNull)

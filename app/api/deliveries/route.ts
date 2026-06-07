@@ -101,6 +101,10 @@ export async function POST(req: Request) {
     }
 
     const unitCost = totalCost / qty
+    const batchCode =
+      typeof body.batchCode === 'string' && body.batchCode.trim() !== ''
+        ? body.batchCode.trim()
+        : null
 
     const expiryAt =
       body.expiryAt !== undefined && body.expiryAt !== null && body.expiryAt !== ''
@@ -139,6 +143,7 @@ export async function POST(req: Request) {
           expiryAt,
           sourceType: 'DELIVERY',
           unitCost,
+          batchCode,
           deliveryId: createdDelivery.id,
         },
       })

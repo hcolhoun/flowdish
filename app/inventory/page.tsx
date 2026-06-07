@@ -13,6 +13,7 @@ type InventoryLotRow = {
   expiryAt: string | null
   sourceType: 'DELIVERY' | 'PREP'
   unitCost: number
+  batchCode: string | null
   createdAt: string
   deliveryId: string | null
   delivery: {
@@ -43,6 +44,7 @@ export default function InventoryPage() {
         row.name,
         row.unitType,
         row.sourceType,
+        row.batchCode ?? '',
         row.delivery?.supplier ?? '',
         row.delivery ? formatDate(row.delivery.deliveredAt) : '',
         formatDate(row.expiryAt),
@@ -244,6 +246,7 @@ export default function InventoryPage() {
                   <th className="px-4 py-3 text-slate-800">Source</th>
                   <th className="px-4 py-3 text-slate-800">Delivery Date</th>
                   <th className="px-4 py-3 text-slate-800">Supplier</th>
+                  <th className="px-4 py-3 text-slate-800">Batch Code</th>
                   <th className="px-4 py-3 text-slate-800">Expiry</th>
                   <th className="px-4 py-3 text-slate-800">Unit Cost</th>
                   <th className="px-4 py-3 text-slate-800">Lot Value</th>
@@ -254,7 +257,7 @@ export default function InventoryPage() {
               <tbody>
                 {filteredRows.length === 0 ? (
                   <tr className="border-t">
-                    <td className="px-4 py-3 text-slate-700" colSpan={12}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={13}>
                       No inventory lots match your search.
                     </td>
                   </tr>
@@ -280,6 +283,7 @@ export default function InventoryPage() {
                         <td className="px-4 py-3 text-slate-800">
                           {row.delivery?.supplier ?? ''}
                         </td>
+                        <td className="px-4 py-3 text-slate-800">{row.batchCode ?? ''}</td>
                         <td className="px-4 py-3 text-slate-800">
                           {formatDate(row.expiryAt)}
                         </td>
