@@ -8,6 +8,24 @@ type RequiredComponent = {
   label: string
 }
 
+type HaccpRecordInput = {
+  hasAny: boolean
+  data: {
+    cookingEnabled: boolean
+    cookingFinishedAt: Date | null
+    cookingCoreTempC: number | null
+    coolingEnabled: boolean
+    coolingIntoFridgeAt: Date | null
+    reheatingEnabled: boolean
+    reheatingCoreTempC: number | null
+    hotHoldEnabled: boolean
+    hotHoldStartedAt: Date | null
+    hotHoldCoreTemp1C: number | null
+    hotHoldCoreTemp2C: number | null
+    hotHoldCoreTemp3C: number | null
+  }
+}
+
 function actorFieldsFromKitchenAccess(tenant: Awaited<ReturnType<typeof requireKitchenAccess>>) {
   if (tenant.type === 'STAFF') {
     return {
@@ -28,6 +46,56 @@ function actorFieldsFromKitchenAccess(tenant: Awaited<ReturnType<typeof requireK
   }
 }
 
+function nullableNumber(value: unknown) {
+  if (value === null || value === undefined || value === '') return null
+
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function nullableDate(value: unknown) {
+  if (value === null || value === undefined || value === '') return null
+
+  const date = new Date(String(value))
+  return Number.isNaN(date.getTime()) ? 'INVALID_DATE' : date
+}
+
+function haccpRecordInputFromBody(value: any): HaccpRecordInput {
+  const source = value && typeof value === 'object' ? value : {}
+  const cookingEnabled = Boolean(source.cookingEnabled)
+  const coolingEnabled = Boolean(source.coolingEnabled)
+  const reheatingEnabled = Boolean(source.reheatingEnabled)
+  const hotHoldEnabled = Boolean(source.hotHoldEnabled)
+
+  const data = {
+    cookingEnabled,
+    cookingFinishedAt: cookingEnabled ? nullableDate(source.cookingFinishedAt) : null,
+    cookingCoreTempC: cookingEnabled ? nullableNumber(source.cookingCoreTempC) : null,
+    coolingEnabled,
+    coolingIntoFridgeAt: coolingEnabled ? nullableDate(source.coolingIntoFridgeAt) : null,
+    reheatingEnabled,
+    reheatingCoreTempC: reheatingEnabled ? nullableNumber(source.reheatingCoreTempC) : null,
+    hotHoldEnabled,
+    hotHoldStartedAt: hotHoldEnabled ? nullableDate(source.hotHoldStartedAt) : null,
+    hotHoldCoreTemp1C: hotHoldEnabled ? nullableNumber(source.hotHoldCoreTemp1C) : null,
+    hotHoldCoreTemp2C: hotHoldEnabled ? nullableNumber(source.hotHoldCoreTemp2C) : null,
+    hotHoldCoreTemp3C: hotHoldEnabled ? nullableNumber(source.hotHoldCoreTemp3C) : null,
+  }
+
+  if (
+    data.cookingFinishedAt === 'INVALID_DATE' ||
+    data.coolingIntoFridgeAt === 'INVALID_DATE' ||
+    data.hotHoldStartedAt === 'INVALID_DATE'
+  ) {
+    throw new Error('INVALID_HACCP_DATE')
+  }
+
+  return {
+    hasAny: cookingEnabled || coolingEnabled || reheatingEnabled || hotHoldEnabled,
+    data: data as HaccpRecordInput['data'],
+  }
+}
+
 export async function GET() {
   try {
     const tenant = await requireKitchenAccess()
@@ -36,7 +104,7 @@ export async function GET() {
       where: {
         restaurantId: tenant.restaurantId,
       },
-      include: { item: true },
+      include: { item: true, haccpRecord: true },
       orderBy: { preparedAt: 'desc' },
     })
 
@@ -62,6 +130,7 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json()
+    const haccpRecord = haccpRecordInputFromBody(body.haccpRecord)
 
     const itemId = String(body.itemId || '')
     const preparedAt = new Date(body.preparedAt)
@@ -254,6 +323,16 @@ export async function POST(req: Request) {
         include: { item: true },
       })
 
+      if (haccpRecord.hasAny) {
+        await tx.prepHaccpRecord.create({
+          data: {
+            restaurantId: tenant.restaurantId,
+            prepBatchId: prepBatch.id,
+            ...haccpRecord.data,
+          },
+        })
+      }
+
       await tx.inventoryLot.create({
         data: {
           restaurantId: tenant.restaurantId,
@@ -264,10 +343,14 @@ export async function POST(req: Request) {
           expiryAt,
           sourceType: 'PREP',
           unitCost,
+          prepBatchId: prepBatch.id,
         },
       })
 
-      return prepBatch
+      return tx.prepBatch.findUnique({
+        where: { id: prepBatch.id },
+        include: { item: true, haccpRecord: true },
+      })
     })
 
     return NextResponse.json(result)
@@ -275,7 +358,186 @@ export async function POST(req: Request) {
     const accessError = kitchenAccessErrorResponse(error)
     if (accessError) return accessError
 
+    if (error instanceof Error && error.message === 'INVALID_HACCP_DATE') {
+      return NextResponse.json({ error: 'Valid HACCP dates are required' }, { status: 400 })
+    }
+
     console.error('POST /api/prep failed:', error)
     return NextResponse.json({ error: 'Failed to save prep batch' }, { status: 500 })
+  }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const tenant = await requireKitchenAccess()
+
+    if (!tenant.canRecordPrepWaste) {
+      return NextResponse.json(
+        { error: 'You do not have permission to update prep.' },
+        { status: 403 }
+      )
+    }
+
+    const body = await req.json()
+    const id = String(body.id || '')
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing prep batch id' }, { status: 400 })
+    }
+
+    const existing = await prisma.prepBatch.findFirst({
+      where: {
+        id,
+        restaurantId: tenant.restaurantId,
+      },
+      include: {
+        item: true,
+        haccpRecord: true,
+      },
+    })
+
+    if (!existing) {
+      return NextResponse.json({ error: 'Prep batch not found' }, { status: 404 })
+    }
+
+    const updateData: any = {}
+
+    if ('preparedAt' in body) {
+      const preparedAt = new Date(body.preparedAt)
+
+      if (Number.isNaN(preparedAt.getTime())) {
+        return NextResponse.json({ error: 'Valid prepared date is required' }, { status: 400 })
+      }
+
+      updateData.preparedAt = preparedAt
+    }
+
+    if ('qtyOutput' in body) {
+      const qtyOutput = Number(body.qtyOutput)
+
+      if (!qtyOutput || qtyOutput <= 0 || Number.isNaN(qtyOutput)) {
+        return NextResponse.json(
+          { error: 'Output quantity must be greater than 0' },
+          { status: 400 }
+        )
+      }
+
+      updateData.qtyOutput = qtyOutput
+    }
+
+    if ('expiryAt' in body) {
+      const expiryAt =
+        body.expiryAt !== undefined && body.expiryAt !== null && body.expiryAt !== ''
+          ? new Date(body.expiryAt)
+          : null
+
+      if (expiryAt && Number.isNaN(expiryAt.getTime())) {
+        return NextResponse.json({ error: 'Valid expiry date is required' }, { status: 400 })
+      }
+
+      updateData.expiryAt = expiryAt
+    }
+
+    const haccpRecordIncluded = 'haccpRecord' in body
+    const haccpRecord = haccpRecordInputFromBody(body.haccpRecord)
+    const stockFieldsChanged =
+      ('qtyOutput' in updateData && updateData.qtyOutput !== existing.qtyOutput) ||
+      ('expiryAt' in updateData &&
+        (updateData.expiryAt?.getTime() ?? null) !==
+          (existing.expiryAt?.getTime() ?? null))
+
+    const updated = await prisma.$transaction(async (tx: any) => {
+      const linkedLots = await tx.inventoryLot.findMany({
+        where: {
+          restaurantId: tenant.restaurantId,
+          prepBatchId: existing.id,
+          sourceType: 'PREP',
+        },
+      })
+
+      if (stockFieldsChanged) {
+        if (linkedLots.length === 0) {
+          throw new Error('PREP_LOT_NOT_LINKED')
+        }
+
+        const usedLot = linkedLots.find((lot: any) => lot.qtyRemaining !== lot.qtyInitial)
+
+        if (usedLot) {
+          throw new Error('PREP_STOCK_USED')
+        }
+      }
+
+      await tx.prepBatch.update({
+        where: { id: existing.id },
+        data: updateData,
+      })
+
+      if (haccpRecordIncluded && (haccpRecord.hasAny || existing.haccpRecord)) {
+        await tx.prepHaccpRecord.upsert({
+          where: { prepBatchId: existing.id },
+          create: {
+            restaurantId: tenant.restaurantId,
+            prepBatchId: existing.id,
+            ...haccpRecord.data,
+          },
+          update: haccpRecord.data,
+        })
+      }
+
+      if (linkedLots.length > 0) {
+        const lotData: any = {}
+
+        if ('qtyOutput' in updateData) {
+          lotData.qtyInitial = updateData.qtyOutput
+          lotData.qtyRemaining = updateData.qtyOutput
+        }
+
+        if ('expiryAt' in updateData) {
+          lotData.expiryAt = updateData.expiryAt
+        }
+
+        if (Object.keys(lotData).length > 0) {
+          await tx.inventoryLot.updateMany({
+            where: {
+              restaurantId: tenant.restaurantId,
+              prepBatchId: existing.id,
+              sourceType: 'PREP',
+            },
+            data: lotData,
+          })
+        }
+      }
+
+      return tx.prepBatch.findUnique({
+        where: { id: existing.id },
+        include: { item: true, haccpRecord: true },
+      })
+    })
+
+    return NextResponse.json(updated)
+  } catch (error) {
+    const accessError = kitchenAccessErrorResponse(error)
+    if (accessError) return accessError
+
+    if (error instanceof Error && error.message === 'INVALID_HACCP_DATE') {
+      return NextResponse.json({ error: 'Valid HACCP dates are required' }, { status: 400 })
+    }
+
+    if (error instanceof Error && error.message === 'PREP_STOCK_USED') {
+      return NextResponse.json(
+        { error: 'Prep batch cannot be edited because the produced stock has been used.' },
+        { status: 400 }
+      )
+    }
+
+    if (error instanceof Error && error.message === 'PREP_LOT_NOT_LINKED') {
+      return NextResponse.json(
+        { error: 'Prep batch stock lot was not found, so quantity or expiry cannot be edited.' },
+        { status: 400 }
+      )
+    }
+
+    console.error('PATCH /api/prep failed:', error)
+    return NextResponse.json({ error: 'Failed to update prep batch' }, { status: 500 })
   }
 }

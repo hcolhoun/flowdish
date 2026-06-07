@@ -14,6 +14,23 @@ type Item = {
   standardBatchOutput: number | null
 }
 
+type PrepHaccpRecord = {
+  id: string
+  cookingEnabled: boolean
+  cookingFinishedAt: string | null
+  cookingCoreTempC: number | null
+  coolingEnabled: boolean
+  coolingIntoFridgeAt: string | null
+  reheatingEnabled: boolean
+  reheatingCoreTempC: number | null
+  hotHoldEnabled: boolean
+  hotHoldStartedAt: string | null
+  hotHoldCoreTemp1C: number | null
+  hotHoldCoreTemp2C: number | null
+  hotHoldCoreTemp3C: number | null
+  updatedAt: string
+}
+
 type PrepBatch = {
   id: string
   preparedAt: string
@@ -23,17 +40,43 @@ type PrepBatch = {
   enteredByName?: string | null
   enteredByType?: string | null
   item: Item
+  haccpRecord?: PrepHaccpRecord | null
+}
+
+type HaccpForm = {
+  cookingEnabled: boolean
+  cookingFinishedAt: string
+  cookingCoreTempC: string
+  coolingEnabled: boolean
+  coolingIntoFridgeAt: string
+  reheatingEnabled: boolean
+  reheatingCoreTempC: string
+  hotHoldEnabled: boolean
+  hotHoldStartedAt: string
+  hotHoldCoreTemp1C: string
+  hotHoldCoreTemp2C: string
+  hotHoldCoreTemp3C: string
 }
 
 type EditingPrep = {
   preparedAt: string
   qtyOutput: string
   expiryAt: string
+  haccpRecord: HaccpForm
 }
 
 function toDateInputValue(value: string | Date | null | undefined) {
   if (!value) return ''
   return new Date(value).toISOString().slice(0, 10)
+}
+
+function toTimeInputValue(value: string | Date | null | undefined) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000)
+  return offsetDate.toISOString().slice(11, 16)
 }
 
 function todayInputValue() {
@@ -48,6 +91,229 @@ function addDaysToInputDate(dateValue: string, days: number | null) {
   return date.toISOString().slice(0, 10)
 }
 
+function emptyHaccpForm(): HaccpForm {
+  return {
+    cookingEnabled: false,
+    cookingFinishedAt: '',
+    cookingCoreTempC: '',
+    coolingEnabled: false,
+    coolingIntoFridgeAt: '',
+    reheatingEnabled: false,
+    reheatingCoreTempC: '',
+    hotHoldEnabled: false,
+    hotHoldStartedAt: '',
+    hotHoldCoreTemp1C: '',
+    hotHoldCoreTemp2C: '',
+    hotHoldCoreTemp3C: '',
+  }
+}
+
+function haccpFormFromRecord(record: PrepHaccpRecord | null | undefined): HaccpForm {
+  return {
+    cookingEnabled: Boolean(record?.cookingEnabled),
+    cookingFinishedAt: toTimeInputValue(record?.cookingFinishedAt),
+    cookingCoreTempC: record?.cookingCoreTempC != null ? String(record.cookingCoreTempC) : '',
+    coolingEnabled: Boolean(record?.coolingEnabled),
+    coolingIntoFridgeAt: toTimeInputValue(record?.coolingIntoFridgeAt),
+    reheatingEnabled: Boolean(record?.reheatingEnabled),
+    reheatingCoreTempC: record?.reheatingCoreTempC != null ? String(record.reheatingCoreTempC) : '',
+    hotHoldEnabled: Boolean(record?.hotHoldEnabled),
+    hotHoldStartedAt: toTimeInputValue(record?.hotHoldStartedAt),
+    hotHoldCoreTemp1C: record?.hotHoldCoreTemp1C != null ? String(record.hotHoldCoreTemp1C) : '',
+    hotHoldCoreTemp2C: record?.hotHoldCoreTemp2C != null ? String(record.hotHoldCoreTemp2C) : '',
+    hotHoldCoreTemp3C: record?.hotHoldCoreTemp3C != null ? String(record.hotHoldCoreTemp3C) : '',
+  }
+}
+
+function combineDateAndTime(dateValue: string, timeValue: string) {
+  if (!dateValue || !timeValue) return null
+  return `${dateValue}T${timeValue}:00`
+}
+
+function numberOrNull(value: string) {
+  return value === '' ? null : Number(value)
+}
+
+function haccpPayloadFromForm(form: HaccpForm, prepDate: string) {
+  return {
+    cookingEnabled: form.cookingEnabled,
+    cookingFinishedAt: form.cookingEnabled
+      ? combineDateAndTime(prepDate, form.cookingFinishedAt)
+      : null,
+    cookingCoreTempC: form.cookingEnabled ? numberOrNull(form.cookingCoreTempC) : null,
+    coolingEnabled: form.coolingEnabled,
+    coolingIntoFridgeAt: form.coolingEnabled
+      ? combineDateAndTime(prepDate, form.coolingIntoFridgeAt)
+      : null,
+    reheatingEnabled: form.reheatingEnabled,
+    reheatingCoreTempC: form.reheatingEnabled ? numberOrNull(form.reheatingCoreTempC) : null,
+    hotHoldEnabled: form.hotHoldEnabled,
+    hotHoldStartedAt: form.hotHoldEnabled
+      ? combineDateAndTime(prepDate, form.hotHoldStartedAt)
+      : null,
+    hotHoldCoreTemp1C: form.hotHoldEnabled ? numberOrNull(form.hotHoldCoreTemp1C) : null,
+    hotHoldCoreTemp2C: form.hotHoldEnabled ? numberOrNull(form.hotHoldCoreTemp2C) : null,
+    hotHoldCoreTemp3C: form.hotHoldEnabled ? numberOrNull(form.hotHoldCoreTemp3C) : null,
+  }
+}
+
+function HaccpChecksPanel({
+  form,
+  onChange,
+}: {
+  form: HaccpForm
+  onChange: (field: keyof HaccpForm, value: string | boolean) => void
+}) {
+  return (
+    <section className="md:col-span-2">
+      <div className="rounded-xl border bg-slate-50 p-4">
+        <h3 className="text-sm font-semibold text-slate-900">HACCP Checks</h3>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            ['cookingEnabled', 'Cooking'],
+            ['coolingEnabled', 'Cooling'],
+            ['reheatingEnabled', 'Reheating'],
+            ['hotHoldEnabled', 'Hot Hold'],
+          ].map(([field, label]) => (
+            <label
+              key={field}
+              className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm font-medium text-slate-800"
+            >
+              <input
+                type="checkbox"
+                checked={Boolean(form[field as keyof HaccpForm])}
+                onChange={(e) => onChange(field as keyof HaccpForm, e.target.checked)}
+                className="h-4 w-4"
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+
+        {form.cookingEnabled ? (
+          <div className="mt-4 grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2">
+            <h4 className="md:col-span-2 text-sm font-semibold text-slate-900">Cooking</h4>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Time Finished Cooking
+              </label>
+              <input
+                type="time"
+                value={form.cookingFinishedAt}
+                onChange={(e) => onChange('cookingFinishedAt', e.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Core Temp (C)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                value={form.cookingCoreTempC}
+                onChange={(e) => onChange('cookingCoreTempC', e.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {form.coolingEnabled ? (
+          <div className="mt-4 grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2">
+            <h4 className="md:col-span-2 text-sm font-semibold text-slate-900">Cooling</h4>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Time Into Fridge/Blast Chiller
+              </label>
+              <input
+                type="time"
+                value={form.coolingIntoFridgeAt}
+                onChange={(e) => onChange('coolingIntoFridgeAt', e.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {form.reheatingEnabled ? (
+          <div className="mt-4 grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2">
+            <h4 className="md:col-span-2 text-sm font-semibold text-slate-900">Reheating</h4>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Core Temp (C)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                value={form.reheatingCoreTempC}
+                onChange={(e) => onChange('reheatingCoreTempC', e.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {form.hotHoldEnabled ? (
+          <div className="mt-4 grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2">
+            <h4 className="md:col-span-2 text-sm font-semibold text-slate-900">
+              Hot Hold Display Records
+            </h4>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Time Into Hot Hold
+              </label>
+              <input
+                type="time"
+                value={form.hotHoldStartedAt}
+                onChange={(e) => onChange('hotHoldStartedAt', e.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Core Temp 1st Check (C)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                value={form.hotHoldCoreTemp1C}
+                onChange={(e) => onChange('hotHoldCoreTemp1C', e.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Core Temp 2nd Check (C)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                value={form.hotHoldCoreTemp2C}
+                onChange={(e) => onChange('hotHoldCoreTemp2C', e.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Core Temp 3rd Check (C)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                value={form.hotHoldCoreTemp3C}
+                onChange={(e) => onChange('hotHoldCoreTemp3C', e.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+              />
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
 export default function PrepPage() {
   const [items, setItems] = useState<Item[]>([])
   const [prepBatches, setPrepBatches] = useState<PrepBatch[]>([])
@@ -55,6 +321,7 @@ export default function PrepPage() {
   const [preparedAt, setPreparedAt] = useState('')
   const [qtyOutput, setQtyOutput] = useState('')
   const [expiryAt, setExpiryAt] = useState('')
+  const [haccpRecord, setHaccpRecord] = useState<HaccpForm>(emptyHaccpForm)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [saving, setSaving] = useState(false)
@@ -96,11 +363,43 @@ export default function PrepPage() {
     const name = batch.enteredByName || 'Unknown'
     const date = formatDateTime(batch.createdAt)
 
-    return date ? `${name} · ${date}` : name
+    return date ? `${name} - ${date}` : name
   }
 
   function formatQty(value: number) {
     return Number.isInteger(value) ? String(value) : value.toFixed(3)
+  }
+
+  function haccpSummary(record: PrepHaccpRecord | null | undefined) {
+    if (!record) return 'None'
+
+    const fields = [
+      record.cookingEnabled ? 'Cooking ✓' : '',
+      record.coolingEnabled ? 'Cooling ✓' : '',
+      record.reheatingEnabled ? 'Reheating ✓' : '',
+      record.hotHoldEnabled ? 'Hot Hold ✓' : '',
+    ].filter(Boolean)
+
+    return fields.length > 0 ? fields.join('  ') : 'None'
+  }
+
+  function updateNewHaccp(field: keyof HaccpForm, value: string | boolean) {
+    setHaccpRecord((current) => ({
+      ...current,
+      [field]: value,
+    }))
+  }
+
+  function updateEditingHaccp(field: keyof HaccpForm, value: string | boolean) {
+    if (!editingPrep) return
+
+    setEditingPrep({
+      ...editingPrep,
+      haccpRecord: {
+        ...editingPrep.haccpRecord,
+        [field]: value,
+      },
+    })
   }
 
   async function loadData() {
@@ -151,6 +450,7 @@ export default function PrepPage() {
       preparedAt: toDateInputValue(batch.preparedAt),
       qtyOutput: String(batch.qtyOutput),
       expiryAt: toDateInputValue(batch.expiryAt),
+      haccpRecord: haccpFormFromRecord(batch.haccpRecord),
     })
     setError('')
     setMessage('')
@@ -177,6 +477,7 @@ export default function PrepPage() {
           preparedAt,
           qtyOutput: Number(qtyOutput),
           expiryAt: expiryAt || null,
+          haccpRecord: haccpPayloadFromForm(haccpRecord, preparedAt),
         }),
       })
 
@@ -191,6 +492,7 @@ export default function PrepPage() {
       setPreparedAt(today)
       setQtyOutput('')
       setExpiryAt('')
+      setHaccpRecord(emptyHaccpForm())
       setMessage('Prep batch saved.')
       await loadData()
     } catch (err) {
@@ -216,6 +518,7 @@ export default function PrepPage() {
           preparedAt: editingPrep.preparedAt,
           qtyOutput: Number(editingPrep.qtyOutput),
           expiryAt: editingPrep.expiryAt || null,
+          haccpRecord: haccpPayloadFromForm(editingPrep.haccpRecord, editingPrep.preparedAt),
         }),
       })
 
@@ -281,8 +584,8 @@ export default function PrepPage() {
 
             {selectedItem ? (
               <p className="mt-2 text-sm text-slate-600">
-                Unit: {selectedItem.unitType} · Shelf life:{' '}
-                {selectedItem.shelfLifeDays ?? 'N/A'} days · Std batch:{' '}
+                Unit: {selectedItem.unitType} - Shelf life:{' '}
+                {selectedItem.shelfLifeDays ?? 'N/A'} days - Std batch:{' '}
                 {selectedItem.standardBatchOutput ?? 'N/A'}
               </p>
             ) : null}
@@ -314,9 +617,7 @@ export default function PrepPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-900">
-              Expiry Date
-            </label>
+            <label className="mb-1 block text-sm font-medium text-slate-900">Expiry Date</label>
             <input
               type="date"
               value={expiryAt}
@@ -325,13 +626,15 @@ export default function PrepPage() {
             />
           </div>
 
+          <HaccpChecksPanel form={haccpRecord} onChange={updateNewHaccp} />
+
           <div className="flex items-end">
             <button
               type="submit"
               disabled={saving}
               className="rounded-xl bg-slate-900 px-4 py-2 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
             >
-              {saving ? 'Saving…' : 'Save Prep Batch'}
+              {saving ? 'Saving...' : 'Save Prep Batch'}
             </button>
           </div>
         </form>
@@ -345,6 +648,7 @@ export default function PrepPage() {
                 <th className="px-4 py-3 text-slate-800">Qty Output</th>
                 <th className="px-4 py-3 text-slate-800">Unit</th>
                 <th className="px-4 py-3 text-slate-800">Expiry</th>
+                <th className="px-4 py-3 text-slate-800">HACCP</th>
                 <th className="px-4 py-3 text-slate-800">Entered</th>
                 <th className="px-4 py-3 text-slate-800">Actions</th>
               </tr>
@@ -352,7 +656,7 @@ export default function PrepPage() {
             <tbody>
               {prepBatches.length === 0 ? (
                 <tr className="border-t">
-                  <td className="px-4 py-3 text-slate-700" colSpan={7}>
+                  <td className="px-4 py-3 text-slate-700" colSpan={8}>
                     No prep batches yet.
                   </td>
                 </tr>
@@ -361,7 +665,7 @@ export default function PrepPage() {
                   const isEditing = editingId === batch.id && editingPrep
 
                   return (
-                    <tr key={batch.id} className="border-t">
+                    <tr key={batch.id} className="border-t align-top">
                       <td className="px-4 py-3">
                         {isEditing ? (
                           <input
@@ -423,12 +727,25 @@ export default function PrepPage() {
                         )}
                       </td>
 
+                      <td className="min-w-72 px-4 py-3">
+                        {isEditing ? (
+                          <HaccpChecksPanel
+                            form={editingPrep.haccpRecord}
+                            onChange={updateEditingHaccp}
+                          />
+                        ) : (
+                          <div className="text-sm text-slate-700">
+                            {haccpSummary(batch.haccpRecord)}
+                          </div>
+                        )}
+                      </td>
+
                       <td className="px-4 py-3">
                         <div className="text-xs text-slate-500">{enteredByLabel(batch)}</div>
                       </td>
 
-<td className="px-4 py-3">
-  <div className="flex flex-wrap gap-2">
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-2">
                           {isEditing ? (
                             <>
                               <button

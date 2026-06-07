@@ -62,6 +62,7 @@ model Restaurant {
   deliveries                  Delivery[]
   inventoryLots               InventoryLot[]
   prepBatches                 PrepBatch[]
+  prepHaccpRecords            PrepHaccpRecord[]
   sales                       Sale[]
   wastes                      Waste[]
   forecasts                   Forecast[]
@@ -268,11 +269,15 @@ model InventoryLot {
   deliveryId String?
   delivery   Delivery? @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
 
+  prepBatchId String?
+  prepBatch   PrepBatch? @relation(fields: [prepBatchId], references: [id], onDelete: SetNull)
+
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   item       Item       @relation(fields: [itemId], references: [id])
 
   @@index([restaurantId])
   @@index([deliveryId])
+  @@index([prepBatchId])
   @@index([itemId])
 }
 
@@ -293,9 +298,36 @@ model PrepBatch {
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   item       Item       @relation(fields: [itemId], references: [id])
+  inventoryLots InventoryLot[]
+  haccpRecord PrepHaccpRecord?
 
   @@index([restaurantId])
   @@index([itemId])
+}
+
+model PrepHaccpRecord {
+  id                       String   @id @default(cuid())
+  restaurantId             String
+  prepBatchId              String   @unique
+  cookingEnabled           Boolean  @default(false)
+  cookingFinishedAt        DateTime?
+  cookingCoreTempC         Float?
+  coolingEnabled           Boolean  @default(false)
+  coolingIntoFridgeAt      DateTime?
+  reheatingEnabled         Boolean  @default(false)
+  reheatingCoreTempC       Float?
+  hotHoldEnabled           Boolean  @default(false)
+  hotHoldStartedAt         DateTime?
+  hotHoldCoreTemp1C        Float?
+  hotHoldCoreTemp2C        Float?
+  hotHoldCoreTemp3C        Float?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  prepBatch  PrepBatch  @relation(fields: [prepBatchId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
 }
 
 model Sale {
