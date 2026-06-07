@@ -16,6 +16,8 @@ type StaffUser = {
   username: string
   displayName: string
   active: boolean
+  isAccountPin: boolean
+  accountEmail: string | null
   createdAt: string
 }
 
@@ -41,9 +43,12 @@ type AdminData = {
   restaurant: Restaurant
   memberships: Membership[]
   staffUsers: StaffUser[]
+  accountPin: StaffUser | null
   staffLimits: {
     plan: 'BASIC' | 'PREMIUM'
     activeStaffCount: number
+    activeAccountPinCount: number
+    totalActivePinCount: number
     maxStaffUsers: number | null
     remainingStaffUsers: number | null
   }
@@ -82,6 +87,8 @@ type CreateStaffResult = {
   }
   error?: string
 }
+
+type AccountPinResult = CreateStaffResult
 
 type AdminRestaurant = {
   id: string
@@ -134,6 +141,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true)
   const [savingRestaurant, setSavingRestaurant] = useState(false)
   const [savingStaff, setSavingStaff] = useState(false)
+  const [savingAccountPin, setSavingAccountPin] = useState(false)
   const [loadingFrontloadData, setLoadingFrontloadData] = useState(false)
   const [frontloading, setFrontloading] = useState(false)
 
@@ -148,6 +156,9 @@ export default function AdminPage() {
   const [staffDisplayName, setStaffDisplayName] = useState('')
   const [staffPin, setStaffPin] = useState('')
   const [staffResult, setStaffResult] = useState<CreateStaffResult | null>(null)
+  const [accountPinDisplayName, setAccountPinDisplayName] = useState('')
+  const [accountPin, setAccountPin] = useState('')
+  const [accountPinResult, setAccountPinResult] = useState<AccountPinResult | null>(null)
 
   const [restaurants, setRestaurants] = useState<AdminRestaurant[]>([])
   const [templateL0s, setTemplateL0s] = useState<TemplateL0[]>([])
@@ -158,6 +169,11 @@ export default function AdminPage() {
   const selectedRestaurant = useMemo(
     () => restaurants.find((restaurant) => restaurant.id === selectedRestaurantId) || null,
     [restaurants, selectedRestaurantId]
+  )
+
+  const staffPinUsers = useMemo(
+    () => data?.staffUsers.filter((staff) => !staff.isAccountPin) || [],
+    [data?.staffUsers]
   )
 
   async function safeJson(res: Response) {
@@ -186,6 +202,7 @@ export default function AdminPage() {
       }
 
       setData(json)
+      setAccountPinDisplayName(json.accountPin?.displayName || json.currentUser.email || '')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -321,6 +338,42 @@ export default function AdminPage() {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setSavingStaff(false)
+    }
+  }
+
+  async function handleSaveAccountPin(e: React.FormEvent) {
+    e.preventDefault()
+
+    try {
+      setSavingAccountPin(true)
+      setError('')
+      setMessage('')
+      setAccountPinResult(null)
+
+      const res = await fetch('/api/admin/account-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          displayName: accountPinDisplayName,
+          pin: accountPin,
+        }),
+      })
+
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to save your PIN')
+      }
+
+      setAccountPinResult(json)
+      setMessage(`Your PIN login is ready: ${json.login?.username}`)
+      setAccountPin('')
+
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSavingAccountPin(false)
     }
   }
 
@@ -480,12 +533,15 @@ export default function AdminPage() {
                 </div>
 
                 <div className="rounded-xl border bg-slate-50 p-4">
-                  <div className="text-xs text-slate-500">Staff Users</div>
+                  <div className="text-xs text-slate-500">Staff PIN Users</div>
                   <div className="mt-1 font-semibold text-slate-900">
                     {data.staffLimits.activeStaffCount}
                     {data.staffLimits.maxStaffUsers === null
                       ? ' / unlimited'
                       : ` / ${data.staffLimits.maxStaffUsers}`}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    Account PINs: {data.staffLimits.activeAccountPinCount}
                   </div>
                 </div>
               </div>
@@ -526,9 +582,76 @@ export default function AdminPage() {
             </section>
 
             <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold text-slate-900">Your PIN Login</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                This gives the account user a quick PIN login for Prep and Waste. It does not use
+                one of the Basic plan staff PIN slots.
+              </p>
+
+              {data.accountPin ? (
+                <div className="mt-5 rounded-xl border bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  Current PIN username:{' '}
+                  <span className="font-mono font-semibold text-slate-900">
+                    {data.accountPin.username}
+                  </span>
+                </div>
+              ) : null}
+
+              <form onSubmit={handleSaveAccountPin} className="mt-6 grid gap-4 md:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Display Name
+                  </label>
+                  <input
+                    value={accountPinDisplayName}
+                    onChange={(e) => setAccountPinDisplayName(e.target.value)}
+                    className="w-full rounded-xl border px-3 py-2"
+                    placeholder="Head Chef"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    4 Digit PIN
+                  </label>
+                  <input
+                    value={accountPin}
+                    onChange={(e) => setAccountPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    className="w-full rounded-xl border px-3 py-2"
+                    placeholder="1234"
+                    inputMode="numeric"
+                    maxLength={4}
+                    required
+                  />
+                </div>
+
+                <div className="flex items-end">
+                  <button
+                    type="submit"
+                    disabled={savingAccountPin}
+                    className="rounded-xl bg-slate-900 px-5 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {savingAccountPin ? 'Saving...' : data.accountPin ? 'Update My PIN' : 'Create My PIN'}
+                  </button>
+                </div>
+              </form>
+
+              {accountPinResult?.login ? (
+                <div className="mt-5 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800">
+                  Your PIN login:{' '}
+                  <span className="font-mono">
+                    {accountPinResult.login.restaurantCode} / {accountPinResult.login.username}
+                  </span>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
               <h2 className="text-xl font-semibold text-slate-900">Staff PIN Users</h2>
               <p className="mt-1 text-sm text-slate-600">
-                Staff users can only access Prep and Waste.
+                Staff users can only access Prep and Waste. Basic includes 3 staff PIN users plus
+                the account PIN above.
               </p>
 
               <div className="mt-5 overflow-hidden rounded-xl border">
@@ -542,14 +665,14 @@ export default function AdminPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.staffUsers.length === 0 ? (
+                    {staffPinUsers.length === 0 ? (
                       <tr>
                         <td className="px-4 py-3 text-slate-600" colSpan={4}>
                           No staff PIN users yet.
                         </td>
                       </tr>
                     ) : (
-                      data.staffUsers.map((staff) => (
+                      staffPinUsers.map((staff) => (
                         <tr key={staff.id} className="border-t">
                           <td className="px-4 py-3">{staff.displayName}</td>
                           <td className="px-4 py-3 font-mono text-xs">{staff.username}</td>

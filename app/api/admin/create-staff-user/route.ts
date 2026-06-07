@@ -54,7 +54,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Restaurant not found.' }, { status: 404 })
     }
 
-    const activeStaffCount = restaurant.staffUsers.filter((staff) => staff.active).length
+    const activeStaffCount = restaurant.staffUsers.filter(
+      (staff) => staff.active && !staff.isAccountPin
+    ).length
 
     if (restaurant.plan === 'BASIC' && activeStaffCount >= 3) {
       return NextResponse.json(

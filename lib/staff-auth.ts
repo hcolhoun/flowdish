@@ -11,6 +11,9 @@ type StaffSessionPayload = {
   restaurantId: string
   username: string
   displayName: string
+  isAccountPin?: boolean
+  accountAuthUserId?: string | null
+  accountEmail?: string | null
   exp: number
 }
 
@@ -127,6 +130,16 @@ export async function getStaffSession() {
 
   if (!staffUser) return null
 
+  const accountMembership =
+    staffUser.isAccountPin && staffUser.accountAuthUserId
+      ? await prisma.userMembership.findFirst({
+          where: {
+            authUserId: staffUser.accountAuthUserId,
+            restaurantId: staffUser.restaurantId,
+          },
+        })
+      : null
+
   return {
     staffUserId: staffUser.id,
     restaurantId: staffUser.restaurantId,
@@ -134,5 +147,9 @@ export async function getStaffSession() {
     username: staffUser.username,
     displayName: staffUser.displayName,
     role: 'STAFF' as const,
+    isAccountPin: staffUser.isAccountPin,
+    accountAuthUserId: staffUser.accountAuthUserId,
+    accountEmail: staffUser.accountEmail,
+    accountRole: accountMembership?.role ?? null,
   }
 }

@@ -7,6 +7,38 @@ export async function GET() {
   try {
     const staffSession = await getStaffSession()
 
+    if (staffSession?.isAccountPin && staffSession.accountRole) {
+      const isHeadChef = staffSession.accountRole === 'OWNER' || staffSession.accountRole === 'ADMIN'
+      const isChefStaff = staffSession.accountRole === 'CHEF'
+
+      return NextResponse.json({
+        user: {
+          email: staffSession.accountEmail,
+          authUserId: staffSession.accountAuthUserId,
+          staffUserId: staffSession.staffUserId,
+          username: staffSession.username,
+          displayName: staffSession.displayName,
+        },
+        restaurant: {
+          id: staffSession.restaurantId,
+          name: staffSession.restaurantName,
+        },
+        role: staffSession.accountRole,
+        labels: {
+          roleLabel: isHeadChef ? 'Head Chef' : 'Chef Staff',
+        },
+        permissions: {
+          isSystemOwner: false,
+          isHeadChef,
+          isChefStaff,
+          isViewer: false,
+          canSeeAdmin: isHeadChef,
+          canSeeFullKitchenSystem: isHeadChef,
+          canSeePrepWasteOnly: isChefStaff,
+        },
+      })
+    }
+
     if (staffSession) {
       return NextResponse.json({
         user: {

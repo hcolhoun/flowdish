@@ -32,6 +32,9 @@ export async function GET() {
             username: true,
             displayName: true,
             active: true,
+            isAccountPin: true,
+            accountAuthUserId: true,
+            accountEmail: true,
             createdAt: true,
           },
         },
@@ -60,7 +63,18 @@ export async function GET() {
         })
       : []
 
-    const activeStaffCount = restaurant.staffUsers.filter((staff) => staff.active).length
+    const accountPin = restaurant.staffUsers.find(
+      (staff) =>
+        staff.isAccountPin &&
+        staff.accountAuthUserId === tenant.authUserId &&
+        staff.active
+    )
+    const activeStaffCount = restaurant.staffUsers.filter(
+      (staff) => staff.active && !staff.isAccountPin
+    ).length
+    const activeAccountPinCount = restaurant.staffUsers.filter(
+      (staff) => staff.active && staff.isAccountPin
+    ).length
 
     return NextResponse.json({
       currentUser: {
@@ -98,11 +112,26 @@ export async function GET() {
         username: staff.username,
         displayName: staff.displayName,
         active: staff.active,
+        isAccountPin: staff.isAccountPin,
+        accountEmail: staff.accountEmail,
         createdAt: staff.createdAt,
       })),
+      accountPin: accountPin
+        ? {
+            id: accountPin.id,
+            username: accountPin.username,
+            displayName: accountPin.displayName,
+            active: accountPin.active,
+            isAccountPin: accountPin.isAccountPin,
+            accountEmail: accountPin.accountEmail,
+            createdAt: accountPin.createdAt,
+          }
+        : null,
       staffLimits: {
         plan: restaurant.plan,
         activeStaffCount,
+        activeAccountPinCount,
+        totalActivePinCount: activeStaffCount + activeAccountPinCount,
         maxStaffUsers: restaurant.plan === 'BASIC' ? 3 : null,
         remainingStaffUsers:
           restaurant.plan === 'BASIC' ? Math.max(0, 3 - activeStaffCount) : null,

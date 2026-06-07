@@ -64,6 +64,9 @@ export async function POST(req: Request) {
       restaurantId: restaurant.id,
       username: staffUser.username,
       displayName: staffUser.displayName,
+      isAccountPin: staffUser.isAccountPin,
+      accountAuthUserId: staffUser.accountAuthUserId,
+      accountEmail: staffUser.accountEmail,
     })
 
     const res = NextResponse.json({
@@ -72,6 +75,7 @@ export async function POST(req: Request) {
         id: staffUser.id,
         username: staffUser.username,
         displayName: staffUser.displayName,
+        isAccountPin: staffUser.isAccountPin,
       },
       restaurant: {
         id: restaurant.id,

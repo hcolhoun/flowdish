@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import { prisma } from '@/lib/prisma'
+import { getStaffSession } from '@/lib/staff-auth'
 
 type TenantContext = {
   authUserId: string
@@ -98,6 +99,26 @@ export async function requireTenant(): Promise<TenantContext> {
   const user = await getCurrentUser()
 
   if (!user) {
+    const staffSession = await getStaffSession()
+
+    if (staffSession?.isAccountPin && staffSession.accountAuthUserId && staffSession.accountRole) {
+      if (
+        staffSession.accountRole !== 'OWNER' &&
+        staffSession.accountRole !== 'ADMIN' &&
+        staffSession.accountRole !== 'CHEF'
+      ) {
+        throw new Error('UNAUTHENTICATED')
+      }
+
+      return {
+        authUserId: staffSession.accountAuthUserId,
+        email: staffSession.accountEmail,
+        restaurantId: staffSession.restaurantId,
+        restaurantName: staffSession.restaurantName,
+        role: staffSession.accountRole,
+      }
+    }
+
     throw new Error('UNAUTHENTICATED')
   }
 

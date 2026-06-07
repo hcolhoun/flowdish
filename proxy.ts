@@ -53,6 +53,12 @@ export async function proxy(req: NextRequest) {
   }
 
   if (!user) {
+    const staffSessionToken = req.cookies.get('flowdish_staff_session')?.value
+
+    if (staffSessionToken) {
+      return res
+    }
+
     return NextResponse.redirect(new URL('/login', req.url))
   }
 

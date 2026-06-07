@@ -89,17 +89,22 @@ model UserMembership {
 }
 
 model StaffUser {
-  id           String   @id @default(cuid())
-  restaurantId String
-  username     String
-  displayName  String
-  pinHash      String
-  active       Boolean  @default(true)
-  createdAt    DateTime @default(now())
+  id                String   @id @default(cuid())
+  restaurantId      String
+  username          String
+  displayName       String
+  pinHash           String
+  active            Boolean  @default(true)
+  isAccountPin      Boolean  @default(false)
+  accountAuthUserId String?
+  accountEmail      String?
+  createdAt         DateTime @default(now())
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
 
   @@unique([restaurantId, username])
+  @@index([restaurantId, isAccountPin])
+  @@index([accountAuthUserId])
   @@index([restaurantId])
 }
 

@@ -26,6 +26,22 @@ export type KitchenAccess =
 export async function requireKitchenAccess(): Promise<KitchenAccess> {
   const staffSession = await getStaffSession()
 
+  if (staffSession?.isAccountPin && staffSession.accountAuthUserId && staffSession.accountRole) {
+    return {
+      type: 'AUTH',
+      restaurantId: staffSession.restaurantId,
+      restaurantName: staffSession.restaurantName,
+      role: staffSession.accountRole,
+      email: staffSession.accountEmail,
+      authUserId: staffSession.accountAuthUserId,
+      isSystemOwner: false,
+      canRecordPrepWaste:
+        staffSession.accountRole === 'OWNER' ||
+        staffSession.accountRole === 'ADMIN' ||
+        staffSession.accountRole === 'CHEF',
+    }
+  }
+
   if (staffSession) {
     return {
       type: 'STAFF',
