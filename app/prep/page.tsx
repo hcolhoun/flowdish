@@ -704,7 +704,8 @@ export default function PrepPage() {
         </form>
 
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <table className="w-full text-left">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] text-left">
             <thead className="bg-slate-100 text-sm">
               <tr>
                 <th className="px-4 py-3 text-slate-800">Date</th>
@@ -714,7 +715,9 @@ export default function PrepPage() {
                 <th className="px-4 py-3 text-slate-800">Expiry</th>
                 <th className="px-4 py-3 text-slate-800">HACCP</th>
                 <th className="px-4 py-3 text-slate-800">Entered</th>
-                <th className="px-4 py-3 text-slate-800">Actions</th>
+                <th className="sticky right-0 z-10 bg-slate-100 px-4 py-3 text-slate-800">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -791,7 +794,7 @@ export default function PrepPage() {
                         )}
                       </td>
 
-                      <td className="min-w-72 px-4 py-3">
+                      <td className="min-w-80 max-w-md px-4 py-3">
                         {isEditing ? (
                           <HaccpChecksPanel
                             form={editingPrep.haccpRecord}
@@ -809,8 +812,8 @@ export default function PrepPage() {
                         <div className="text-xs text-slate-500">{enteredByLabel(batch)}</div>
                       </td>
 
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
+                      <td className="sticky right-0 bg-white px-4 py-3 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)]">
+                        <div className="flex min-w-24 flex-col gap-2">
                           {isEditing ? (
                             <>
                               <button
@@ -848,6 +851,7 @@ export default function PrepPage() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
 
         <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
