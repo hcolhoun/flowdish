@@ -28,16 +28,15 @@ type AccessProfile = {
 
 const fullLinks = [
   { href: '/', label: 'Dashboard' },
-  { href: '/items', label: 'Items' },
+  { href: '/suppliers', label: 'Supplier Products' },
   { href: '/bom', label: 'BOM' },
   { href: '/sops', label: 'SOPs' },
-  { href: '/suppliers', label: 'Supplier Products' },
   { href: '/deliveries', label: 'Deliveries' },
   { href: '/inventory', label: 'Inventory' },
+  { href: '/planning', label: 'Planning' },
   { href: '/prep', label: 'Prep' },
   { href: '/sales', label: 'Sales' },
   { href: '/waste', label: 'Waste' },
-  { href: '/planning', label: 'Planning' },
 ]
 
 const staffLinks = [
