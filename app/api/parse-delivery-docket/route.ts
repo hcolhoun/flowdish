@@ -239,6 +239,16 @@ ${text.slice(0, 120000)}
 
   if (!response.ok) {
     console.error('DeepSeek delivery docket parse failed:', json)
+    const message = String(json?.error?.message || '')
+
+    if (
+      response.status === 401 ||
+      response.status === 403 ||
+      message.toLowerCase().includes('authentication')
+    ) {
+      throw new Error('DEEPSEEK_AUTH_FAILED')
+    }
+
     throw new Error('DEEPSEEK_REQUEST_FAILED')
   }
 
@@ -431,6 +441,16 @@ export async function POST(req: Request) {
     if (error instanceof Error && error.message === 'DEEPSEEK_API_KEY_MISSING') {
       return NextResponse.json(
         { error: 'DEEPSEEK_API_KEY is not configured.' },
+        { status: 500 }
+      )
+    }
+
+    if (error instanceof Error && error.message === 'DEEPSEEK_AUTH_FAILED') {
+      return NextResponse.json(
+        {
+          error:
+            'DeepSeek rejected the API key. Create a new key in the DeepSeek Platform, replace DEEPSEEK_API_KEY in Vercel Production, then redeploy.',
+        },
         { status: 500 }
       )
     }
