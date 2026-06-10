@@ -111,9 +111,13 @@ type TesseractLog = {
 
 type TesseractBrowser = {
   recognize: (
-    image: File,
+    image: File | Blob | HTMLCanvasElement,
     language?: string,
-    options?: { logger?: (message: TesseractLog) => void }
+    options?: {
+      logger?: (message: TesseractLog) => void
+      tessedit_pageseg_mode?: string
+      preserve_interword_spaces?: string
+    }
   ) => Promise<{ data: { text: string } }>
 }
 
@@ -619,11 +623,74 @@ export default function DeliveriesPage() {
     })
   }
 
+  function loadImage(file: File) {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+      const url = URL.createObjectURL(file)
+      const image = new Image()
+
+      image.onload = () => {
+        URL.revokeObjectURL(url)
+        resolve(image)
+      }
+
+      image.onerror = () => {
+        URL.revokeObjectURL(url)
+        reject(new Error('Could not read the docket image.'))
+      }
+
+      image.src = url
+    })
+  }
+
+  async function prepareImageForOcr(file: File) {
+    setDocketOcrProgress('Preparing image...')
+
+    const image = await loadImage(file)
+    const maxWidth = 2600
+    const scale = Math.max(1, Math.min(3, maxWidth / image.width))
+    const width = Math.round(image.width * scale)
+    const height = Math.round(image.height * scale)
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+
+    if (!context) {
+      throw new Error('Could not prepare the docket image.')
+    }
+
+    canvas.width = width
+    canvas.height = height
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(image, 0, 0, width, height)
+
+    const imageData = context.getImageData(0, 0, width, height)
+    const pixels = imageData.data
+
+    for (let index = 0; index < pixels.length; index += 4) {
+      const red = pixels[index]
+      const green = pixels[index + 1]
+      const blue = pixels[index + 2]
+      const grey = red * 0.299 + green * 0.587 + blue * 0.114
+      const contrasted = (grey - 128) * 1.8 + 128
+      const blackOrWhite = contrasted > 150 ? 255 : 0
+
+      pixels[index] = blackOrWhite
+      pixels[index + 1] = blackOrWhite
+      pixels[index + 2] = blackOrWhite
+    }
+
+    context.putImageData(imageData, 0, 0)
+    return canvas
+  }
+
   async function readImageText(file: File) {
     setDocketOcrProgress('Loading OCR...')
     const tesseract = await loadTesseract()
+    const preparedImage = await prepareImageForOcr(file)
 
-    const result = await tesseract.recognize(file, 'eng', {
+    const result = await tesseract.recognize(preparedImage, 'eng', {
+      tessedit_pageseg_mode: '6',
+      preserve_interword_spaces: '1',
       logger: (message) => {
         if (!message.status) return
 

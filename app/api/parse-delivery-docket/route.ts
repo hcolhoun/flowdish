@@ -186,6 +186,10 @@ For each line item return:
 Rules:
 - Do not invent rows.
 - If uncertain, still include the row but put uncertainty in notes.
+- Many dockets are OCR text from a table with columns like PRODUCT, DESCRIPTION, QTY, WEIGHT, PRICE PER, UNIT COST, TOTAL COST.
+- For table OCR, treat the PRODUCT column as supplierSku and DESCRIPTION as productName.
+- Do not use the supplier name or random OCR fragments as supplierSku.
+- Supplier SKUs are usually short product codes near the start of each row, such as CODSP1, IC7801, ICP781, or MUSS02.
 - If the docket uses cases, packs, boxes, trays, bags, bottles, tins, bunches, tubs, units, or eaches, use unitType "each" unless a clear gram/ml amount is the delivered quantity.
 - If a row shows weight like kg/g, convert qty to grams where possible and unitType "g".
 - If a row shows litres/ml, convert qty to ml where possible and unitType "ml".
