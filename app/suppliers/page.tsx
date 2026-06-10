@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { readImageTextWithTesseract } from '@/lib/browser-ocr'
 
 type UnitType = 'g' | 'ml' | 'each'
 
@@ -161,6 +162,8 @@ export default function SuppliersPage() {
   const [supplier, setSupplier] = useState<'Caterway' | 'Sysco'>('Caterway')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [fileName, setFileName] = useState('')
+  const [pasteText, setPasteText] = useState('')
+  const [ocrProgress, setOcrProgress] = useState('')
 
   const [preview, setPreview] = useState<ImportRow[]>([])
   const [rejectedRows, setRejectedRows] = useState<ImportRow[]>([])
@@ -195,6 +198,8 @@ export default function SuppliersPage() {
 
   const [impactReport, setImpactReport] = useState<ImportImpactResponse | null>(null)
   const [loadingImpact, setLoadingImpact] = useState(false)
+  const photoInputRef = useRef<HTMLInputElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -319,6 +324,7 @@ export default function SuppliersPage() {
     setImpactReport(null)
     setSelectedFile(null)
     setFileName('')
+    setPasteText('')
 
     const file = e.target.files?.[0]
     if (!file) return
@@ -363,30 +369,46 @@ export default function SuppliersPage() {
       setImpactReport(null)
       setParsing(true)
 
-      if (!selectedFile) {
-        setError('Choose a file first.')
-        return
+      let res: Response
+      const directUploadLimit = 4 * 1024 * 1024
+
+      if (pasteText.trim()) {
+        res = await fetch('/api/parse-supplier-price-list', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pastedText: pasteText,
+            supplier,
+          }),
+        })
+      } else if (selectedFile?.type.startsWith('image/')) {
+        const ocrText = await readImageTextWithTesseract(selectedFile, setOcrProgress)
+        setOcrProgress('Structuring price list...')
+        res = await fetch('/api/parse-supplier-price-list', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ocrText,
+            supplier,
+            sourceFileName: selectedFile.name,
+          }),
+        })
+      } else if (selectedFile) {
+        if (selectedFile.size > directUploadLimit) {
+          throw new Error('This file is too large to upload directly. Use a smaller file or take a photo.')
+        }
+
+        const formData = new FormData()
+        formData.append('file', selectedFile)
+        formData.append('supplier', supplier)
+
+        res = await fetch('/api/parse-supplier-price-list', {
+          method: 'POST',
+          body: formData,
+        })
+      } else {
+        throw new Error('Choose a price file or paste text first.')
       }
-
-      const endpoint =
-        supplier === 'Caterway'
-          ? '/api/parse-caterway'
-          : supplier === 'Sysco'
-            ? '/api/parse-sysco'
-            : ''
-
-      if (!endpoint) {
-        setError('No parser is available for this supplier yet.')
-        return
-      }
-
-      const formData = new FormData()
-      formData.append('file', selectedFile)
-
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        body: formData,
-      })
 
       const data = await safeJson(res)
 
@@ -419,6 +441,7 @@ export default function SuppliersPage() {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setParsing(false)
+      setOcrProgress('')
     }
   }
 
@@ -557,7 +580,7 @@ async function handlePriceOnlySave() {
       'Applying price-only updates. Existing product names, pack sizes, weights, links, and L3s will not be changed.'
     )
 
-    const res = await fetch('/api/supplier-products/price-import/apply', {
+    const res = await fetch('/api/supplier-products/price-imports/apply', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -873,24 +896,56 @@ async function handlePriceOnlySave() {
                 }}
                 className="w-full rounded-xl border px-3 py-2 text-slate-900"
               >
-                <option value="Caterway">Caterway PDF</option>
-                <option value="Sysco">Sysco Excel</option>
+                <option value="Caterway">Caterway</option>
+                <option value="Sysco">Sysco</option>
               </select>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-900">Price File</label>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Selected price list
+              </label>
               <input
+                ref={photoInputRef}
                 type="file"
-                accept=".pdf,.csv,.txt,.xlsx,.xls"
+                accept="image/*"
+                capture="environment"
                 onChange={handleFile}
-                className="w-full rounded-xl border bg-white px-3 py-2 text-slate-900 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-white"
+                className="hidden"
               />
-              {fileName ? <p className="mt-2 text-sm text-slate-700">Selected: {fileName}</p> : null}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,.pdf,.csv,.txt,.xlsx,.xls"
+                onChange={handleFile}
+                className="hidden"
+              />
+              <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                {fileName || 'No price list selected'}
+              </div>
+              {ocrProgress ? <p className="mt-2 text-sm text-slate-600">{ocrProgress}</p> : null}
             </div>
           </div>
 
           <div className="mt-6 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => photoInputRef.current?.click()}
+              disabled={parsing || saving}
+              className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+            >
+              Take Photo
+            </button>
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={parsing || saving}
+              className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+            >
+              Upload File
+            </button>
+
             <button
               type="button"
               onClick={handleParse}
@@ -917,6 +972,22 @@ async function handlePriceOnlySave() {
             >
               {saving ? 'Saving…' : 'Full Save + Create/Update L3s'}
             </button>
+          </div>
+
+          <div className="mt-5">
+            <label className="mb-1 block text-sm font-medium text-slate-900">Paste Text</label>
+            <textarea
+              value={pasteText}
+              onChange={(e) => {
+                setPasteText(e.target.value)
+                setSelectedFile(null)
+                setFileName('')
+                setPreview([])
+                setRejectedRows([])
+              }}
+              className="h-28 w-full rounded-xl border px-3 py-2 text-sm"
+              placeholder="Paste supplier price-list text here"
+            />
           </div>
 
           <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">

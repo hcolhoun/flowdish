@@ -71,6 +71,7 @@ model Restaurant {
   supplierProducts            SupplierProduct[]
   supplierImportBatches       SupplierImportBatch[]
   supplierProductPriceHistory SupplierProductPriceHistory[]
+  aiUsageLogs                 AiUsageLog[]
 }
 
 model UserMembership {
@@ -475,4 +476,21 @@ model SupplierProductPriceHistory {
   @@index([restaurantId])
   @@index([supplierProductId])
   @@index([importBatchId])
+}
+
+model AiUsageLog {
+  id               String   @id @default(cuid())
+  restaurantId     String
+  feature          String
+  model            String
+  promptTokens     Int?
+  completionTokens Int?
+  totalTokens      Int?
+  createdAt        DateTime @default(now())
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([feature])
+  @@index([createdAt])
 }

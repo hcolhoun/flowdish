@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { readImageTextWithTesseract } from '@/lib/browser-ocr'
 
 type Item = {
   id: string
@@ -16,6 +17,37 @@ type Sale = {
   qty: number
   cost: number
   item: Item
+}
+
+type ParsedSalesRow = {
+  sourceCode: string | null
+  sourceName: string
+  qty: number | null
+  matchedItemId: string | null
+  matchedItemSku: string | null
+  matchedItemName: string | null
+  confidence: number
+  matchReason: string
+  notes: string | null
+  needsReview: boolean
+}
+
+type ParsedSalesResponse = {
+  salesDate: string | null
+  rows: ParsedSalesRow[]
+}
+
+type SalesReviewRow = {
+  rowId: string
+  selected: boolean
+  sourceCode: string
+  sourceName: string
+  qty: string
+  itemId: string
+  confidence: number
+  matchReason: string
+  notes: string
+  needsReview: boolean
 }
 
 function dateInputValue(date: Date) {
@@ -49,6 +81,12 @@ export default function SalesPage() {
   const [itemId, setItemId] = useState('')
   const [soldAt, setSoldAt] = useState('')
   const [qty, setQty] = useState('')
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [pasteText, setPasteText] = useState('')
+  const [ocrProgress, setOcrProgress] = useState('')
+  const [parsingImport, setParsingImport] = useState(false)
+  const [savingImport, setSavingImport] = useState(false)
+  const [salesReviewRows, setSalesReviewRows] = useState<SalesReviewRow[]>([])
 
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -57,6 +95,8 @@ export default function SalesPage() {
   const [message, setMessage] = useState('')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(false)
+  const photoInputRef = useRef<HTMLInputElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const summary = useMemo(() => {
     const totalSalesRows = sales.length
@@ -121,6 +161,11 @@ export default function SalesPage() {
 
   function formatNumber(value: number) {
     return Number.isInteger(value) ? String(value) : value.toFixed(3)
+  }
+
+  function toInputValue(value: string | number | null | undefined) {
+    if (value === null || value === undefined) return ''
+    return String(value)
   }
 
   function money(value: number | null | undefined, maximumFractionDigits = 2) {
@@ -210,6 +255,127 @@ export default function SalesPage() {
     }
   }
 
+  function updateReviewRow(rowId: string, updates: Partial<SalesReviewRow>) {
+    setSalesReviewRows((rows) =>
+      rows.map((row) => (row.rowId === rowId ? { ...row, ...updates } : row))
+    )
+  }
+
+  async function parseSalesImport() {
+    try {
+      setError('')
+      setMessage('')
+      setSalesReviewRows([])
+      setParsingImport(true)
+
+      let res: Response
+      const directUploadLimit = 4 * 1024 * 1024
+
+      if (pasteText.trim()) {
+        res = await fetch('/api/parse-sales-zread', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pastedText: pasteText }),
+        })
+      } else if (importFile?.type.startsWith('image/')) {
+        const ocrText = await readImageTextWithTesseract(importFile, setOcrProgress)
+        setOcrProgress('Structuring sales...')
+        res = await fetch('/api/parse-sales-zread', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ocrText, sourceFileName: importFile.name }),
+        })
+      } else if (importFile) {
+        if (importFile.size > directUploadLimit) {
+          throw new Error('This file is too large to upload directly. Use a smaller text file or take a photo.')
+        }
+
+        const formData = new FormData()
+        formData.append('file', importFile)
+        res = await fetch('/api/parse-sales-zread', {
+          method: 'POST',
+          body: formData,
+        })
+      } else {
+        throw new Error('Choose a Z-read file or paste text first.')
+      }
+
+      const data = (await safeJson(res)) as ParsedSalesResponse & { error?: string }
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to parse sales import')
+
+      if (data.salesDate) setSoldAt(data.salesDate)
+
+      const mappedRows = (data.rows || []).map((row, index) => ({
+        rowId: `${Date.now()}-${index}`,
+        selected: true,
+        sourceCode: row.sourceCode || '',
+        sourceName: row.sourceName || '',
+        qty: toInputValue(row.qty),
+        itemId: row.matchedItemId || '',
+        confidence: row.confidence || 0,
+        matchReason: row.matchReason || '',
+        notes: row.notes || '',
+        needsReview: Boolean(row.needsReview),
+      }))
+
+      setSalesReviewRows(mappedRows)
+      setMessage(`Sales import parsed. ${mappedRows.length} row(s) found. Review before saving.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setParsingImport(false)
+      setOcrProgress('')
+    }
+  }
+
+  async function saveSalesImport() {
+    try {
+      setError('')
+      setMessage('')
+      setSavingImport(true)
+
+      const rowsToSave = salesReviewRows.filter((row) => row.selected)
+
+      if (rowsToSave.length === 0) throw new Error('No sales rows selected to save.')
+
+      const invalidRows = rowsToSave.filter(
+        (row) => !row.itemId || !row.qty || Number(row.qty) <= 0
+      )
+
+      if (invalidRows.length > 0) {
+        throw new Error(`${invalidRows.length} selected row(s) need an L1 item and quantity.`)
+      }
+
+      const res = await fetch('/api/sales/import/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          soldAt,
+          rows: rowsToSave.map((row) => ({
+            itemId: row.itemId,
+            qty: Number(row.qty),
+            selected: row.selected,
+          })),
+        }),
+      })
+
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to save imported sales')
+
+      setMessage(`${data.savedCount ?? rowsToSave.length} imported sale row(s) saved.`)
+      setSalesReviewRows([])
+      setImportFile(null)
+      setPasteText('')
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSavingImport(false)
+    }
+  }
+
   function applyPreviousWeek() {
     const range = previousWeekRange()
     setStartDate(range.start)
@@ -259,6 +425,221 @@ export default function SalesPage() {
             {message}
           </div>
         ) : null}
+
+        <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-slate-900">Import Z-Read / POS Report</h2>
+          <p className="mt-2 text-sm text-slate-700">
+            Take a photo, upload a text-style file, or paste text. Review matched L1 sales before
+            stock is consumed.
+          </p>
+
+          <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto_auto_auto] lg:items-end">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Selected report
+              </label>
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => {
+                  setImportFile(e.target.files?.[0] ?? null)
+                  setPasteText('')
+                  setSalesReviewRows([])
+                  setError('')
+                  setMessage('')
+                }}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,.pdf,.txt,.csv,.xlsx,.xls"
+                className="hidden"
+                onChange={(e) => {
+                  setImportFile(e.target.files?.[0] ?? null)
+                  setPasteText('')
+                  setSalesReviewRows([])
+                  setError('')
+                  setMessage('')
+                }}
+              />
+              <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                {importFile ? importFile.name : 'No report selected'}
+              </div>
+              {ocrProgress ? <div className="mt-2 text-sm text-slate-600">{ocrProgress}</div> : null}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => photoInputRef.current?.click()}
+              disabled={parsingImport || savingImport}
+              className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+            >
+              Take Photo
+            </button>
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={parsingImport || savingImport}
+              className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+            >
+              Upload File
+            </button>
+
+            <button
+              type="button"
+              onClick={parseSalesImport}
+              disabled={parsingImport || savingImport}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+            >
+              {parsingImport ? 'Parsing...' : 'Parse Sales'}
+            </button>
+          </div>
+
+          <div className="mt-4">
+            <label className="mb-1 block text-sm font-medium text-slate-900">Paste Text</label>
+            <textarea
+              value={pasteText}
+              onChange={(e) => {
+                setPasteText(e.target.value)
+                setImportFile(null)
+                setSalesReviewRows([])
+              }}
+              className="h-28 w-full rounded-xl border px-3 py-2 text-sm"
+              placeholder="Paste POS/Z-read text here"
+            />
+          </div>
+
+          {salesReviewRows.length > 0 ? (
+            <div className="mt-6 overflow-hidden rounded-xl border">
+              <div className="overflow-x-auto">
+                <table className="min-w-[1050px] w-full text-left text-sm">
+                  <thead className="bg-slate-100 text-slate-700">
+                    <tr>
+                      <th className="px-4 py-3">Use</th>
+                      <th className="px-4 py-3">Code</th>
+                      <th className="px-4 py-3">Source Item</th>
+                      <th className="px-4 py-3">L1 Match</th>
+                      <th className="px-4 py-3">Qty</th>
+                      <th className="px-4 py-3">Match</th>
+                      <th className="px-4 py-3">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {salesReviewRows.map((row) => {
+                      const rowNeedsReview = row.needsReview || !row.itemId
+
+                      return (
+                        <tr
+                          key={row.rowId}
+                          className={`border-t align-top ${rowNeedsReview ? 'bg-amber-50' : ''}`}
+                        >
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={row.selected}
+                              onChange={(e) =>
+                                updateReviewRow(row.rowId, { selected: e.target.checked })
+                              }
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                              value={row.sourceCode}
+                              onChange={(e) =>
+                                updateReviewRow(row.rowId, { sourceCode: e.target.value })
+                              }
+                              className="w-28 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                              value={row.sourceName}
+                              onChange={(e) =>
+                                updateReviewRow(row.rowId, { sourceName: e.target.value })
+                              }
+                              className="w-56 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <select
+                              value={row.itemId}
+                              onChange={(e) => updateReviewRow(row.rowId, { itemId: e.target.value })}
+                              className="w-64 rounded-lg border px-2 py-1 text-sm"
+                            >
+                              <option value="">Select L1 item</option>
+                              {items.map((item) => (
+                                <option key={item.id} value={item.id}>
+                                  {item.name} [{item.sku}]
+                                </option>
+                              ))}
+                            </select>
+                            {rowNeedsReview ? (
+                              <div className="mt-1 text-xs font-medium text-amber-800">
+                                Needs L1 match/review
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                              type="number"
+                              step="1"
+                              value={row.qty}
+                              onChange={(e) => updateReviewRow(row.rowId, { qty: e.target.value })}
+                              className="w-24 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            <div>{Math.round((row.confidence || 0) * 100)}%</div>
+                            <div className={rowNeedsReview ? 'text-xs font-medium text-amber-800' : 'text-xs text-slate-500'}>
+                              {row.matchReason}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <textarea
+                              value={row.notes}
+                              onChange={(e) =>
+                                updateReviewRow(row.rowId, { notes: e.target.value })
+                              }
+                              className="h-16 w-52 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 border-t px-6 py-4">
+                <button
+                  type="button"
+                  onClick={saveSalesImport}
+                  disabled={savingImport || parsingImport}
+                  className="rounded-xl bg-green-700 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+                >
+                  {savingImport ? 'Saving...' : 'Save Reviewed Sales'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSalesReviewRows([])}
+                  disabled={savingImport}
+                  className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                >
+                  Discard Review
+                </button>
+
+                <div className="text-sm text-slate-600">
+                  Selected rows: {salesReviewRows.filter((row) => row.selected).length}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </section>
 
         <form
           onSubmit={handleSubmit}

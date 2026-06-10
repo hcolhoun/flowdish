@@ -2,8 +2,14 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
-import * as XLSX from 'xlsx'
 import { prisma } from '@/lib/prisma'
+import {
+  aiErrorResponse,
+  cleanText,
+  parseJsonWithDeepSeek,
+  textFromAiRequest,
+} from '@/lib/ai-import'
+import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 type UnitType = 'g' | 'ml' | 'each'
 
@@ -22,27 +28,6 @@ type ExtractedDocket = {
   deliveryDate: string | null
   docketNumber: string | null
   rows: ExtractedDocketRow[]
-}
-
-function extractJson(text: string) {
-  const cleaned = text
-    .replace(/^```json/i, '')
-    .replace(/^```/i, '')
-    .replace(/```$/i, '')
-    .trim()
-
-  try {
-    return JSON.parse(cleaned)
-  } catch {
-    const firstBrace = cleaned.indexOf('{')
-    const lastBrace = cleaned.lastIndexOf('}')
-
-    if (firstBrace >= 0 && lastBrace > firstBrace) {
-      return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1))
-    }
-
-    throw new Error('DeepSeek response was not valid JSON')
-  }
 }
 
 function normaliseSupplier(value: string | null) {
@@ -69,100 +54,7 @@ function toNullableNumber(value: unknown) {
   return Number.isFinite(number) ? number : null
 }
 
-function cleanText(value: unknown) {
-  if (typeof value !== 'string') return null
-
-  const trimmed = value.trim()
-
-  return trimmed.length > 0 ? trimmed : null
-}
-
-function textFromWorkbook(buffer: Buffer) {
-  const workbook = XLSX.read(buffer, {
-    type: 'buffer',
-    cellDates: false,
-    raw: false,
-  })
-
-  const sheetTexts = workbook.SheetNames.map((sheetName) => {
-    const sheet = workbook.Sheets[sheetName]
-    const rows = XLSX.utils.sheet_to_json<Array<string | number | boolean | null>>(sheet, {
-      header: 1,
-      defval: '',
-      raw: false,
-    })
-
-    const textRows = rows
-      .map((row) =>
-        row
-          .map((cell) => String(cell ?? '').trim())
-          .filter(Boolean)
-          .join('\t')
-      )
-      .filter(Boolean)
-
-    return [`Sheet: ${sheetName}`, ...textRows].join('\n')
-  })
-
-  return sheetTexts.join('\n\n').trim()
-}
-
-async function textFromFile(file: File, buffer: Buffer) {
-  const mimeType = file.type || 'application/octet-stream'
-  const fileName = file.name || 'delivery-docket'
-  const lowerName = fileName.toLowerCase()
-  const isPdf = mimeType === 'application/pdf' || lowerName.endsWith('.pdf')
-  const isText =
-    mimeType.startsWith('text/') ||
-    lowerName.endsWith('.txt') ||
-    lowerName.endsWith('.csv')
-  const isSpreadsheet =
-    lowerName.endsWith('.xlsx') ||
-    lowerName.endsWith('.xls') ||
-    mimeType.includes('spreadsheet') ||
-    mimeType === 'application/vnd.ms-excel'
-  const isImage = mimeType.startsWith('image/')
-
-  if (isImage) {
-    throw new Error('OCR_PROVIDER_REQUIRED')
-  }
-
-  if (isPdf) {
-    const pdf = require('pdf-parse/lib/pdf-parse.js')
-    const parsed = await pdf(buffer)
-    const text = String(parsed.text || '').trim()
-
-    if (text.length < 30) {
-      throw new Error('OCR_PROVIDER_REQUIRED')
-    }
-
-    return text
-  }
-
-  if (isText) {
-    return buffer.toString('utf8').trim()
-  }
-
-  if (isSpreadsheet) {
-    const text = textFromWorkbook(buffer)
-
-    if (text.length < 30) {
-      throw new Error('EMPTY_SPREADSHEET')
-    }
-
-    return text
-  }
-
-  throw new Error('UNSUPPORTED_FILE')
-}
-
-async function extractDocketWithDeepSeek(text: string) {
-  const apiKey = process.env.DEEPSEEK_API_KEY
-
-  if (!apiKey) {
-    throw new Error('DEEPSEEK_API_KEY_MISSING')
-  }
-
+async function extractDocketWithDeepSeek(restaurantId: string, text: string) {
   const prompt = `
 You are extracting structured delivery docket data for a restaurant inventory system.
 
@@ -218,55 +110,25 @@ Return this shape exactly:
 Delivery docket text:
 ${text.slice(0, 120000)}
 `
-
-  const response = await fetch('https://api.deepseek.com/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'deepseek-v4-pro',
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      response_format: { type: 'json_object' },
-      thinking: { type: 'disabled' },
-      stream: false,
-    }),
+  return parseJsonWithDeepSeek<ExtractedDocket>({
+    restaurantId,
+    feature: 'delivery_docket',
+    prompt,
   })
-
-  const json = await response.json()
-
-  if (!response.ok) {
-    console.error('DeepSeek delivery docket parse failed:', json)
-    const message = String(json?.error?.message || '')
-
-    if (
-      response.status === 401 ||
-      response.status === 403 ||
-      message.toLowerCase().includes('authentication')
-    ) {
-      throw new Error('DEEPSEEK_AUTH_FAILED')
-    }
-
-    throw new Error('DEEPSEEK_REQUEST_FAILED')
-  }
-
-  const outputText = json?.choices?.[0]?.message?.content || ''
-  return extractJson(outputText) as ExtractedDocket
 }
 
-async function matchSupplierProduct(row: ExtractedDocketRow, supplier: string | null) {
+async function matchSupplierProduct(
+  restaurantId: string,
+  row: ExtractedDocketRow,
+  supplier: string | null
+) {
   const sku = cleanText(row.supplierSku)
   const name = cleanText(row.productName)
 
   if (supplier && sku) {
     const exact = await prisma.supplierProduct.findFirst({
       where: {
+        restaurantId,
         supplier,
         supplierSku: {
           equals: sku,
@@ -290,6 +152,7 @@ async function matchSupplierProduct(row: ExtractedDocketRow, supplier: string | 
   if (sku) {
     const skuMatch = await prisma.supplierProduct.findFirst({
       where: {
+        restaurantId,
         supplierSku: {
           equals: sku,
           mode: 'insensitive',
@@ -312,6 +175,7 @@ async function matchSupplierProduct(row: ExtractedDocketRow, supplier: string | 
   if (supplier && name) {
     const nameMatch = await prisma.supplierProduct.findFirst({
       where: {
+        restaurantId,
         supplier,
         name: {
           contains: name,
@@ -335,6 +199,7 @@ async function matchSupplierProduct(row: ExtractedDocketRow, supplier: string | 
   if (name) {
     const looseNameMatch = await prisma.supplierProduct.findFirst({
       where: {
+        restaurantId,
         name: {
           contains: name,
           mode: 'insensitive',
@@ -365,29 +230,10 @@ async function matchSupplierProduct(row: ExtractedDocketRow, supplier: string | 
 
 export async function POST(req: Request) {
   try {
-    const contentType = req.headers.get('content-type') || ''
-    let docketText = ''
+    const tenant = await requireTenant()
+    const { text: docketText } = await textFromAiRequest(req)
 
-    if (contentType.includes('application/json')) {
-      const body = await req.json()
-      docketText = cleanText(body?.ocrText) || ''
-
-      if (docketText.length < 30) {
-        throw new Error('OCR_TEXT_TOO_SHORT')
-      }
-    } else {
-      const formData = await req.formData()
-      const file = formData.get('file')
-
-      if (!(file instanceof File)) {
-        return NextResponse.json({ error: 'No docket file uploaded.' }, { status: 400 })
-      }
-
-      const buffer = Buffer.from(await file.arrayBuffer())
-      docketText = await textFromFile(file, buffer)
-    }
-
-    const extracted = await extractDocketWithDeepSeek(docketText)
+    const extracted = await extractDocketWithDeepSeek(tenant.restaurantId, docketText)
 
     const supplier = normaliseSupplier(cleanText(extracted.supplier))
     const deliveryDate = cleanText(extracted.deliveryDate)
@@ -409,7 +255,7 @@ export async function POST(req: Request) {
 
       if (!cleanRow.productName) continue
 
-      const match = await matchSupplierProduct(cleanRow, supplier)
+      const match = await matchSupplierProduct(tenant.restaurantId, cleanRow, supplier)
 
       matchedRows.push({
         ...cleanRow,
@@ -442,53 +288,11 @@ export async function POST(req: Request) {
       },
     })
   } catch (error) {
-    if (error instanceof Error && error.message === 'DEEPSEEK_API_KEY_MISSING') {
-      return NextResponse.json(
-        { error: 'DEEPSEEK_API_KEY is not configured.' },
-        { status: 500 }
-      )
-    }
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
 
-    if (error instanceof Error && error.message === 'DEEPSEEK_AUTH_FAILED') {
-      return NextResponse.json(
-        {
-          error:
-            'DeepSeek rejected the API key. Create a new key in the DeepSeek Platform, replace DEEPSEEK_API_KEY in Vercel Production, then redeploy.',
-        },
-        { status: 500 }
-      )
-    }
-
-    if (error instanceof Error && error.message === 'OCR_PROVIDER_REQUIRED') {
-      return NextResponse.json(
-        {
-          error:
-            'This file needs OCR before DeepSeek can parse it. Use Take Photo for image dockets, or upload a text-based PDF, Excel, TXT, or CSV file.',
-        },
-        { status: 400 }
-      )
-    }
-
-    if (error instanceof Error && error.message === 'OCR_TEXT_TOO_SHORT') {
-      return NextResponse.json(
-        { error: 'OCR did not find enough readable text in this docket.' },
-        { status: 400 }
-      )
-    }
-
-    if (error instanceof Error && error.message === 'UNSUPPORTED_FILE') {
-      return NextResponse.json(
-        { error: 'Upload a delivery docket PDF, Excel, TXT, CSV, or image.' },
-        { status: 400 }
-      )
-    }
-
-    if (error instanceof Error && error.message === 'EMPTY_SPREADSHEET') {
-      return NextResponse.json(
-        { error: 'No readable rows were found in this Excel delivery docket.' },
-        { status: 400 }
-      )
-    }
+    const aiError = aiErrorResponse(error)
+    if (aiError) return aiError
 
     console.error('POST /api/parse-delivery-docket failed:', error)
     return NextResponse.json(
