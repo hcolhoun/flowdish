@@ -93,6 +93,7 @@ type ReviewRow = {
   confidence: number
   matchReason: string
   notes: string
+  needsReview: boolean
 }
 
 type EditingDelivery = {
@@ -101,6 +102,25 @@ type EditingDelivery = {
   supplier: string
   totalCost: string
   expiryAt: string
+}
+
+type TesseractLog = {
+  status?: string
+  progress?: number
+}
+
+type TesseractBrowser = {
+  recognize: (
+    image: File,
+    language?: string,
+    options?: { logger?: (message: TesseractLog) => void }
+  ) => Promise<{ data: { text: string } }>
+}
+
+declare global {
+  interface Window {
+    Tesseract?: TesseractBrowser
+  }
 }
 
 function toDateInputValue(value: string | null | undefined) {
@@ -132,6 +152,7 @@ export default function DeliveriesPage() {
 
   const [docketFile, setDocketFile] = useState<File | null>(null)
   const [docketParsing, setDocketParsing] = useState(false)
+  const [docketOcrProgress, setDocketOcrProgress] = useState('')
   const [docketSaving, setDocketSaving] = useState(false)
   const [parsedDocket, setParsedDocket] = useState<ParsedDocketResponse | null>(null)
   const [reviewRows, setReviewRows] = useState<ReviewRow[]>([])
@@ -141,6 +162,8 @@ export default function DeliveriesPage() {
   const [loadingPrice, setLoadingPrice] = useState(false)
 
   const itemPickerRef = useRef<HTMLDivElement | null>(null)
+  const docketPhotoInputRef = useRef<HTMLInputElement | null>(null)
+  const docketFileInputRef = useRef<HTMLInputElement | null>(null)
 
   const selectedItem = items.find((item) => item.id === itemId)
 
@@ -563,6 +586,65 @@ export default function DeliveriesPage() {
     })
   }
 
+  function loadTesseract() {
+    return new Promise<TesseractBrowser>((resolve, reject) => {
+      if (window.Tesseract) {
+        resolve(window.Tesseract)
+        return
+      }
+
+      const existingScript = document.querySelector<HTMLScriptElement>(
+        'script[data-tesseract-loader="true"]'
+      )
+
+      if (existingScript) {
+        existingScript.addEventListener('load', () => {
+          if (window.Tesseract) resolve(window.Tesseract)
+          else reject(new Error('OCR failed to load.'))
+        })
+        existingScript.addEventListener('error', () => reject(new Error('OCR failed to load.')))
+        return
+      }
+
+      const script = document.createElement('script')
+      script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'
+      script.async = true
+      script.dataset.tesseractLoader = 'true'
+      script.onload = () => {
+        if (window.Tesseract) resolve(window.Tesseract)
+        else reject(new Error('OCR failed to load.'))
+      }
+      script.onerror = () => reject(new Error('OCR failed to load.'))
+      document.body.appendChild(script)
+    })
+  }
+
+  async function readImageText(file: File) {
+    setDocketOcrProgress('Loading OCR...')
+    const tesseract = await loadTesseract()
+
+    const result = await tesseract.recognize(file, 'eng', {
+      logger: (message) => {
+        if (!message.status) return
+
+        const progress =
+          typeof message.progress === 'number'
+            ? ` ${Math.round(message.progress * 100)}%`
+            : ''
+
+        setDocketOcrProgress(`${message.status}${progress}`)
+      },
+    })
+
+    const text = result.data.text.trim()
+
+    if (text.length < 30) {
+      throw new Error('OCR did not find enough readable text. Try a clearer photo.')
+    }
+
+    return text
+  }
+
   async function parseDocket() {
     try {
       setError('')
@@ -571,18 +653,43 @@ export default function DeliveriesPage() {
       setReviewRows([])
 
       if (!docketFile) {
-        throw new Error('Choose a delivery docket image or PDF first.')
+        throw new Error('Choose a delivery docket file first.')
       }
 
       setDocketParsing(true)
 
-      const formData = new FormData()
-      formData.append('file', docketFile)
+      const isImage = docketFile.type.startsWith('image/')
+      const directUploadLimit = 4 * 1024 * 1024
+      let res: Response
 
-      const res = await fetch('/api/parse-delivery-docket', {
-        method: 'POST',
-        body: formData,
-      })
+      if (isImage) {
+        const ocrText = await readImageText(docketFile)
+
+        setDocketOcrProgress('Structuring docket...')
+
+        res = await fetch('/api/parse-delivery-docket', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ocrText,
+            sourceFileName: docketFile.name,
+          }),
+        })
+      } else {
+        if (docketFile.size > directUploadLimit) {
+          throw new Error(
+            'This file is too large to upload directly. Use a smaller text-based file or take a photo so OCR can run before upload.'
+          )
+        }
+
+        const formData = new FormData()
+        formData.append('file', docketFile)
+
+        res = await fetch('/api/parse-delivery-docket', {
+          method: 'POST',
+          body: formData,
+        })
+      }
 
       const data = (await safeJson(res)) as ParsedDocketResponse & { error?: string }
 
@@ -613,6 +720,7 @@ export default function DeliveriesPage() {
           confidence: row.confidence || 0,
           matchReason: row.matchReason || '',
           notes: row.notes || '',
+          needsReview: Boolean(row.needsReview),
         }
       })
 
@@ -630,6 +738,7 @@ export default function DeliveriesPage() {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setDocketParsing(false)
+      setDocketOcrProgress('')
     }
   }
 
@@ -720,18 +829,20 @@ export default function DeliveriesPage() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Delivery Docket</h2>
           <p className="mt-2 text-sm text-slate-700">
-            Upload a photo, scan, or PDF. The system will extract lines, suggest L3 matches, then
-            you review before saving.
+            Upload a PDF, Excel, TXT, or CSV docket. The system will extract lines, suggest L3
+            matches, then you review before saving.
           </p>
 
-          <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto_auto] md:items-end">
+          <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto_auto_auto] md:items-end">
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-900">
-                Docket file
+                Selected docket
               </label>
               <input
+                ref={docketPhotoInputRef}
                 type="file"
-                accept="image/*,.pdf"
+                accept="image/*"
+                capture="environment"
                 onChange={(e) => {
                   setDocketFile(e.target.files?.[0] ?? null)
                   setParsedDocket(null)
@@ -739,12 +850,46 @@ export default function DeliveriesPage() {
                   setError('')
                   setMessage('')
                 }}
-                className="w-full rounded-xl border bg-white px-3 py-2 text-slate-900 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-white"
+                className="hidden"
               />
-              {docketFile ? (
-                <p className="mt-2 text-sm text-slate-600">Selected: {docketFile.name}</p>
+              <input
+                ref={docketFileInputRef}
+                type="file"
+                accept="image/*,.pdf,.txt,.csv,.xlsx,.xls"
+                onChange={(e) => {
+                  setDocketFile(e.target.files?.[0] ?? null)
+                  setParsedDocket(null)
+                  setReviewRows([])
+                  setError('')
+                  setMessage('')
+                }}
+                className="hidden"
+              />
+              <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                {docketFile ? docketFile.name : 'No docket selected'}
+              </div>
+              {docketOcrProgress ? (
+                <div className="mt-2 text-sm text-slate-600">{docketOcrProgress}</div>
               ) : null}
             </div>
+
+            <button
+              type="button"
+              onClick={() => docketPhotoInputRef.current?.click()}
+              disabled={docketParsing || docketSaving}
+              className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+            >
+              Take Photo
+            </button>
+
+            <button
+              type="button"
+              onClick={() => docketFileInputRef.current?.click()}
+              disabled={docketParsing || docketSaving}
+              className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+            >
+              Upload File
+            </button>
 
             <button
               type="button"
@@ -815,9 +960,15 @@ export default function DeliveriesPage() {
                       (item) => item.id === row.selectedItemId
                     )
                     const dropdownItems = filteredReviewItems(row.itemSearch)
+                    const rowNeedsReview = row.needsReview || !selectedReviewItem
 
                     return (
-                      <tr key={row.rowId} className="border-t align-top">
+                      <tr
+                        key={row.rowId}
+                        className={`border-t align-top ${
+                          rowNeedsReview ? 'bg-amber-50' : ''
+                        }`}
+                      >
                         <td className="px-4 py-3">
                           <input
                             type="checkbox"
@@ -846,6 +997,11 @@ export default function DeliveriesPage() {
                             }
                             className="w-32 rounded-lg border px-2 py-1 text-sm"
                           />
+                          {rowNeedsReview ? (
+                            <div className="mt-1 text-xs font-medium text-amber-800">
+                              New or unrecognised SKU
+                            </div>
+                          ) : null}
                         </td>
 
                         <td className="px-4 py-3">
@@ -972,7 +1128,13 @@ export default function DeliveriesPage() {
 
                         <td className="px-4 py-3 text-sm text-slate-700">
                           <div>{Math.round((row.confidence || 0) * 100)}%</div>
-                          <div className="text-xs text-slate-500">{row.matchReason}</div>
+                          <div
+                            className={`text-xs ${
+                              rowNeedsReview ? 'font-medium text-amber-800' : 'text-slate-500'
+                            }`}
+                          >
+                            {row.matchReason}
+                          </div>
                         </td>
 
                         <td className="px-4 py-3">

@@ -2,12 +2,8 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
-import OpenAI from 'openai'
+import * as XLSX from 'xlsx'
 import { prisma } from '@/lib/prisma'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
 
 type UnitType = 'g' | 'ml' | 'each'
 
@@ -45,7 +41,7 @@ function extractJson(text: string) {
       return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1))
     }
 
-    throw new Error('OpenAI response was not valid JSON')
+    throw new Error('DeepSeek response was not valid JSON')
   }
 }
 
@@ -79,6 +75,175 @@ function cleanText(value: unknown) {
   const trimmed = value.trim()
 
   return trimmed.length > 0 ? trimmed : null
+}
+
+function textFromWorkbook(buffer: Buffer) {
+  const workbook = XLSX.read(buffer, {
+    type: 'buffer',
+    cellDates: false,
+    raw: false,
+  })
+
+  const sheetTexts = workbook.SheetNames.map((sheetName) => {
+    const sheet = workbook.Sheets[sheetName]
+    const rows = XLSX.utils.sheet_to_json<Array<string | number | boolean | null>>(sheet, {
+      header: 1,
+      defval: '',
+      raw: false,
+    })
+
+    const textRows = rows
+      .map((row) =>
+        row
+          .map((cell) => String(cell ?? '').trim())
+          .filter(Boolean)
+          .join('\t')
+      )
+      .filter(Boolean)
+
+    return [`Sheet: ${sheetName}`, ...textRows].join('\n')
+  })
+
+  return sheetTexts.join('\n\n').trim()
+}
+
+async function textFromFile(file: File, buffer: Buffer) {
+  const mimeType = file.type || 'application/octet-stream'
+  const fileName = file.name || 'delivery-docket'
+  const lowerName = fileName.toLowerCase()
+  const isPdf = mimeType === 'application/pdf' || lowerName.endsWith('.pdf')
+  const isText =
+    mimeType.startsWith('text/') ||
+    lowerName.endsWith('.txt') ||
+    lowerName.endsWith('.csv')
+  const isSpreadsheet =
+    lowerName.endsWith('.xlsx') ||
+    lowerName.endsWith('.xls') ||
+    mimeType.includes('spreadsheet') ||
+    mimeType === 'application/vnd.ms-excel'
+  const isImage = mimeType.startsWith('image/')
+
+  if (isImage) {
+    throw new Error('OCR_PROVIDER_REQUIRED')
+  }
+
+  if (isPdf) {
+    const pdf = require('pdf-parse/lib/pdf-parse.js')
+    const parsed = await pdf(buffer)
+    const text = String(parsed.text || '').trim()
+
+    if (text.length < 30) {
+      throw new Error('OCR_PROVIDER_REQUIRED')
+    }
+
+    return text
+  }
+
+  if (isText) {
+    return buffer.toString('utf8').trim()
+  }
+
+  if (isSpreadsheet) {
+    const text = textFromWorkbook(buffer)
+
+    if (text.length < 30) {
+      throw new Error('EMPTY_SPREADSHEET')
+    }
+
+    return text
+  }
+
+  throw new Error('UNSUPPORTED_FILE')
+}
+
+async function extractDocketWithDeepSeek(text: string) {
+  const apiKey = process.env.DEEPSEEK_API_KEY
+
+  if (!apiKey) {
+    throw new Error('DEEPSEEK_API_KEY_MISSING')
+  }
+
+  const prompt = `
+You are extracting structured delivery docket data for a restaurant inventory system.
+
+Return ONLY valid JSON. No markdown. No explanation.
+
+Extract:
+- supplier name
+- delivery date in ISO format YYYY-MM-DD if visible
+- docket number if visible
+- line items
+
+For each line item return:
+- supplierSku: supplier product code/SKU if visible, else null
+- productName: product description
+- qty: delivered quantity as a number if visible
+- unitType: "g", "ml", or "each"
+- packPrice: price per pack/unit if visible, else null
+- lineTotal: total line price if visible, else null
+- notes: anything uncertain or relevant
+
+Rules:
+- Do not invent rows.
+- If uncertain, still include the row but put uncertainty in notes.
+- If the docket uses cases, packs, boxes, trays, bags, bottles, tins, bunches, tubs, units, or eaches, use unitType "each" unless a clear gram/ml amount is the delivered quantity.
+- If a row shows weight like kg/g, convert qty to grams where possible and unitType "g".
+- If a row shows litres/ml, convert qty to ml where possible and unitType "ml".
+- If price is unclear, use null.
+- If supplier SKU is unclear, use null.
+- Keep product names clean and do not include headers/footers.
+
+Return this shape exactly:
+{
+  "supplier": string | null,
+  "deliveryDate": string | null,
+  "docketNumber": string | null,
+  "rows": [
+    {
+      "supplierSku": string | null,
+      "productName": string,
+      "qty": number | null,
+      "unitType": "g" | "ml" | "each" | null,
+      "packPrice": number | null,
+      "lineTotal": number | null,
+      "notes": string | null
+    }
+  ]
+}
+
+Delivery docket text:
+${text.slice(0, 120000)}
+`
+
+  const response = await fetch('https://api.deepseek.com/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'deepseek-v4-pro',
+      messages: [
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+      response_format: { type: 'json_object' },
+      thinking: { type: 'disabled' },
+      stream: false,
+    }),
+  })
+
+  const json = await response.json()
+
+  if (!response.ok) {
+    console.error('DeepSeek delivery docket parse failed:', json)
+    throw new Error('DEEPSEEK_REQUEST_FAILED')
+  }
+
+  const outputText = json?.choices?.[0]?.message?.content || ''
+  return extractJson(outputText) as ExtractedDocket
 }
 
 async function matchSupplierProduct(row: ExtractedDocketRow, supplier: string | null) {
@@ -178,131 +343,41 @@ async function matchSupplierProduct(row: ExtractedDocketRow, supplier: string | 
   return {
     supplierProduct: null,
     confidence: 0,
-    matchReason: 'No match found',
+    matchReason: sku
+      ? 'New or unrecognised supplier SKU'
+      : 'No supplier SKU or product match found',
   }
 }
 
 export async function POST(req: Request) {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json(
-        { error: 'OPENAI_API_KEY is not configured.' },
-        { status: 500 }
-      )
+    const contentType = req.headers.get('content-type') || ''
+    let docketText = ''
+
+    if (contentType.includes('application/json')) {
+      const body = await req.json()
+      docketText = cleanText(body?.ocrText) || ''
+
+      if (docketText.length < 30) {
+        throw new Error('OCR_TEXT_TOO_SHORT')
+      }
+    } else {
+      const formData = await req.formData()
+      const file = formData.get('file')
+
+      if (!(file instanceof File)) {
+        return NextResponse.json({ error: 'No docket file uploaded.' }, { status: 400 })
+      }
+
+      const buffer = Buffer.from(await file.arrayBuffer())
+      docketText = await textFromFile(file, buffer)
     }
 
-    const formData = await req.formData()
-    const file = formData.get('file')
-
-    if (!(file instanceof File)) {
-      return NextResponse.json({ error: 'No docket file uploaded.' }, { status: 400 })
-    }
-
-    const mimeType = file.type || 'application/octet-stream'
-    const fileName = file.name || 'delivery-docket'
-    const buffer = Buffer.from(await file.arrayBuffer())
-    const base64 = buffer.toString('base64')
-
-    const isImage = mimeType.startsWith('image/')
-    const isPdf = mimeType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf')
-
-    if (!isImage && !isPdf) {
-      return NextResponse.json(
-        { error: 'Upload an image or PDF delivery docket.' },
-        { status: 400 }
-      )
-    }
-
-    const prompt = `
-You are extracting structured delivery docket data for a restaurant inventory system.
-
-Return ONLY valid JSON. No markdown. No explanation.
-
-Extract:
-- supplier name
-- delivery date in ISO format YYYY-MM-DD if visible
-- docket number if visible
-- line items
-
-For each line item return:
-- supplierSku: supplier product code/SKU if visible, else null
-- productName: product description
-- qty: delivered quantity as a number if visible
-- unitType: "g", "ml", or "each"
-- packPrice: price per pack/unit if visible, else null
-- lineTotal: total line price if visible, else null
-- notes: anything uncertain or relevant
-
-Rules:
-- Do not invent rows.
-- If uncertain, still include the row but put uncertainty in notes.
-- If the docket uses cases, packs, boxes, trays, bags, bottles, tins, bunches, tubs, units, or eaches, use unitType "each" unless a clear gram/ml amount is the delivered quantity.
-- If a row shows weight like kg/g, convert qty to grams where possible and unitType "g".
-- If a row shows litres/ml, convert qty to ml where possible and unitType "ml".
-- If price is unclear, use null.
-- If supplier SKU is unclear, use null.
-- Keep product names clean and do not include headers/footers.
-
-Return this shape exactly:
-{
-  "supplier": string | null,
-  "deliveryDate": string | null,
-  "docketNumber": string | null,
-  "rows": [
-    {
-      "supplierSku": string | null,
-      "productName": string,
-      "qty": number | null,
-      "unitType": "g" | "ml" | "each" | null,
-      "packPrice": number | null,
-      "lineTotal": number | null,
-      "notes": string | null
-    }
-  ]
-}
-`
-
-    const content = isImage
-      ? [
-          {
-            type: 'input_text' as const,
-            text: prompt,
-          },
-          {
-            type: 'input_image' as const,
-            image_url: `data:${mimeType};base64,${base64}`,
-            detail: 'auto' as const,
-          },
-        ]
-      : [
-          {
-            type: 'input_text' as const,
-            text: prompt,
-          },
-          {
-            type: 'input_file' as const,
-            filename: fileName,
-            file_data: `data:${mimeType};base64,${base64}`,
-          },
-        ]
-
-    const response = await openai.responses.create({
-      model: 'gpt-4.1-mini',
-      input: [
-        {
-          role: 'user',
-          content,
-        },
-      ],
-    })
-
-    const outputText = response.output_text || ''
-    const extracted = extractJson(outputText) as ExtractedDocket
+    const extracted = await extractDocketWithDeepSeek(docketText)
 
     const supplier = normaliseSupplier(cleanText(extracted.supplier))
     const deliveryDate = cleanText(extracted.deliveryDate)
     const docketNumber = cleanText(extracted.docketNumber)
-
     const rows = Array.isArray(extracted.rows) ? extracted.rows : []
 
     const matchedRows = []
@@ -347,8 +422,50 @@ Return this shape exactly:
       docketNumber,
       rows: matchedRows,
       rawExtracted: extracted,
+      parser: {
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
+      },
     })
   } catch (error) {
+    if (error instanceof Error && error.message === 'DEEPSEEK_API_KEY_MISSING') {
+      return NextResponse.json(
+        { error: 'DEEPSEEK_API_KEY is not configured.' },
+        { status: 500 }
+      )
+    }
+
+    if (error instanceof Error && error.message === 'OCR_PROVIDER_REQUIRED') {
+      return NextResponse.json(
+        {
+          error:
+            'This file needs OCR before DeepSeek can parse it. Use Take Photo for image dockets, or upload a text-based PDF, Excel, TXT, or CSV file.',
+        },
+        { status: 400 }
+      )
+    }
+
+    if (error instanceof Error && error.message === 'OCR_TEXT_TOO_SHORT') {
+      return NextResponse.json(
+        { error: 'OCR did not find enough readable text in this docket.' },
+        { status: 400 }
+      )
+    }
+
+    if (error instanceof Error && error.message === 'UNSUPPORTED_FILE') {
+      return NextResponse.json(
+        { error: 'Upload a delivery docket PDF, Excel, TXT, CSV, or image.' },
+        { status: 400 }
+      )
+    }
+
+    if (error instanceof Error && error.message === 'EMPTY_SPREADSHEET') {
+      return NextResponse.json(
+        { error: 'No readable rows were found in this Excel delivery docket.' },
+        { status: 400 }
+      )
+    }
+
     console.error('POST /api/parse-delivery-docket failed:', error)
     return NextResponse.json(
       { error: 'Failed to parse delivery docket.' },
