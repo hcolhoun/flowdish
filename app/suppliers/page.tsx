@@ -159,7 +159,7 @@ function statusLabel(status: ImportImpactRow['status']) {
 }
 
 export default function SuppliersPage() {
-  const [supplier, setSupplier] = useState<'Caterway' | 'Sysco'>('Caterway')
+  const [supplier, setSupplier] = useState('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [fileName, setFileName] = useState('')
   const [pasteText, setPasteText] = useState('')
@@ -884,21 +884,25 @@ async function handlePriceOnlySave() {
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-900">Supplier</label>
-              <select
+              <input
                 value={supplier}
                 onChange={(e) => {
-                  setSupplier(e.target.value as 'Caterway' | 'Sysco')
+                  setSupplier(e.target.value)
                   setPreview([])
                   setRejectedRows([])
                   setImpactReport(null)
                   setError('')
                   setMessage('')
                 }}
+                list="supplier-import-options"
                 className="w-full rounded-xl border px-3 py-2 text-slate-900"
-              >
-                <option value="Caterway">Caterway</option>
-                <option value="Sysco">Sysco</option>
-              </select>
+                placeholder="Enter supplier name"
+              />
+              <datalist id="supplier-import-options">
+                {suppliers.map((option) => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
             </div>
 
             <div>
