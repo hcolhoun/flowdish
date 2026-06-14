@@ -156,6 +156,37 @@ type AiUsageResponse = {
   totalTokens: number
 }
 
+type ColdStorageAdminMonitor = {
+  id: string
+  restaurantId: string
+  name: string
+  location: string | null
+  storageType: string
+  deviceKey: string
+  active: boolean
+  minTempC: number | null
+  maxTempC: number | null
+  createdAt: string
+  restaurant: {
+    id: string
+    name: string
+  }
+  readings: Array<{
+    id: string
+    temperatureC: number
+    recordedAt: string
+  }>
+}
+
+type ColdStorageAdminResponse = {
+  restaurants: Array<{
+    id: string
+    name: string
+    plan: 'BASIC' | 'PREMIUM'
+  }>
+  monitors: ColdStorageAdminMonitor[]
+}
+
 export default function AdminPage() {
   const [data, setData] = useState<AdminData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -184,6 +215,17 @@ export default function AdminPage() {
   const [templateL0s, setTemplateL0s] = useState<TemplateL0[]>([])
   const [aiUsage, setAiUsage] = useState<AiUsageResponse | null>(null)
   const [loadingAiUsage, setLoadingAiUsage] = useState(false)
+  const [coldStorageAdmin, setColdStorageAdmin] = useState<ColdStorageAdminResponse | null>(null)
+  const [loadingColdStorageAdmin, setLoadingColdStorageAdmin] = useState(false)
+  const [savingColdStorageMonitor, setSavingColdStorageMonitor] = useState(false)
+  const [newColdStorageMonitor, setNewColdStorageMonitor] = useState({
+    restaurantId: '',
+    name: '',
+    location: '',
+    storageType: 'FRIDGE',
+    minTempC: '0',
+    maxTempC: '5',
+  })
   const [selectedRestaurantId, setSelectedRestaurantId] = useState('')
   const [selectedL0Ids, setSelectedL0Ids] = useState<string[]>([])
   const [frontloadResult, setFrontloadResult] = useState<FrontloadResult | null>(null)
@@ -287,6 +329,31 @@ export default function AdminPage() {
     }
   }
 
+  async function loadColdStorageAdmin() {
+    try {
+      setLoadingColdStorageAdmin(true)
+      const res = await fetch('/api/admin/cold-storage-monitors', { cache: 'no-store' })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to load cold storage monitors')
+      }
+
+      setColdStorageAdmin(json)
+
+      if (!newColdStorageMonitor.restaurantId && json.restaurants?.[0]?.id) {
+        setNewColdStorageMonitor((current) => ({
+          ...current,
+          restaurantId: json.restaurants[0].id,
+        }))
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoadingColdStorageAdmin(false)
+    }
+  }
+
   useEffect(() => {
     loadData()
   }, [])
@@ -295,9 +362,48 @@ export default function AdminPage() {
     if (data?.permissions.canCreateRestaurants) {
       loadFrontloadData()
       loadAiUsage()
+      loadColdStorageAdmin()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.permissions.canCreateRestaurants])
+
+  async function handleCreateColdStorageMonitor(e: React.FormEvent) {
+    e.preventDefault()
+
+    try {
+      setSavingColdStorageMonitor(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/admin/cold-storage-monitors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newColdStorageMonitor,
+          minTempC: newColdStorageMonitor.minTempC,
+          maxTempC: newColdStorageMonitor.maxTempC,
+        }),
+      })
+
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to create cold storage monitor')
+      }
+
+      setMessage('Cold storage monitor created. Use its device key in the webhook.')
+      setNewColdStorageMonitor((current) => ({
+        ...current,
+        name: '',
+        location: '',
+      }))
+      await loadColdStorageAdmin()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSavingColdStorageMonitor(false)
+    }
+  }
 
   async function handleCreateRestaurant(e: React.FormEvent) {
     e.preventDefault()
@@ -507,6 +613,8 @@ export default function AdminPage() {
     }).format(value || 0)
   }
 
+  const coldStorageIngestUrl = 'https://www.flowdish.ie/api/cold-storage/readings/ingest'
+
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-6xl">
@@ -525,6 +633,7 @@ export default function AdminPage() {
               if (data?.permissions.canCreateRestaurants) {
                 loadFrontloadData()
                 loadAiUsage()
+                loadColdStorageAdmin()
               }
             }}
             className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
@@ -668,6 +777,215 @@ export default function AdminPage() {
                         <tr className="border-t">
                           <td className="px-4 py-3 text-slate-600" colSpan={6}>
                             No DeepSeek usage logged yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : null}
+
+            {data.currentUser.isSystemOwner ? (
+              <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-xl font-semibold text-slate-900">
+                      Cold Storage Monitors
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Assign Sonoff/WTS01 temperature monitors to restaurant accounts.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={loadColdStorageAdmin}
+                    disabled={loadingColdStorageAdmin}
+                    className="rounded-xl border px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                  >
+                    {loadingColdStorageAdmin ? 'Loading...' : 'Refresh Monitors'}
+                  </button>
+                </div>
+
+                <form
+                  onSubmit={handleCreateColdStorageMonitor}
+                  className="mt-6 grid gap-4 md:grid-cols-3"
+                >
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Restaurant
+                    </label>
+                    <select
+                      value={newColdStorageMonitor.restaurantId}
+                      onChange={(e) =>
+                        setNewColdStorageMonitor({
+                          ...newColdStorageMonitor,
+                          restaurantId: e.target.value,
+                        })
+                      }
+                      className="w-full rounded-xl border px-3 py-2"
+                      required
+                    >
+                      <option value="">Select restaurant</option>
+                      {(coldStorageAdmin?.restaurants || restaurants).map((restaurant) => (
+                        <option key={restaurant.id} value={restaurant.id}>
+                          {restaurant.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Monitor Name
+                    </label>
+                    <input
+                      value={newColdStorageMonitor.name}
+                      onChange={(e) =>
+                        setNewColdStorageMonitor({
+                          ...newColdStorageMonitor,
+                          name: e.target.value,
+                        })
+                      }
+                      className="w-full rounded-xl border px-3 py-2"
+                      placeholder="Fridge 1"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Location
+                    </label>
+                    <input
+                      value={newColdStorageMonitor.location}
+                      onChange={(e) =>
+                        setNewColdStorageMonitor({
+                          ...newColdStorageMonitor,
+                          location: e.target.value,
+                        })
+                      }
+                      className="w-full rounded-xl border px-3 py-2"
+                      placeholder="Main kitchen"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Storage Type
+                    </label>
+                    <select
+                      value={newColdStorageMonitor.storageType}
+                      onChange={(e) =>
+                        setNewColdStorageMonitor({
+                          ...newColdStorageMonitor,
+                          storageType: e.target.value,
+                        })
+                      }
+                      className="w-full rounded-xl border px-3 py-2"
+                    >
+                      <option value="FRIDGE">Fridge</option>
+                      <option value="FREEZER">Freezer</option>
+                      <option value="BLAST_CHILLER">Blast chiller</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Min Temp °C
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={newColdStorageMonitor.minTempC}
+                      onChange={(e) =>
+                        setNewColdStorageMonitor({
+                          ...newColdStorageMonitor,
+                          minTempC: e.target.value,
+                        })
+                      }
+                      className="w-full rounded-xl border px-3 py-2"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Max Temp °C
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={newColdStorageMonitor.maxTempC}
+                      onChange={(e) =>
+                        setNewColdStorageMonitor({
+                          ...newColdStorageMonitor,
+                          maxTempC: e.target.value,
+                        })
+                      }
+                      className="w-full rounded-xl border px-3 py-2"
+                    />
+                  </div>
+
+                  <div className="flex items-end">
+                    <button
+                      type="submit"
+                      disabled={savingColdStorageMonitor}
+                      className="rounded-xl bg-slate-900 px-5 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {savingColdStorageMonitor ? 'Creating...' : 'Create Monitor'}
+                    </button>
+                  </div>
+                </form>
+
+                <div className="mt-6 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                  Webhook URL for IFTTT:{' '}
+                  <span className="font-mono">{coldStorageIngestUrl}</span>
+                </div>
+
+                <div className="mt-5 overflow-hidden rounded-xl border">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-100 text-slate-700">
+                      <tr>
+                        <th className="px-4 py-3">Restaurant</th>
+                        <th className="px-4 py-3">Monitor</th>
+                        <th className="px-4 py-3">Type</th>
+                        <th className="px-4 py-3">Range</th>
+                        <th className="px-4 py-3">Device Key</th>
+                        <th className="px-4 py-3">Latest</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {coldStorageAdmin?.monitors.length ? (
+                        coldStorageAdmin.monitors.map((monitor) => (
+                          <tr key={monitor.id} className="border-t align-top">
+                            <td className="px-4 py-3">{monitor.restaurant.name}</td>
+                            <td className="px-4 py-3">
+                              <div className="font-medium text-slate-900">{monitor.name}</div>
+                              <div className="text-xs text-slate-500">{monitor.location || ''}</div>
+                            </td>
+                            <td className="px-4 py-3">{monitor.storageType}</td>
+                            <td className="px-4 py-3">
+                              {monitor.minTempC ?? '—'}°C to {monitor.maxTempC ?? '—'}°C
+                            </td>
+                            <td className="px-4 py-3">
+                              <code className="break-all rounded bg-slate-100 px-2 py-1 text-xs">
+                                {monitor.deviceKey}
+                              </code>
+                            </td>
+                            <td className="px-4 py-3">
+                              {monitor.readings[0]
+                                ? `${monitor.readings[0].temperatureC.toFixed(1)}°C · ${formatDate(
+                                    monitor.readings[0].recordedAt
+                                  )}`
+                                : 'No reading'}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr className="border-t">
+                          <td className="px-4 py-3 text-slate-600" colSpan={6}>
+                            No cold storage monitors created yet.
                           </td>
                         </tr>
                       )}

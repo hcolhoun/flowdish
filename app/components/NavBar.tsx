@@ -33,6 +33,7 @@ const fullLinks = [
   { href: '/sops', label: 'SOPs' },
   { href: '/deliveries', label: 'Deliveries' },
   { href: '/inventory', label: 'Inventory' },
+  { href: '/cold-storage', label: 'Cold Storage' },
   { href: '/planning', label: 'Planning' },
   { href: '/prep', label: 'Prep' },
   { href: '/sales', label: 'Sales' },

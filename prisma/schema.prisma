@@ -72,6 +72,8 @@ model Restaurant {
   supplierImportBatches       SupplierImportBatch[]
   supplierProductPriceHistory SupplierProductPriceHistory[]
   aiUsageLogs                 AiUsageLog[]
+  coldStorageMonitors         ColdStorageMonitor[]
+  coldStorageReadings         ColdStorageReading[]
 }
 
 model UserMembership {
@@ -493,4 +495,42 @@ model AiUsageLog {
   @@index([restaurantId])
   @@index([feature])
   @@index([createdAt])
+}
+
+model ColdStorageMonitor {
+  id           String   @id @default(cuid())
+  restaurantId String
+  name         String
+  location     String?
+  storageType  String
+  deviceKey    String   @unique
+  active       Boolean  @default(true)
+  minTempC     Float?
+  maxTempC     Float?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  readings   ColdStorageReading[]
+
+  @@index([restaurantId])
+  @@index([active])
+}
+
+model ColdStorageReading {
+  id           String   @id @default(cuid())
+  restaurantId String
+  monitorId    String
+  temperatureC Float
+  humidity     Float?
+  source       String?
+  recordedAt   DateTime
+  createdAt    DateTime @default(now())
+
+  restaurant Restaurant         @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  monitor    ColdStorageMonitor @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([monitorId])
+  @@index([recordedAt])
 }
