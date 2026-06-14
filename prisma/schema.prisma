@@ -47,6 +47,8 @@ model Restaurant {
   slug       String?  @unique
   isTemplate Boolean        @default(false)
   plan       RestaurantPlan @default(BASIC)
+  coldStorageAlertsEnabled Boolean @default(false)
+  coldStorageAlertEmails   String?
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
 
@@ -74,6 +76,7 @@ model Restaurant {
   aiUsageLogs                 AiUsageLog[]
   coldStorageMonitors         ColdStorageMonitor[]
   coldStorageReadings         ColdStorageReading[]
+  coldStorageAlertEvents      ColdStorageAlertEvent[]
 }
 
 model UserMembership {
@@ -512,6 +515,7 @@ model ColdStorageMonitor {
 
   restaurant Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   readings   ColdStorageReading[]
+  alertEvents ColdStorageAlertEvent[]
 
   @@index([restaurantId])
   @@index([active])
@@ -533,4 +537,25 @@ model ColdStorageReading {
   @@index([restaurantId])
   @@index([monitorId])
   @@index([recordedAt])
+}
+
+model ColdStorageAlertEvent {
+  id           String   @id @default(cuid())
+  restaurantId String
+  monitorId    String?
+  deviceName   String?
+  target       String?
+  message      String?
+  source       String?
+  emailSent    Boolean  @default(false)
+  emailError   String?
+  triggeredAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  restaurant Restaurant          @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  monitor    ColdStorageMonitor? @relation(fields: [monitorId], references: [id], onDelete: SetNull)
+
+  @@index([restaurantId])
+  @@index([monitorId])
+  @@index([triggeredAt])
 }

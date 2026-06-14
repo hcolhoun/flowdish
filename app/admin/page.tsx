@@ -187,6 +187,21 @@ type ColdStorageAdminResponse = {
   monitors: ColdStorageAdminMonitor[]
 }
 
+type ColdStorageAlertSettings = {
+  enabled: boolean
+  emails: string
+  webhookUrl: string
+  monitors: Array<{
+    id: string
+    name: string
+    location: string | null
+    storageType: string
+    deviceKey: string
+    minTempC: number | null
+    maxTempC: number | null
+  }>
+}
+
 export default function AdminPage() {
   const [data, setData] = useState<AdminData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -218,6 +233,12 @@ export default function AdminPage() {
   const [coldStorageAdmin, setColdStorageAdmin] = useState<ColdStorageAdminResponse | null>(null)
   const [loadingColdStorageAdmin, setLoadingColdStorageAdmin] = useState(false)
   const [savingColdStorageMonitor, setSavingColdStorageMonitor] = useState(false)
+  const [coldStorageAlertSettings, setColdStorageAlertSettings] =
+    useState<ColdStorageAlertSettings | null>(null)
+  const [loadingColdStorageAlertSettings, setLoadingColdStorageAlertSettings] = useState(false)
+  const [savingColdStorageAlertSettings, setSavingColdStorageAlertSettings] = useState(false)
+  const [coldStorageAlertsEnabled, setColdStorageAlertsEnabled] = useState(false)
+  const [coldStorageAlertEmails, setColdStorageAlertEmails] = useState('')
   const [newColdStorageMonitor, setNewColdStorageMonitor] = useState({
     restaurantId: '',
     name: '',
@@ -354,6 +375,26 @@ export default function AdminPage() {
     }
   }
 
+  async function loadColdStorageAlertSettings() {
+    try {
+      setLoadingColdStorageAlertSettings(true)
+      const res = await fetch('/api/admin/cold-storage-alert-settings', { cache: 'no-store' })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to load cold storage alert settings')
+      }
+
+      setColdStorageAlertSettings(json)
+      setColdStorageAlertsEnabled(Boolean(json.enabled))
+      setColdStorageAlertEmails(json.emails || '')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoadingColdStorageAlertSettings(false)
+    }
+  }
+
   useEffect(() => {
     loadData()
   }, [])
@@ -364,8 +405,11 @@ export default function AdminPage() {
       loadAiUsage()
       loadColdStorageAdmin()
     }
+    if (data?.permissions.canManageRestaurantMembers) {
+      loadColdStorageAlertSettings()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.permissions.canCreateRestaurants])
+  }, [data?.permissions.canCreateRestaurants, data?.permissions.canManageRestaurantMembers])
 
   async function handleCreateColdStorageMonitor(e: React.FormEvent) {
     e.preventDefault()
@@ -402,6 +446,37 @@ export default function AdminPage() {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setSavingColdStorageMonitor(false)
+    }
+  }
+
+  async function handleSaveColdStorageAlertSettings(e: React.FormEvent) {
+    e.preventDefault()
+
+    try {
+      setSavingColdStorageAlertSettings(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/admin/cold-storage-alert-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: coldStorageAlertsEnabled,
+          emails: coldStorageAlertEmails,
+        }),
+      })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to save cold storage alert settings')
+      }
+
+      setMessage('Cold storage alert settings saved.')
+      await loadColdStorageAlertSettings()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSavingColdStorageAlertSettings(false)
     }
   }
 
@@ -635,6 +710,9 @@ export default function AdminPage() {
                 loadAiUsage()
                 loadColdStorageAdmin()
               }
+              if (data?.permissions.canManageRestaurantMembers) {
+                loadColdStorageAlertSettings()
+              }
             }}
             className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
           >
@@ -702,6 +780,111 @@ export default function AdminPage() {
                 the staff login code, username, and 4-digit PIN. Staff sessions expire after 2 hours.
               </div>
             </section>
+
+            {data.permissions.canManageRestaurantMembers ? (
+              <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h2 className="text-xl font-semibold text-slate-900">
+                      Cold Storage Email Alerts
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Send temperature excursion warnings to the email addresses listed here.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={loadColdStorageAlertSettings}
+                    disabled={loadingColdStorageAlertSettings}
+                    className="rounded-xl border px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                  >
+                    {loadingColdStorageAlertSettings ? 'Loading...' : 'Refresh Alerts'}
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveColdStorageAlertSettings} className="mt-6 space-y-4">
+                  <label className="flex items-center gap-3 text-sm font-medium text-slate-900">
+                    <input
+                      type="checkbox"
+                      checked={coldStorageAlertsEnabled}
+                      onChange={(e) => setColdStorageAlertsEnabled(e.target.checked)}
+                      className="h-4 w-4"
+                    />
+                    Enable cold storage email alerts
+                  </label>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Alert Email Addresses
+                    </label>
+                    <textarea
+                      value={coldStorageAlertEmails}
+                      onChange={(e) => setColdStorageAlertEmails(e.target.value)}
+                      className="min-h-24 w-full rounded-xl border px-3 py-2"
+                      placeholder="chef@example.com, owner@example.com"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                      Separate multiple email addresses with commas or new lines.
+                    </p>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={savingColdStorageAlertSettings}
+                    className="rounded-xl bg-slate-900 px-5 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {savingColdStorageAlertSettings ? 'Saving...' : 'Save Alert Settings'}
+                  </button>
+                </form>
+
+                <div className="mt-6 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                  IFTTT webhook URL:{' '}
+                  <span className="break-all font-mono">
+                    {coldStorageAlertSettings?.webhookUrl ||
+                      'https://www.flowdish.ie/api/cold-storage/alerts/ifttt'}
+                  </span>
+                </div>
+
+                <div className="mt-5 overflow-hidden rounded-xl border">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-100 text-slate-700">
+                      <tr>
+                        <th className="px-4 py-3">Monitor</th>
+                        <th className="px-4 py-3">Range</th>
+                        <th className="px-4 py-3">IFTTT JSON Body</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {coldStorageAlertSettings?.monitors.length ? (
+                        coldStorageAlertSettings.monitors.map((monitor) => (
+                          <tr key={monitor.id} className="border-t align-top">
+                            <td className="px-4 py-3">
+                              <div className="font-medium text-slate-900">{monitor.name}</div>
+                              <div className="text-xs text-slate-500">{monitor.location || ''}</div>
+                            </td>
+                            <td className="px-4 py-3">
+                              {monitor.minTempC ?? '-'}C to {monitor.maxTempC ?? '-'}C
+                            </td>
+                            <td className="px-4 py-3">
+                              <code className="block whitespace-pre-wrap break-all rounded bg-slate-100 px-3 py-2 text-xs">
+                                {`{"deviceKey":"${monitor.deviceKey}","deviceName":"{{DeviceName}}","target":"{{Target}}","createdAt":"{{CreatedAt}}"}`}
+                              </code>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr className="border-t">
+                          <td className="px-4 py-3 text-slate-600" colSpan={3}>
+                            No cold storage monitors have been assigned to this restaurant yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : null}
 
             {data.currentUser.isSystemOwner ? (
               <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
