@@ -60,7 +60,11 @@ function statusForMonitor(monitor: Monitor) {
 export default function ColdStoragePage() {
   const [monitors, setMonitors] = useState<Monitor[]>([])
   const [loading, setLoading] = useState(true)
+  const [importing, setImporting] = useState(false)
   const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [importMonitorId, setImportMonitorId] = useState('')
+  const [importFile, setImportFile] = useState<File | null>(null)
 
   const allReadings = useMemo(() => {
     return monitors
@@ -96,11 +100,54 @@ export default function ColdStoragePage() {
         throw new Error(data?.error || 'Failed to load cold storage')
       }
 
-      setMonitors(data.monitors || [])
+      const nextMonitors = data.monitors || []
+      setMonitors(nextMonitors)
+
+      if (!importMonitorId && nextMonitors.length > 0) {
+        setImportMonitorId(nextMonitors[0].id)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function importHistory() {
+    try {
+      setImporting(true)
+      setError('')
+      setMessage('')
+
+      if (!importMonitorId || !importFile) {
+        throw new Error('Choose a monitor and eWeLink history spreadsheet.')
+      }
+
+      const formData = new FormData()
+      formData.append('monitorId', importMonitorId)
+      formData.append('file', importFile)
+
+      const res = await fetch('/api/cold-storage/import-ewelink-history', {
+        method: 'POST',
+        body: formData,
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to import eWeLink history')
+      }
+
+      const summary = data.summary || {}
+      setMessage(
+        `Imported ${summary.importedCount || 0} reading(s). ` +
+          `${summary.duplicateCount || 0} duplicate(s), ${summary.skippedCount || 0} skipped.`
+      )
+      setImportFile(null)
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -134,6 +181,62 @@ export default function ColdStoragePage() {
             {error}
           </div>
         ) : null}
+
+        {message ? (
+          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800">
+            {message}
+          </div>
+        ) : null}
+
+        <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Import eWeLink History</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Upload the exported history spreadsheet when you need inspector records.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[minmax(180px,240px)_minmax(220px,1fr)_auto] sm:items-end">
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium text-slate-700">Monitor</span>
+                <select
+                  value={importMonitorId}
+                  onChange={(event) => setImportMonitorId(event.target.value)}
+                  className="w-full rounded-xl border bg-white px-3 py-2 text-slate-900"
+                  disabled={monitors.length === 0 || importing}
+                >
+                  {monitors.length === 0 ? <option value="">No monitors</option> : null}
+                  {monitors.map((monitor) => (
+                    <option key={monitor.id} value={monitor.id}>
+                      {monitor.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium text-slate-700">eWeLink file</span>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={(event) => setImportFile(event.target.files?.[0] || null)}
+                  className="w-full rounded-xl border bg-white px-3 py-2 text-slate-900 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-sm file:text-white"
+                  disabled={importing}
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={importHistory}
+                disabled={importing || monitors.length === 0 || !importFile}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {importing ? 'Importing...' : 'Import History'}
+              </button>
+            </div>
+          </div>
+        </section>
 
         <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {monitors.length === 0 && !loading ? (
