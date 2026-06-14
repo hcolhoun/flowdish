@@ -127,7 +127,13 @@ export async function requireTenant(): Promise<TenantContext> {
       authUserId: user.id,
     },
     include: {
-      restaurant: true,
+      restaurant: {
+        select: {
+          id: true,
+          name: true,
+          isTemplate: true,
+        },
+      },
     },
     orderBy: {
       createdAt: 'asc',
@@ -143,7 +149,13 @@ export async function requireTenant(): Promise<TenantContext> {
         restaurantId: restaurant.id,
       },
       include: {
-        restaurant: true,
+        restaurant: {
+          select: {
+            id: true,
+            name: true,
+            isTemplate: true,
+          },
+        },
       },
     })
   }
