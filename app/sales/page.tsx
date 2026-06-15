@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { readImageTextWithTesseract } from '@/lib/browser-ocr'
 
 type Item = {
@@ -107,6 +108,7 @@ function previousWeekRange() {
 }
 
 export default function SalesPage() {
+  const router = useRouter()
   const [items, setItems] = useState<Item[]>([])
   const [sales, setSales] = useState<Sale[]>([])
   const [itemId, setItemId] = useState('')
@@ -206,6 +208,30 @@ export default function SalesPage() {
       currency: 'EUR',
       maximumFractionDigits,
     }).format(value ?? 0)
+  }
+
+  function convertSalesToForecast() {
+    const rows = summary.itemRows
+      .filter((row) => row.itemId && Number(row.qty) > 0)
+      .map((row) => ({
+        itemId: row.itemId,
+        qty: String(row.qty),
+      }))
+
+    if (rows.length === 0) {
+      setError('There are no sold dishes in this timeframe to convert.')
+      return
+    }
+
+    window.localStorage.setItem(
+      'flowdish:sales-to-forecast',
+      JSON.stringify({
+        name: 'Forecast from sales',
+        lines: rows,
+      })
+    )
+
+    router.push('/planning')
   }
 
   async function loadData(nextStartDate = startDate, nextEndDate = endDate) {
@@ -1014,11 +1040,22 @@ export default function SalesPage() {
         </section>
 
         <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <div className="border-b px-6 py-4">
-            <h2 className="text-xl font-semibold text-slate-900">Sales by Dish</h2>
-            <p className="mt-1 text-sm text-slate-700">
-              Ranked by quantity sold in the selected timeframe.
-            </p>
+          <div className="flex flex-col gap-4 border-b px-6 py-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Sales by Dish</h2>
+              <p className="mt-1 text-sm text-slate-700">
+                Ranked by quantity sold in the selected timeframe.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={convertSalesToForecast}
+              disabled={summary.itemRows.length === 0}
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Convert to Forecast
+            </button>
           </div>
 
           <div className="overflow-x-auto">

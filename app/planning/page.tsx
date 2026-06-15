@@ -14,6 +14,11 @@ type ForecastLineInput = {
   qty: string
 }
 
+type SalesForecastDraft = {
+  name?: string
+  lines?: ForecastLineInput[]
+}
+
 type Forecast = {
   id: string
   name: string
@@ -137,6 +142,34 @@ export default function PlanningPage() {
     return Number.isInteger(value) ? String(value) : value.toFixed(3)
   }
 
+  function loadSalesForecastDraft() {
+    const rawDraft = window.localStorage.getItem('flowdish:sales-to-forecast')
+    if (!rawDraft) return false
+
+    try {
+      const draft = JSON.parse(rawDraft) as SalesForecastDraft
+      const draftLines = Array.isArray(draft.lines)
+        ? draft.lines.filter((line) => line.itemId && Number(line.qty) > 0)
+        : []
+
+      if (draftLines.length === 0) return false
+
+      setName(draft.name || 'Forecast from sales')
+      setStartDate('')
+      setEndDate('')
+      setLines(draftLines)
+      setSelectedMenuId('')
+      setSelectedForecastId('')
+      setPlan(null)
+      setMessage(`${draftLines.length} sales line(s) loaded into a new forecast. Choose forecast dates before saving.`)
+      return true
+    } catch {
+      return false
+    } finally {
+      window.localStorage.removeItem('flowdish:sales-to-forecast')
+    }
+  }
+
   function statusClass(status: string) {
     if (status === 'MISSING INGREDIENTS') return 'bg-red-100 text-red-800'
     if (status === 'PREP REQUIRED') return 'bg-red-50 text-red-700'
@@ -178,8 +211,13 @@ export default function PlanningPage() {
   }
 
   useEffect(() => {
-    setStartDate(todayInputValue())
-    setEndDate(sevenDaysFromTodayInputValue())
+    const loadedSalesDraft = loadSalesForecastDraft()
+
+    if (!loadedSalesDraft) {
+      setStartDate(todayInputValue())
+      setEndDate(sevenDaysFromTodayInputValue())
+    }
+
     loadData()
   }, [])
 
