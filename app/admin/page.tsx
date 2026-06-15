@@ -1027,8 +1027,8 @@ export default function AdminPage() {
             <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
               <h2 className="text-xl font-semibold text-slate-900">Your PIN Login</h2>
               <p className="mt-1 text-sm text-slate-600">
-                This gives the account user a quick PIN login for Prep and Waste. It does not use
-                one of the Basic plan staff PIN slots.
+                This gives the account user a quick PIN login with the same access as their email
+                login. It does not use one of the Basic plan staff PIN slots.
               </p>
 
               {data.accountPin ? (
@@ -1093,8 +1093,8 @@ export default function AdminPage() {
             <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
               <h2 className="text-xl font-semibold text-slate-900">Staff PIN Users</h2>
               <p className="mt-1 text-sm text-slate-600">
-                Staff users can only access Prep and Waste. Basic includes 3 staff PIN users plus
-                the account PIN above.
+                Staff PIN users can only access Prep and Waste. Basic includes 3 staff PIN users
+                plus the account PIN above.
               </p>
 
               <div className="mt-5 overflow-hidden rounded-xl border">

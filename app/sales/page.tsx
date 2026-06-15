@@ -32,9 +32,26 @@ type ParsedSalesRow = {
   needsReview: boolean
 }
 
+type ParsedSalesModifierRow = {
+  sourceCode: string | null
+  sourceName: string
+  modifierType: 'EXTRA' | 'REMOVE'
+  qty: number | null
+  matchedItemId: string | null
+  matchedItemSku: string | null
+  matchedItemName: string | null
+  matchedItemType: 'L1' | 'L2' | 'L3' | null
+  matchedItemUnitType: 'g' | 'ml' | 'each' | null
+  confidence: number
+  matchReason: string
+  notes: string | null
+  needsReview: boolean
+}
+
 type ParsedSalesResponse = {
   salesDate: string | null
   rows: ParsedSalesRow[]
+  modifierRows?: ParsedSalesModifierRow[]
 }
 
 type SalesReviewRow = {
@@ -42,6 +59,20 @@ type SalesReviewRow = {
   selected: boolean
   sourceCode: string
   sourceName: string
+  qty: string
+  itemId: string
+  confidence: number
+  matchReason: string
+  notes: string
+  needsReview: boolean
+}
+
+type ModifierReviewRow = {
+  rowId: string
+  selected: boolean
+  sourceCode: string
+  sourceName: string
+  modifierType: 'EXTRA' | 'REMOVE'
   qty: string
   itemId: string
   confidence: number
@@ -87,6 +118,7 @@ export default function SalesPage() {
   const [parsingImport, setParsingImport] = useState(false)
   const [savingImport, setSavingImport] = useState(false)
   const [salesReviewRows, setSalesReviewRows] = useState<SalesReviewRow[]>([])
+  const [modifierReviewRows, setModifierReviewRows] = useState<ModifierReviewRow[]>([])
 
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -202,7 +234,7 @@ export default function SalesPage() {
         throw new Error(salesData?.error || 'Failed to load sales')
       }
 
-      setItems(itemsData.filter((item: Item) => item.itemType === 'L1'))
+      setItems(itemsData.filter((item: Item) => ['L1', 'L2', 'L3'].includes(item.itemType)))
       setSales(salesData)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -261,11 +293,24 @@ export default function SalesPage() {
     )
   }
 
+  function updateModifierReviewRow(rowId: string, updates: Partial<ModifierReviewRow>) {
+    setModifierReviewRows((rows) =>
+      rows.map((row) => (row.rowId === rowId ? { ...row, ...updates } : row))
+    )
+  }
+
+  const l1Items = useMemo(() => items.filter((item) => item.itemType === 'L1'), [items])
+  const modifierItems = useMemo(
+    () => items.filter((item) => item.itemType === 'L1' || item.itemType === 'L2' || item.itemType === 'L3'),
+    [items]
+  )
+
   async function parseSalesImport() {
     try {
       setError('')
       setMessage('')
       setSalesReviewRows([])
+      setModifierReviewRows([])
       setParsingImport(true)
 
       let res: Response
@@ -318,9 +363,25 @@ export default function SalesPage() {
         notes: row.notes || '',
         needsReview: Boolean(row.needsReview),
       }))
+      const mappedModifierRows = (data.modifierRows || []).map((row, index) => ({
+        rowId: `${Date.now()}-modifier-${index}`,
+        selected: true,
+        sourceCode: row.sourceCode || '',
+        sourceName: row.sourceName || '',
+        modifierType: row.modifierType === 'REMOVE' ? 'REMOVE' as const : 'EXTRA' as const,
+        qty: toInputValue(row.qty),
+        itemId: row.matchedItemId || '',
+        confidence: row.confidence || 0,
+        matchReason: row.matchReason || '',
+        notes: row.notes || '',
+        needsReview: Boolean(row.needsReview),
+      }))
 
       setSalesReviewRows(mappedRows)
-      setMessage(`Sales import parsed. ${mappedRows.length} row(s) found. Review before saving.`)
+      setModifierReviewRows(mappedModifierRows)
+      setMessage(
+        `Sales import parsed. ${mappedRows.length} sales row(s) and ${mappedModifierRows.length} modifier row(s) found. Review before saving.`
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -336,8 +397,11 @@ export default function SalesPage() {
       setSavingImport(true)
 
       const rowsToSave = salesReviewRows.filter((row) => row.selected)
+      const modifiersToSave = modifierReviewRows.filter((row) => row.selected)
 
-      if (rowsToSave.length === 0) throw new Error('No sales rows selected to save.')
+      if (rowsToSave.length === 0 && modifiersToSave.length === 0) {
+        throw new Error('No sales or modifier rows selected to save.')
+      }
 
       const invalidRows = rowsToSave.filter(
         (row) => !row.itemId || !row.qty || Number(row.qty) <= 0
@@ -345,6 +409,14 @@ export default function SalesPage() {
 
       if (invalidRows.length > 0) {
         throw new Error(`${invalidRows.length} selected row(s) need an L1 item and quantity.`)
+      }
+
+      const invalidModifiers = modifiersToSave.filter(
+        (row) => !row.itemId || !row.qty || Number(row.qty) <= 0
+      )
+
+      if (invalidModifiers.length > 0) {
+        throw new Error(`${invalidModifiers.length} selected modifier row(s) need an item and quantity.`)
       }
 
       const res = await fetch('/api/sales/import/apply', {
@@ -357,6 +429,15 @@ export default function SalesPage() {
             qty: Number(row.qty),
             selected: row.selected,
           })),
+          modifierRows: modifiersToSave.map((row) => ({
+            itemId: row.itemId,
+            qty: Number(row.qty),
+            modifierType: row.modifierType,
+            sourceCode: row.sourceCode,
+            sourceName: row.sourceName,
+            notes: row.notes,
+            selected: row.selected,
+          })),
         }),
       })
 
@@ -364,8 +445,13 @@ export default function SalesPage() {
 
       if (!res.ok) throw new Error(data?.error || 'Failed to save imported sales')
 
-      setMessage(`${data.savedCount ?? rowsToSave.length} imported sale row(s) saved.`)
+      setMessage(
+        `${data.savedCount ?? rowsToSave.length} imported sale row(s) and ${
+          data.savedModifierCount ?? modifiersToSave.length
+        } modifier row(s) saved.`
+      )
       setSalesReviewRows([])
+      setModifierReviewRows([])
       setImportFile(null)
       setPasteText('')
       await loadData()
@@ -448,6 +534,7 @@ export default function SalesPage() {
                   setImportFile(e.target.files?.[0] ?? null)
                   setPasteText('')
                   setSalesReviewRows([])
+                  setModifierReviewRows([])
                   setError('')
                   setMessage('')
                 }}
@@ -461,6 +548,7 @@ export default function SalesPage() {
                   setImportFile(e.target.files?.[0] ?? null)
                   setPasteText('')
                   setSalesReviewRows([])
+                  setModifierReviewRows([])
                   setError('')
                   setMessage('')
                 }}
@@ -507,112 +595,250 @@ export default function SalesPage() {
                 setPasteText(e.target.value)
                 setImportFile(null)
                 setSalesReviewRows([])
+                setModifierReviewRows([])
               }}
               className="h-28 w-full rounded-xl border px-3 py-2 text-sm"
               placeholder="Paste POS/Z-read text here"
             />
           </div>
 
-          {salesReviewRows.length > 0 ? (
+          {salesReviewRows.length > 0 || modifierReviewRows.length > 0 ? (
             <div className="mt-6 overflow-hidden rounded-xl border">
-              <div className="overflow-x-auto">
-                <table className="min-w-[1050px] w-full text-left text-sm">
-                  <thead className="bg-slate-100 text-slate-700">
-                    <tr>
-                      <th className="px-4 py-3">Use</th>
-                      <th className="px-4 py-3">Code</th>
-                      <th className="px-4 py-3">Source Item</th>
-                      <th className="px-4 py-3">L1 Match</th>
-                      <th className="px-4 py-3">Qty</th>
-                      <th className="px-4 py-3">Match</th>
-                      <th className="px-4 py-3">Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {salesReviewRows.map((row) => {
-                      const rowNeedsReview = row.needsReview || !row.itemId
+              {salesReviewRows.length > 0 ? (
+                <div>
+                  <div className="border-b bg-slate-50 px-6 py-3">
+                    <h3 className="font-semibold text-slate-900">L1 Sales Review</h3>
+                  </div>
 
-                      return (
-                        <tr
-                          key={row.rowId}
-                          className={`border-t align-top ${rowNeedsReview ? 'bg-amber-50' : ''}`}
-                        >
-                          <td className="px-4 py-3">
-                            <input
-                              type="checkbox"
-                              checked={row.selected}
-                              onChange={(e) =>
-                                updateReviewRow(row.rowId, { selected: e.target.checked })
-                              }
-                            />
-                          </td>
-                          <td className="px-4 py-3">
-                            <input
-                              value={row.sourceCode}
-                              onChange={(e) =>
-                                updateReviewRow(row.rowId, { sourceCode: e.target.value })
-                              }
-                              className="w-28 rounded-lg border px-2 py-1 text-sm"
-                            />
-                          </td>
-                          <td className="px-4 py-3">
-                            <input
-                              value={row.sourceName}
-                              onChange={(e) =>
-                                updateReviewRow(row.rowId, { sourceName: e.target.value })
-                              }
-                              className="w-56 rounded-lg border px-2 py-1 text-sm"
-                            />
-                          </td>
-                          <td className="px-4 py-3">
-                            <select
-                              value={row.itemId}
-                              onChange={(e) => updateReviewRow(row.rowId, { itemId: e.target.value })}
-                              className="w-64 rounded-lg border px-2 py-1 text-sm"
-                            >
-                              <option value="">Select L1 item</option>
-                              {items.map((item) => (
-                                <option key={item.id} value={item.id}>
-                                  {item.name} [{item.sku}]
-                                </option>
-                              ))}
-                            </select>
-                            {rowNeedsReview ? (
-                              <div className="mt-1 text-xs font-medium text-amber-800">
-                                Needs L1 match/review
-                              </div>
-                            ) : null}
-                          </td>
-                          <td className="px-4 py-3">
-                            <input
-                              type="number"
-                              step="1"
-                              value={row.qty}
-                              onChange={(e) => updateReviewRow(row.rowId, { qty: e.target.value })}
-                              className="w-24 rounded-lg border px-2 py-1 text-sm"
-                            />
-                          </td>
-                          <td className="px-4 py-3 text-slate-700">
-                            <div>{Math.round((row.confidence || 0) * 100)}%</div>
-                            <div className={rowNeedsReview ? 'text-xs font-medium text-amber-800' : 'text-xs text-slate-500'}>
-                              {row.matchReason}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <textarea
-                              value={row.notes}
-                              onChange={(e) =>
-                                updateReviewRow(row.rowId, { notes: e.target.value })
-                              }
-                              className="h-16 w-52 rounded-lg border px-2 py-1 text-sm"
-                            />
-                          </td>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[1050px] w-full text-left text-sm">
+                      <thead className="bg-slate-100 text-slate-700">
+                        <tr>
+                          <th className="px-4 py-3">Use</th>
+                          <th className="px-4 py-3">Code</th>
+                          <th className="px-4 py-3">Source Item</th>
+                          <th className="px-4 py-3">L1 Match</th>
+                          <th className="px-4 py-3">Qty</th>
+                          <th className="px-4 py-3">Match</th>
+                          <th className="px-4 py-3">Notes</th>
                         </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                      </thead>
+                      <tbody>
+                        {salesReviewRows.map((row) => {
+                          const rowNeedsReview = row.needsReview || !row.itemId
+
+                          return (
+                            <tr
+                              key={row.rowId}
+                              className={`border-t align-top ${rowNeedsReview ? 'bg-amber-50' : ''}`}
+                            >
+                              <td className="px-4 py-3">
+                                <input
+                                  type="checkbox"
+                                  checked={row.selected}
+                                  onChange={(e) =>
+                                    updateReviewRow(row.rowId, { selected: e.target.checked })
+                                  }
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <input
+                                  value={row.sourceCode}
+                                  onChange={(e) =>
+                                    updateReviewRow(row.rowId, { sourceCode: e.target.value })
+                                  }
+                                  className="w-28 rounded-lg border px-2 py-1 text-sm"
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <input
+                                  value={row.sourceName}
+                                  onChange={(e) =>
+                                    updateReviewRow(row.rowId, { sourceName: e.target.value })
+                                  }
+                                  className="w-56 rounded-lg border px-2 py-1 text-sm"
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <select
+                                  value={row.itemId}
+                                  onChange={(e) => updateReviewRow(row.rowId, { itemId: e.target.value })}
+                                  className="w-64 rounded-lg border px-2 py-1 text-sm"
+                                >
+                                  <option value="">Select L1 item</option>
+                                  {l1Items.map((item) => (
+                                    <option key={item.id} value={item.id}>
+                                      {item.name} [{item.sku}]
+                                    </option>
+                                  ))}
+                                </select>
+                                {rowNeedsReview ? (
+                                  <div className="mt-1 text-xs font-medium text-amber-800">
+                                    Needs L1 match/review
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td className="px-4 py-3">
+                                <input
+                                  type="number"
+                                  step="1"
+                                  value={row.qty}
+                                  onChange={(e) => updateReviewRow(row.rowId, { qty: e.target.value })}
+                                  className="w-24 rounded-lg border px-2 py-1 text-sm"
+                                />
+                              </td>
+                              <td className="px-4 py-3 text-slate-700">
+                                <div>{Math.round((row.confidence || 0) * 100)}%</div>
+                                <div className={rowNeedsReview ? 'text-xs font-medium text-amber-800' : 'text-xs text-slate-500'}>
+                                  {row.matchReason}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <textarea
+                                  value={row.notes}
+                                  onChange={(e) =>
+                                    updateReviewRow(row.rowId, { notes: e.target.value })
+                                  }
+                                  className="h-16 w-52 rounded-lg border px-2 py-1 text-sm"
+                                />
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+
+              {modifierReviewRows.length > 0 ? (
+                <div className={salesReviewRows.length > 0 ? 'border-t' : ''}>
+                  <div className="border-b bg-blue-50 px-6 py-3">
+                    <h3 className="font-semibold text-slate-900">Extras / Subtractions Review</h3>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Review POS modifiers separately before stock is adjusted.
+                    </p>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[1120px] w-full text-left text-sm">
+                      <thead className="bg-slate-100 text-slate-700">
+                        <tr>
+                          <th className="px-4 py-3">Use</th>
+                          <th className="px-4 py-3">Type</th>
+                          <th className="px-4 py-3">Code</th>
+                          <th className="px-4 py-3">Source Modifier</th>
+                          <th className="px-4 py-3">Flowdish Item</th>
+                          <th className="px-4 py-3">Qty</th>
+                          <th className="px-4 py-3">Match</th>
+                          <th className="px-4 py-3">Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {modifierReviewRows.map((row) => {
+                          const rowNeedsReview = row.needsReview || !row.itemId
+
+                          return (
+                            <tr
+                              key={row.rowId}
+                              className={`border-t align-top ${rowNeedsReview ? 'bg-amber-50' : ''}`}
+                            >
+                              <td className="px-4 py-3">
+                                <input
+                                  type="checkbox"
+                                  checked={row.selected}
+                                  onChange={(e) =>
+                                    updateModifierReviewRow(row.rowId, { selected: e.target.checked })
+                                  }
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <select
+                                  value={row.modifierType}
+                                  onChange={(e) =>
+                                    updateModifierReviewRow(row.rowId, {
+                                      modifierType: e.target.value === 'REMOVE' ? 'REMOVE' : 'EXTRA',
+                                    })
+                                  }
+                                  className="w-28 rounded-lg border px-2 py-1 text-sm"
+                                >
+                                  <option value="EXTRA">Extra</option>
+                                  <option value="REMOVE">Remove</option>
+                                </select>
+                              </td>
+                              <td className="px-4 py-3">
+                                <input
+                                  value={row.sourceCode}
+                                  onChange={(e) =>
+                                    updateModifierReviewRow(row.rowId, { sourceCode: e.target.value })
+                                  }
+                                  className="w-28 rounded-lg border px-2 py-1 text-sm"
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <input
+                                  value={row.sourceName}
+                                  onChange={(e) =>
+                                    updateModifierReviewRow(row.rowId, { sourceName: e.target.value })
+                                  }
+                                  className="w-56 rounded-lg border px-2 py-1 text-sm"
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <select
+                                  value={row.itemId}
+                                  onChange={(e) =>
+                                    updateModifierReviewRow(row.rowId, { itemId: e.target.value })
+                                  }
+                                  className="w-72 rounded-lg border px-2 py-1 text-sm"
+                                >
+                                  <option value="">Select L1/L2/L3 item</option>
+                                  {modifierItems.map((item) => (
+                                    <option key={item.id} value={item.id}>
+                                      {item.name} [{item.sku}] - {item.itemType} / {item.unitType}
+                                    </option>
+                                  ))}
+                                </select>
+                                {rowNeedsReview ? (
+                                  <div className="mt-1 text-xs font-medium text-amber-800">
+                                    Needs item match/review
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td className="px-4 py-3">
+                                <input
+                                  type="number"
+                                  step="0.001"
+                                  value={row.qty}
+                                  onChange={(e) =>
+                                    updateModifierReviewRow(row.rowId, { qty: e.target.value })
+                                  }
+                                  className="w-24 rounded-lg border px-2 py-1 text-sm"
+                                />
+                              </td>
+                              <td className="px-4 py-3 text-slate-700">
+                                <div>{Math.round((row.confidence || 0) * 100)}%</div>
+                                <div className={rowNeedsReview ? 'text-xs font-medium text-amber-800' : 'text-xs text-slate-500'}>
+                                  {row.matchReason}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <textarea
+                                  value={row.notes}
+                                  onChange={(e) =>
+                                    updateModifierReviewRow(row.rowId, { notes: e.target.value })
+                                  }
+                                  className="h-16 w-52 rounded-lg border px-2 py-1 text-sm"
+                                />
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="flex flex-wrap items-center gap-3 border-t px-6 py-4">
                 <button
@@ -626,7 +852,10 @@ export default function SalesPage() {
 
                 <button
                   type="button"
-                  onClick={() => setSalesReviewRows([])}
+                  onClick={() => {
+                    setSalesReviewRows([])
+                    setModifierReviewRows([])
+                  }}
                   disabled={savingImport}
                   className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
                 >
@@ -634,7 +863,9 @@ export default function SalesPage() {
                 </button>
 
                 <div className="text-sm text-slate-600">
-                  Selected rows: {salesReviewRows.filter((row) => row.selected).length}
+                  Selected rows:{' '}
+                  {salesReviewRows.filter((row) => row.selected).length +
+                    modifierReviewRows.filter((row) => row.selected).length}
                 </div>
               </div>
             </div>
@@ -658,7 +889,7 @@ export default function SalesPage() {
               required
             >
               <option value="">Select item</option>
-              {items.map((item) => (
+              {l1Items.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.name} [{item.sku}]
                 </option>

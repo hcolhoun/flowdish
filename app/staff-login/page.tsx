@@ -46,7 +46,7 @@ export default function StaffLoginPage() {
         throw new Error(data?.error || 'Staff login failed')
       }
 
-      router.push('/prep')
+      router.push(data?.redirectTo || '/prep')
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -70,11 +70,11 @@ export default function StaffLoginPage() {
         </div>
 
         <h1 className="mt-6 text-center text-2xl font-semibold text-slate-900">
-          Staff PIN Login
+          PIN Login
         </h1>
 
         <p className="mt-2 text-center text-sm text-slate-600">
-          For kitchen staff using Prep and Waste only.
+          Head Chef account PINs open the full restaurant account. Staff PINs open Prep and Waste.
         </p>
 
         {error ? (

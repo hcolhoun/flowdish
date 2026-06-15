@@ -64,6 +64,7 @@ model Restaurant {
   prepBatches                 PrepBatch[]
   prepHaccpRecords            PrepHaccpRecord[]
   sales                       Sale[]
+  salesModifierAdjustments    SalesModifierAdjustment[]
   wastes                      Waste[]
   forecasts                   Forecast[]
   forecastLines               ForecastLine[]
@@ -145,6 +146,7 @@ model Item {
   inventoryLots InventoryLot[]
   prepBatches   PrepBatch[]
   sales         Sale[]
+  salesModifierAdjustments SalesModifierAdjustment[]
   wastes        Waste[]
   forecastLines ForecastLine[]
   sopDocument   SopDocument?
@@ -351,6 +353,27 @@ model Sale {
 
   @@index([restaurantId])
   @@index([itemId])
+}
+
+model SalesModifierAdjustment {
+  id           String   @id @default(cuid())
+  restaurantId String
+  soldAt       DateTime
+  itemId       String
+  qtyDelta     Float
+  cost         Float    @default(0)
+  sourceCode   String?
+  sourceName   String?
+  modifierType String
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  item       Item       @relation(fields: [itemId], references: [id])
+
+  @@index([restaurantId])
+  @@index([itemId])
+  @@index([soldAt])
 }
 
 model Waste {

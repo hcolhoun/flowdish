@@ -58,6 +58,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid staff login.' }, { status: 401 })
     }
 
+    const accountMembership =
+      staffUser.isAccountPin && staffUser.accountAuthUserId
+        ? await prisma.userMembership.findFirst({
+            where: {
+              authUserId: staffUser.accountAuthUserId,
+              restaurantId: restaurant.id,
+            },
+            select: {
+              role: true,
+            },
+          })
+        : null
+
+    const accountHasFullAccess =
+      accountMembership?.role === 'OWNER' || accountMembership?.role === 'ADMIN'
+
     const token = createStaffSessionToken({
       type: 'staff',
       staffUserId: staffUser.id,
@@ -82,6 +98,7 @@ export async function POST(req: Request) {
         name: restaurant.name,
         slug: restaurant.slug,
       },
+      redirectTo: accountHasFullAccess ? '/' : '/prep',
       expiresInSeconds: STAFF_SESSION_SECONDS,
     })
 

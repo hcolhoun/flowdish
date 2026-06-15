@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma'
 
-async function consumeInventoryForItem({
+export async function consumeInventoryForItem({
   tx,
   restaurantId,
   itemId,
@@ -44,6 +44,39 @@ async function consumeInventoryForItem({
   }
 
   return totalCost
+}
+
+export async function returnInventoryForItem({
+  tx,
+  restaurantId,
+  itemId,
+  qty,
+}: {
+  tx: any
+  restaurantId: string
+  itemId: string
+  qty: number
+}) {
+  const item = await tx.item.findFirst({
+    where: {
+      id: itemId,
+      restaurantId,
+    },
+  })
+
+  if (!item) throw new Error('ITEM_NOT_FOUND')
+
+  return tx.inventoryLot.create({
+    data: {
+      restaurantId,
+      itemId,
+      qtyInitial: qty,
+      qtyRemaining: qty,
+      unitType: item.unitType,
+      sourceType: 'PREP',
+      unitCost: 0,
+    },
+  })
 }
 
 export async function calculateAndConsumeL1Sale({
