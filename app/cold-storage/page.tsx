@@ -572,7 +572,6 @@ export default function ColdStoragePage() {
                   <th className="px-4 py-3">Monitor</th>
                   <th className="px-4 py-3">Location</th>
                   <th className="px-4 py-3">Temperature</th>
-                  <th className="px-4 py-3">Humidity</th>
                   <th className="px-4 py-3">Recorded</th>
                   <th className="px-4 py-3">Source</th>
                 </tr>
@@ -580,7 +579,7 @@ export default function ColdStoragePage() {
               <tbody>
                 {allReadings.length === 0 ? (
                   <tr className="border-t">
-                    <td className="px-4 py-3 text-slate-700" colSpan={6}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={5}>
                       No readings yet.
                     </td>
                   </tr>
@@ -591,9 +590,6 @@ export default function ColdStoragePage() {
                       <td className="px-4 py-3 text-slate-800">{reading.location || ''}</td>
                       <td className="px-4 py-3 text-slate-800">
                         {tempText(reading.temperatureC)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-800">
-                        {reading.humidity === null ? '' : `${reading.humidity.toFixed(1)}%`}
                       </td>
                       <td className="px-4 py-3 text-slate-800">
                         {formatDateTime(reading.recordedAt)}
