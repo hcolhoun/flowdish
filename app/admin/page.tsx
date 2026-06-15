@@ -207,6 +207,11 @@ export default function AdminPage() {
   const [staffDisplayName, setStaffDisplayName] = useState('')
   const [staffPin, setStaffPin] = useState('')
   const [staffResult, setStaffResult] = useState<CreateStaffResult | null>(null)
+  const [editingStaffId, setEditingStaffId] = useState('')
+  const [editingStaffDisplayName, setEditingStaffDisplayName] = useState('')
+  const [editingStaffPin, setEditingStaffPin] = useState('')
+  const [updatingStaffId, setUpdatingStaffId] = useState('')
+  const [removingStaffId, setRemovingStaffId] = useState('')
   const [accountPinDisplayName, setAccountPinDisplayName] = useState('')
   const [accountPin, setAccountPin] = useState('')
   const [accountPinResult, setAccountPinResult] = useState<AccountPinResult | null>(null)
@@ -485,6 +490,78 @@ export default function AdminPage() {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setSavingStaff(false)
+    }
+  }
+
+  function startEditStaff(staff: StaffUser) {
+    setEditingStaffId(staff.id)
+    setEditingStaffDisplayName(staff.displayName)
+    setEditingStaffPin('')
+    setError('')
+    setMessage('')
+  }
+
+  function cancelEditStaff() {
+    setEditingStaffId('')
+    setEditingStaffDisplayName('')
+    setEditingStaffPin('')
+  }
+
+  async function handleUpdateStaffUser(staffId: string) {
+    try {
+      setUpdatingStaffId(staffId)
+      setError('')
+      setMessage('')
+
+      const res = await fetch(`/api/admin/staff-users/${staffId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          displayName: editingStaffDisplayName,
+          pin: editingStaffPin,
+        }),
+      })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to update staff PIN user')
+      }
+
+      setMessage('Staff PIN user updated.')
+      cancelEditStaff()
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setUpdatingStaffId('')
+    }
+  }
+
+  async function handleRemoveStaffUser(staff: StaffUser) {
+    try {
+      const confirmed = window.confirm(`Remove staff PIN user ${staff.displayName}?`)
+      if (!confirmed) return
+
+      setRemovingStaffId(staff.id)
+      setError('')
+      setMessage('')
+
+      const res = await fetch(`/api/admin/staff-users/${staff.id}`, {
+        method: 'DELETE',
+      })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to remove staff PIN user')
+      }
+
+      setMessage('Staff PIN user removed.')
+      if (editingStaffId === staff.id) cancelEditStaff()
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setRemovingStaffId('')
     }
   }
 
@@ -1025,7 +1102,7 @@ export default function AdminPage() {
             </section>
 
             <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">Your PIN Login</h2>
+              <h2 className="text-xl font-semibold text-slate-900">Head Chef PIN Login</h2>
               <p className="mt-1 text-sm text-slate-600">
                 This gives the account user a quick PIN login with the same access as their email
                 login. It does not use one of the Basic plan staff PIN slots.
@@ -1039,6 +1116,10 @@ export default function AdminPage() {
                   </span>
                 </div>
               ) : null}
+
+              <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                To recover or change the Head Chef PIN, enter a new 4-digit PIN below and save it.
+              </div>
 
               <form onSubmit={handleSaveAccountPin} className="mt-6 grid gap-4 md:grid-cols-3">
                 <div>
@@ -1075,7 +1156,11 @@ export default function AdminPage() {
                     disabled={savingAccountPin}
                     className="rounded-xl bg-slate-900 px-5 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {savingAccountPin ? 'Saving...' : data.accountPin ? 'Update My PIN' : 'Create My PIN'}
+                    {savingAccountPin
+                      ? 'Saving...'
+                      : data.accountPin
+                        ? 'Reset Head Chef PIN'
+                        : 'Create Head Chef PIN'}
                   </button>
                 </div>
               </form>
@@ -1105,34 +1190,110 @@ export default function AdminPage() {
                       <th className="px-4 py-3">Username</th>
                       <th className="px-4 py-3">Status</th>
                       <th className="px-4 py-3">Created</th>
+                      <th className="px-4 py-3">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {staffPinUsers.length === 0 ? (
                       <tr>
-                        <td className="px-4 py-3 text-slate-600" colSpan={4}>
+                        <td className="px-4 py-3 text-slate-600" colSpan={5}>
                           No staff PIN users yet.
                         </td>
                       </tr>
                     ) : (
-                      staffPinUsers.map((staff) => (
-                        <tr key={staff.id} className="border-t">
-                          <td className="px-4 py-3">{staff.displayName}</td>
-                          <td className="px-4 py-3 font-mono text-xs">{staff.username}</td>
-                          <td className="px-4 py-3">
-                            {staff.active ? (
-                              <span className="rounded-lg bg-green-50 px-2 py-1 text-xs font-semibold text-green-700">
-                                Active
-                              </span>
-                            ) : (
-                              <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
-                                Inactive
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3">{formatDate(staff.createdAt)}</td>
-                        </tr>
-                      ))
+                      staffPinUsers.map((staff) => {
+                        const isEditing = editingStaffId === staff.id
+
+                        return (
+                          <tr key={staff.id} className="border-t align-top">
+                            <td className="px-4 py-3">
+                              {isEditing ? (
+                                <input
+                                  value={editingStaffDisplayName}
+                                  onChange={(e) => setEditingStaffDisplayName(e.target.value)}
+                                  className="w-40 rounded-lg border px-2 py-1 text-sm"
+                                />
+                              ) : (
+                                staff.displayName
+                              )}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-xs">{staff.username}</td>
+                            <td className="px-4 py-3">
+                              {staff.active ? (
+                                <span className="rounded-lg bg-green-50 px-2 py-1 text-xs font-semibold text-green-700">
+                                  Active
+                                </span>
+                              ) : (
+                                <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
+                                  Inactive
+                                </span>
+                              )}
+                              {isEditing ? (
+                                <div className="mt-2">
+                                  <label className="mb-1 block text-xs font-medium text-slate-700">
+                                    New PIN
+                                  </label>
+                                  <input
+                                    value={editingStaffPin}
+                                    onChange={(e) =>
+                                      setEditingStaffPin(e.target.value.replace(/\D/g, '').slice(0, 4))
+                                    }
+                                    className="w-24 rounded-lg border px-2 py-1 text-sm"
+                                    inputMode="numeric"
+                                    maxLength={4}
+                                    placeholder="1234"
+                                  />
+                                  <div className="mt-1 text-xs text-slate-500">
+                                    Leave blank to keep current PIN.
+                                  </div>
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="px-4 py-3">{formatDate(staff.createdAt)}</td>
+                            <td className="px-4 py-3">
+                              {isEditing ? (
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateStaffUser(staff.id)}
+                                    disabled={updatingStaffId === staff.id}
+                                    className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {updatingStaffId === staff.id ? 'Saving...' : 'Save'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={cancelEditStaff}
+                                    disabled={updatingStaffId === staff.id}
+                                    className="rounded-lg border px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditStaff(staff)}
+                                    disabled={!staff.active || Boolean(removingStaffId)}
+                                    className="rounded-lg border px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    Edit PIN
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveStaffUser(staff)}
+                                    disabled={!staff.active || removingStaffId === staff.id}
+                                    className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {removingStaffId === staff.id ? 'Removing...' : 'Remove'}
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })
                     )}
                   </tbody>
                 </table>

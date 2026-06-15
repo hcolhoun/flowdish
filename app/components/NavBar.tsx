@@ -35,14 +35,14 @@ const fullLinks = [
   { href: '/deliveries', label: 'Deliveries' },
   { href: '/inventory', label: 'Inventory' },
   { href: '/planning', label: 'Planning' },
-  { href: '/prep', label: 'Prep' },
+  { href: '/prep', label: 'Record Prep' },
   { href: '/sales', label: 'Sales' },
   { href: '/waste', label: 'Waste' },
   { href: '/cold-storage', label: 'Cold Storage' },
 ]
 
 const staffLinks = [
-  { href: '/prep', label: 'Prep' },
+  { href: '/prep', label: 'Record Prep' },
   { href: '/waste', label: 'Waste' },
 ]
 

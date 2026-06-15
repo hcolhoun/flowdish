@@ -160,6 +160,7 @@ export default function DeliveriesPage() {
   const [docketSaving, setDocketSaving] = useState(false)
   const [parsedDocket, setParsedDocket] = useState<ParsedDocketResponse | null>(null)
   const [reviewRows, setReviewRows] = useState<ReviewRow[]>([])
+  const [reviewSupplier, setReviewSupplier] = useState('')
 
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -573,6 +574,11 @@ export default function DeliveriesPage() {
     )
   }
 
+  function applyReviewSupplierToAllRows() {
+    const nextSupplier = reviewSupplier.trim()
+    setReviewRows((rows) => rows.map((row) => ({ ...row, supplier: nextSupplier })))
+  }
+
   function selectReviewItem(rowId: string, item: Item) {
     updateReviewRow(rowId, {
       selectedItemId: item.id,
@@ -718,6 +724,7 @@ export default function DeliveriesPage() {
       setMessage('')
       setParsedDocket(null)
       setReviewRows([])
+      setReviewSupplier('')
 
       if (!docketFile) {
         throw new Error('Choose a delivery docket file first.')
@@ -793,6 +800,7 @@ export default function DeliveriesPage() {
 
       setParsedDocket(data)
       setReviewRows(mappedRows)
+      setReviewSupplier(mappedRows[0]?.supplier || data.supplier || '')
 
       if (data.deliveryDate) {
         setDeliveredAt(data.deliveryDate)
@@ -867,6 +875,7 @@ export default function DeliveriesPage() {
       setMessage(`${savedCount} delivery row(s) saved and inventory increased.`)
       setParsedDocket(null)
       setReviewRows([])
+      setReviewSupplier('')
       setDocketFile(null)
       await loadData()
     } catch (err) {
@@ -914,6 +923,7 @@ export default function DeliveriesPage() {
                   setDocketFile(e.target.files?.[0] ?? null)
                   setParsedDocket(null)
                   setReviewRows([])
+                  setReviewSupplier('')
                   setError('')
                   setMessage('')
                 }}
@@ -927,6 +937,7 @@ export default function DeliveriesPage() {
                   setDocketFile(e.target.files?.[0] ?? null)
                   setParsedDocket(null)
                   setReviewRows([])
+                  setReviewSupplier('')
                   setError('')
                   setMessage('')
                 }}
@@ -973,6 +984,7 @@ export default function DeliveriesPage() {
                 setDocketFile(null)
                 setParsedDocket(null)
                 setReviewRows([])
+                setReviewSupplier('')
               }}
               disabled={docketParsing || docketSaving}
               className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
@@ -991,16 +1003,43 @@ export default function DeliveriesPage() {
                 {parsedDocket.deliveryDate || deliveredAt || 'Unknown'} · Docket:{' '}
                 {parsedDocket.docketNumber || 'N/A'} · Rows: {reviewRows.length}
               </div>
-              <div className="mt-3 max-w-sm">
-                <label className="mb-1 block text-sm font-medium text-slate-900">
-                  Delivery date for saved rows
-                </label>
-                <input
-                  type="date"
-                  value={deliveredAt}
-                  onChange={(e) => setDeliveredAt(e.target.value)}
-                  className="w-full rounded-xl border px-3 py-2"
-                />
+              <div className="mt-3 grid gap-4 md:grid-cols-[minmax(0,240px)_minmax(0,420px)]">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Delivery date for saved rows
+                  </label>
+                  <input
+                    type="date"
+                    value={deliveredAt}
+                    onChange={(e) => setDeliveredAt(e.target.value)}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Supplier for this docket
+                  </label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      value={reviewSupplier}
+                      onChange={(e) => setReviewSupplier(e.target.value)}
+                      className="w-full rounded-xl border px-3 py-2"
+                      placeholder="Correct supplier name..."
+                    />
+                    <button
+                      type="button"
+                      onClick={applyReviewSupplierToAllRows}
+                      disabled={reviewRows.length === 0}
+                      className="whitespace-nowrap rounded-xl border px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                    >
+                      Apply to all rows
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Use this if the AI picked the wrong supplier for the whole docket.
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -1235,6 +1274,7 @@ export default function DeliveriesPage() {
                 onClick={() => {
                   setParsedDocket(null)
                   setReviewRows([])
+                  setReviewSupplier('')
                 }}
                 disabled={docketSaving}
                 className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
