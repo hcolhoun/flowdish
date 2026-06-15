@@ -181,6 +181,12 @@ export default function SignupPage() {
             Staff PIN login
           </Link>
         </div>
+
+        <div className="mt-3 text-center text-sm">
+          <Link href="/privacy" className="font-medium text-slate-700 underline hover:text-slate-900">
+            Privacy statement
+          </Link>
+        </div>
       </div>
     </main>
   )

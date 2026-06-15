@@ -46,7 +46,7 @@ const staffLinks = [
   { href: '/waste', label: 'Waste' },
 ]
 
-const hiddenRoutes = ['/login', '/signup', '/reset-password', '/staff-login']
+const hiddenRoutes = ['/login', '/signup', '/reset-password', '/staff-login', '/privacy']
 
 export default function NavBar() {
   const pathname = usePathname()

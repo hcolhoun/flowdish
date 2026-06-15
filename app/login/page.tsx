@@ -183,6 +183,13 @@ export default function LoginPage() {
           >
             Staff PIN login
           </a>
+
+          <a
+            href="/privacy"
+            className="font-medium text-slate-700 underline hover:text-slate-900"
+          >
+            Privacy statement
+          </a>
         </div>
       </div>
     </main>

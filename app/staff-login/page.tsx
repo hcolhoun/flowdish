@@ -149,6 +149,12 @@ export default function StaffLoginPage() {
             Head Chef / Owner login
           </a>
         </div>
+
+        <div className="mt-3 text-center text-sm">
+          <a href="/privacy" className="font-medium text-slate-700 underline hover:text-slate-900">
+            Privacy statement
+          </a>
+        </div>
       </div>
     </main>
   )
