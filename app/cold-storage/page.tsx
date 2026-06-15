@@ -23,6 +23,16 @@ type Monitor = {
   latestReading: Reading | null
 }
 
+type ChartRange = '24h' | '7d' | '30d' | '3m' | 'all'
+
+const chartRangeOptions: Array<{ value: ChartRange; label: string }> = [
+  { value: '24h', label: 'Last 24 hours' },
+  { value: '7d', label: 'Last 7 days' },
+  { value: '30d', label: 'Last 30 days' },
+  { value: '3m', label: 'Last 3 months' },
+  { value: 'all', label: 'All readings' },
+]
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) return 'No reading'
 
@@ -57,6 +67,132 @@ function statusForMonitor(monitor: Monitor) {
   return { label: 'OK', className: 'bg-green-100 text-green-800' }
 }
 
+function tempText(value: number | null | undefined) {
+  if (value === null || value === undefined) return '-'
+  return `${value.toFixed(1)} C`
+}
+
+function rangeStart(range: ChartRange) {
+  const now = new Date()
+
+  if (range === '24h') return new Date(now.getTime() - 24 * 60 * 60 * 1000)
+  if (range === '7d') return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+  if (range === '30d') return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+  if (range === '3m') {
+    const start = new Date(now)
+    start.setMonth(start.getMonth() - 3)
+    return start
+  }
+
+  return null
+}
+
+function readingsForRange(readings: Reading[], range: ChartRange) {
+  const start = rangeStart(range)
+
+  return readings
+    .filter((reading) => !start || new Date(reading.recordedAt) >= start)
+    .sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime())
+}
+
+function TemperatureTrend({ monitor, range }: { monitor: Monitor; range: ChartRange }) {
+  const readings = readingsForRange(monitor.readings, range)
+  const width = 360
+  const height = 150
+  const padX = 18
+  const padY = 20
+
+  if (readings.length === 0) {
+    return (
+      <div className="flex h-40 items-center justify-center rounded-xl border bg-slate-50 text-sm text-slate-500">
+        No readings in this range
+      </div>
+    )
+  }
+
+  const temps = readings.map((reading) => reading.temperatureC)
+  const limitTemps = [monitor.minTempC, monitor.maxTempC].filter(
+    (value): value is number => value !== null
+  )
+  let minTemp = Math.min(...temps, ...limitTemps)
+  let maxTemp = Math.max(...temps, ...limitTemps)
+
+  if (minTemp === maxTemp) {
+    minTemp -= 1
+    maxTemp += 1
+  }
+
+  const firstTime = new Date(readings[0].recordedAt).getTime()
+  const lastTime = new Date(readings[readings.length - 1].recordedAt).getTime()
+  const timeSpan = Math.max(1, lastTime - firstTime)
+  const plotWidth = width - padX * 2
+  const plotHeight = height - padY * 2
+
+  function xFor(value: string) {
+    return padX + ((new Date(value).getTime() - firstTime) / timeSpan) * plotWidth
+  }
+
+  function yFor(value: number) {
+    return padY + ((maxTemp - value) / (maxTemp - minTemp)) * plotHeight
+  }
+
+  const points = readings
+    .map((reading) =>
+      `${xFor(reading.recordedAt).toFixed(1)},${yFor(reading.temperatureC).toFixed(1)}`
+    )
+    .join(' ')
+
+  function limitLine(value: number | null) {
+    if (value === null) return null
+    const y = yFor(value)
+
+    return (
+      <line
+        x1={padX}
+        x2={width - padX}
+        y1={y}
+        y2={y}
+        stroke="#94a3b8"
+        strokeDasharray="4 4"
+        strokeWidth="1"
+      />
+    )
+  }
+
+  return (
+    <div className="rounded-xl border bg-slate-50 p-3">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-40 w-full" role="img">
+        <rect x="0" y="0" width={width} height={height} rx="12" fill="#f8fafc" />
+        {limitLine(monitor.minTempC)}
+        {limitLine(monitor.maxTempC)}
+        {readings.length > 1 ? (
+          <polyline
+            points={points}
+            fill="none"
+            stroke="#0f172a"
+            strokeLinecap="round"
+            strokeWidth="3"
+          />
+        ) : (
+          <circle
+            cx={xFor(readings[0].recordedAt)}
+            cy={yFor(readings[0].temperatureC)}
+            fill="#0f172a"
+            r="4"
+          />
+        )}
+      </svg>
+
+      <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-600">
+        <span>{readings.length} reading(s)</span>
+        <span>
+          {tempText(minTemp)} to {tempText(maxTemp)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 export default function ColdStoragePage() {
   const [monitors, setMonitors] = useState<Monitor[]>([])
   const [loading, setLoading] = useState(true)
@@ -65,6 +201,7 @@ export default function ColdStoragePage() {
   const [message, setMessage] = useState('')
   const [importMonitorId, setImportMonitorId] = useState('')
   const [importFile, setImportFile] = useState<File | null>(null)
+  const [chartRange, setChartRange] = useState<ChartRange>('24h')
 
   const allReadings = useMemo(() => {
     return monitors
@@ -166,14 +303,31 @@ export default function ColdStoragePage() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={loadData}
-            disabled={loading}
-            className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
-          >
-            {loading ? 'Loading...' : 'Refresh'}
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <label className="text-sm">
+              <span className="sr-only">Graph time span</span>
+              <select
+                value={chartRange}
+                onChange={(event) => setChartRange(event.target.value as ChartRange)}
+                className="rounded-xl border bg-white px-3 py-2 text-sm text-slate-800"
+              >
+                {chartRangeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <button
+              type="button"
+              onClick={loadData}
+              disabled={loading}
+              className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+            >
+              {loading ? 'Loading...' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
         {error ? (
@@ -238,7 +392,7 @@ export default function ColdStoragePage() {
           </div>
         </section>
 
-        <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <section className="mt-8 grid gap-4 xl:grid-cols-2">
           {monitors.length === 0 && !loading ? (
             <div className="rounded-2xl border bg-white p-6 text-sm text-slate-700 shadow-sm">
               No cold storage monitors have been added yet.
@@ -264,24 +418,33 @@ export default function ColdStoragePage() {
                   </span>
                 </div>
 
-                <div className="mt-6 text-4xl font-semibold text-slate-900">
-                  {tempLabel(latest?.temperatureC)}
-                </div>
+                <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(180px,220px)_1fr] lg:items-center">
+                  <div>
+                    <div className="text-xs font-medium uppercase text-slate-500">
+                      Last recorded temp
+                    </div>
+                    <div className="mt-2 text-4xl font-semibold text-slate-900">
+                      {tempText(latest?.temperatureC)}
+                    </div>
 
-                <div className="mt-2 text-sm text-slate-600">
-                  Last reading: {formatDateTime(latest?.recordedAt)}
-                </div>
+                    <div className="mt-2 text-sm text-slate-600">
+                      Last reading: {formatDateTime(latest?.recordedAt)}
+                    </div>
 
-                <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
-                  <div className="rounded-xl border bg-slate-50 p-3">
-                    <div className="text-xs text-slate-500">Min</div>
-                    <div className="font-semibold text-slate-900">{tempLabel(monitor.minTempC)}</div>
+                    <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+                      <div className="rounded-xl border bg-slate-50 p-3">
+                        <div className="text-xs text-slate-500">Min</div>
+                        <div className="font-semibold text-slate-900">{tempText(monitor.minTempC)}</div>
+                      </div>
+
+                      <div className="rounded-xl border bg-slate-50 p-3">
+                        <div className="text-xs text-slate-500">Max</div>
+                        <div className="font-semibold text-slate-900">{tempText(monitor.maxTempC)}</div>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="rounded-xl border bg-slate-50 p-3">
-                    <div className="text-xs text-slate-500">Max</div>
-                    <div className="font-semibold text-slate-900">{tempLabel(monitor.maxTempC)}</div>
-                  </div>
+                  <TemperatureTrend monitor={monitor} range={chartRange} />
                 </div>
               </div>
             )
@@ -318,7 +481,7 @@ export default function ColdStoragePage() {
                       <td className="px-4 py-3 text-slate-800">{reading.monitorName}</td>
                       <td className="px-4 py-3 text-slate-800">{reading.location || ''}</td>
                       <td className="px-4 py-3 text-slate-800">
-                        {tempLabel(reading.temperatureC)}
+                        {tempText(reading.temperatureC)}
                       </td>
                       <td className="px-4 py-3 text-slate-800">
                         {reading.humidity === null ? '' : `${reading.humidity.toFixed(1)}%`}

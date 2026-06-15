@@ -19,7 +19,7 @@ export async function GET() {
           orderBy: {
             recordedAt: 'desc',
           },
-          take: 50,
+          take: 5000,
         },
       },
     })
