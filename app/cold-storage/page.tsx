@@ -95,17 +95,40 @@ function readingsForRange(readings: Reading[], range: ChartRange) {
     .sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime())
 }
 
+function formatChartTick(value: string, range: ChartRange) {
+  const date = new Date(value)
+
+  if (range === '24h') {
+    return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  }
+
+  if (range === '7d') {
+    return date.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit' })
+  }
+
+  if (range === '30d') {
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+  }
+
+  return date.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })
+}
+
 function TemperatureTrend({ monitor, range }: { monitor: Monitor; range: ChartRange }) {
   const readings = readingsForRange(monitor.readings, range)
-  const width = 360
-  const height = 150
-  const padX = 18
-  const padY = 20
+  const width = 460
+  const height = 240
+  const padLeft = 54
+  const padRight = 18
+  const padTop = 20
+  const padBottom = 48
 
   if (readings.length === 0) {
     return (
-      <div className="flex h-40 items-center justify-center rounded-xl border bg-slate-50 text-sm text-slate-500">
-        No readings in this range
+      <div className="rounded-xl border bg-slate-50 p-3">
+        <div className="mb-2 text-sm font-semibold text-slate-900">Temperature trend</div>
+        <div className="flex h-52 items-center justify-center rounded-lg border bg-white text-sm text-slate-500">
+          No readings in this range
+        </div>
       </div>
     )
   }
@@ -125,15 +148,15 @@ function TemperatureTrend({ monitor, range }: { monitor: Monitor; range: ChartRa
   const firstTime = new Date(readings[0].recordedAt).getTime()
   const lastTime = new Date(readings[readings.length - 1].recordedAt).getTime()
   const timeSpan = Math.max(1, lastTime - firstTime)
-  const plotWidth = width - padX * 2
-  const plotHeight = height - padY * 2
+  const plotWidth = width - padLeft - padRight
+  const plotHeight = height - padTop - padBottom
 
   function xFor(value: string) {
-    return padX + ((new Date(value).getTime() - firstTime) / timeSpan) * plotWidth
+    return padLeft + ((new Date(value).getTime() - firstTime) / timeSpan) * plotWidth
   }
 
   function yFor(value: number) {
-    return padY + ((maxTemp - value) / (maxTemp - minTemp)) * plotHeight
+    return padTop + ((maxTemp - value) / (maxTemp - minTemp)) * plotHeight
   }
 
   const points = readings
@@ -148,8 +171,8 @@ function TemperatureTrend({ monitor, range }: { monitor: Monitor; range: ChartRa
 
     return (
       <line
-        x1={padX}
-        x2={width - padX}
+        x1={padLeft}
+        x2={width - padRight}
         y1={y}
         y2={y}
         stroke="#94a3b8"
@@ -159,10 +182,58 @@ function TemperatureTrend({ monitor, range }: { monitor: Monitor; range: ChartRa
     )
   }
 
+  const yTicks = Array.from({ length: 5 }, (_, index) => {
+    const value = minTemp + ((maxTemp - minTemp) / 4) * index
+    return {
+      value,
+      y: yFor(value),
+    }
+  }).reverse()
+
+  const xTickIndexes =
+    readings.length === 1
+      ? [0]
+      : Array.from({ length: Math.min(4, readings.length) }, (_, index) =>
+          Math.round((index * (readings.length - 1)) / (Math.min(4, readings.length) - 1))
+        ).filter((value, index, values) => values.indexOf(value) === index)
+
   return (
     <div className="rounded-xl border bg-slate-50 p-3">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-40 w-full" role="img">
-        <rect x="0" y="0" width={width} height={height} rx="12" fill="#f8fafc" />
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="text-sm font-semibold text-slate-900">Temperature trend</div>
+        <div className="text-xs text-slate-600">{chartRangeOptions.find((option) => option.value === range)?.label}</div>
+      </div>
+
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-64 w-full" role="img">
+        <rect x="0" y="0" width={width} height={height} rx="12" fill="#ffffff" />
+        {yTicks.map((tick) => (
+          <g key={tick.value.toFixed(2)}>
+            <line
+              x1={padLeft}
+              x2={width - padRight}
+              y1={tick.y}
+              y2={tick.y}
+              stroke="#e2e8f0"
+              strokeWidth="1"
+            />
+            <text
+              x={padLeft - 8}
+              y={tick.y + 4}
+              textAnchor="end"
+              className="fill-slate-600 text-[11px]"
+            >
+              {tick.value.toFixed(1)} C
+            </text>
+          </g>
+        ))}
+        <line x1={padLeft} x2={padLeft} y1={padTop} y2={height - padBottom} stroke="#94a3b8" />
+        <line
+          x1={padLeft}
+          x2={width - padRight}
+          y1={height - padBottom}
+          y2={height - padBottom}
+          stroke="#94a3b8"
+        />
         {limitLine(monitor.minTempC)}
         {limitLine(monitor.maxTempC)}
         {readings.length > 1 ? (
@@ -181,6 +252,33 @@ function TemperatureTrend({ monitor, range }: { monitor: Monitor; range: ChartRa
             r="4"
           />
         )}
+        {xTickIndexes.map((index) => {
+          const reading = readings[index]
+          const x = xFor(reading.recordedAt)
+
+          return (
+            <g key={`${reading.id}-${index}`}>
+              <line
+                x1={x}
+                x2={x}
+                y1={height - padBottom}
+                y2={height - padBottom + 5}
+                stroke="#94a3b8"
+              />
+              <text
+                x={x}
+                y={height - padBottom + 20}
+                textAnchor="middle"
+                className="fill-slate-600 text-[11px]"
+              >
+                {formatChartTick(reading.recordedAt, range)}
+              </text>
+            </g>
+          )
+        })}
+        <text x={padLeft} y={height - 8} className="fill-slate-500 text-[11px]">
+          Recorded time
+        </text>
       </svg>
 
       <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-600">
@@ -304,21 +402,6 @@ export default function ColdStoragePage() {
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <label className="text-sm">
-              <span className="sr-only">Graph time span</span>
-              <select
-                value={chartRange}
-                onChange={(event) => setChartRange(event.target.value as ChartRange)}
-                className="rounded-xl border bg-white px-3 py-2 text-sm text-slate-800"
-              >
-                {chartRangeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
             <button
               type="button"
               onClick={loadData}
@@ -389,6 +472,32 @@ export default function ColdStoragePage() {
                 {importing ? 'Importing...' : 'Import History'}
               </button>
             </div>
+          </div>
+        </section>
+
+        <section className="mt-8 rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Temperature Graphs</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Review recorded cold storage temperatures by time span.
+              </p>
+            </div>
+
+            <label className="block text-sm">
+              <span className="mb-1 block font-medium text-slate-700">Graph range</span>
+              <select
+                value={chartRange}
+                onChange={(event) => setChartRange(event.target.value as ChartRange)}
+                className="w-full rounded-xl border bg-white px-3 py-2 text-sm text-slate-800 sm:w-56"
+              >
+                {chartRangeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         </section>
 
