@@ -28,6 +28,7 @@ type AccessProfile = {
 
 const fullLinks = [
   { href: '/', label: 'Dashboard' },
+  { href: '/items', label: 'Items' },
   { href: '/suppliers', label: 'Supplier Products' },
   { href: '/bom', label: 'BOM' },
   { href: '/sops', label: 'SOPs' },
