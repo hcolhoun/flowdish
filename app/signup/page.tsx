@@ -4,7 +4,9 @@ import { useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { TurnstileWidget } from '@/app/components/TurnstileWidget'
 import { createClient } from '@/lib/supabase'
+import { verifyTurnstileBeforeSubmit } from '@/lib/turnstile-client'
 
 export default function SignupPage() {
   const router = useRouter()
@@ -15,6 +17,8 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0)
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault()
@@ -40,6 +44,8 @@ export default function SignupPage() {
         setError('Passwords do not match.')
         return
       }
+
+      await verifyTurnstileBeforeSubmit(turnstileToken)
 
       const supabase = createClient()
 
@@ -69,6 +75,7 @@ export default function SignupPage() {
       }, 2500)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create account.')
+      setTurnstileResetKey((key) => key + 1)
     } finally {
       setLoading(false)
     }
@@ -150,6 +157,11 @@ export default function SignupPage() {
               required
             />
           </div>
+
+          <TurnstileWidget
+            onToken={setTurnstileToken}
+            resetKey={turnstileResetKey}
+          />
 
           <button
             type="submit"

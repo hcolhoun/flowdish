@@ -19,6 +19,8 @@ type IngredientRequirement = {
   requiredQty: number
   usableStock: number
   shortfallQty: number
+  supplier: string | null
+  supplierSku: string | null
 }
 
 function daysBetween(from: Date, to: Date) {
@@ -210,6 +212,16 @@ async function buildIngredientAvailability({
       forecastEndDate,
     })
 
+    const supplierProduct = await prisma.supplierProduct.findFirst({
+      where: {
+        restaurantId,
+        linkedItemId: l3ItemId,
+      },
+      orderBy: [
+        { createdAt: 'desc' },
+      ],
+    })
+
     rows.push({
       itemId: item.id,
       sku: item.sku,
@@ -218,6 +230,8 @@ async function buildIngredientAvailability({
       requiredQty,
       usableStock: stock.usableStock,
       shortfallQty: Math.max(0, requiredQty - stock.usableStock),
+      supplier: supplierProduct?.supplier ?? null,
+      supplierSku: supplierProduct?.supplierSku ?? null,
     })
   }
 

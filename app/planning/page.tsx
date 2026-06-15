@@ -48,6 +48,22 @@ type IngredientAvailabilityRow = {
   requiredQty: number
   usableStock: number
   shortfallQty: number
+  supplier: string | null
+  supplierSku: string | null
+}
+
+type OrderingSummaryRow = {
+  itemId: string
+  sku: string
+  name: string
+  unitType: 'g' | 'ml' | 'each'
+  shortfallQty: number
+  supplierSku: string | null
+}
+
+type OrderingSummaryGroup = {
+  supplier: string
+  rows: OrderingSummaryRow[]
 }
 
 type L2PlanRow = {
@@ -112,6 +128,62 @@ export default function PlanningPage() {
     () => forecasts.find((forecast) => forecast.id === selectedForecastId) ?? null,
     [forecasts, selectedForecastId]
   )
+
+  const orderingSummary = useMemo<OrderingSummaryGroup[]>(() => {
+    if (!plan) return []
+
+    const supplierMap = new Map<string, Map<string, OrderingSummaryRow>>()
+
+    for (const l2Row of plan.l2Plan) {
+      for (const ingredient of l2Row.ingredientAvailability ?? []) {
+        if (ingredient.shortfallQty <= 0) continue
+
+        const supplier = ingredient.supplier?.trim() || 'Unassigned supplier'
+        const supplierRows = supplierMap.get(supplier) ?? new Map<string, OrderingSummaryRow>()
+        const rowKey = `${ingredient.itemId}:${ingredient.unitType}`
+        const existing = supplierRows.get(rowKey)
+
+        if (existing) {
+          existing.shortfallQty += ingredient.shortfallQty
+        } else {
+          supplierRows.set(rowKey, {
+            itemId: ingredient.itemId,
+            sku: ingredient.sku,
+            name: ingredient.name,
+            unitType: ingredient.unitType,
+            shortfallQty: ingredient.shortfallQty,
+            supplierSku: ingredient.supplierSku,
+          })
+        }
+
+        supplierMap.set(supplier, supplierRows)
+      }
+    }
+
+    return Array.from(supplierMap.entries())
+      .map(([supplier, rows]) => ({
+        supplier,
+        rows: Array.from(rows.values()).sort((a, b) => a.name.localeCompare(b.name)),
+      }))
+      .sort((a, b) => {
+        if (a.supplier === 'Unassigned supplier') return 1
+        if (b.supplier === 'Unassigned supplier') return -1
+        return a.supplier.localeCompare(b.supplier)
+      })
+  }, [plan])
+
+  const orderingSummaryText = useMemo(() => {
+    return orderingSummary
+      .map((group) => {
+        const lines = group.rows.map((row) => {
+          const skuText = row.supplierSku ? `Supplier SKU ${row.supplierSku}` : `SKU ${row.sku}`
+          return `- ${row.name} (${skuText}): ${formatNumber(row.shortfallQty)} ${row.unitType}`
+        })
+
+        return `${group.supplier}\n${lines.join('\n')}`
+      })
+      .join('\n\n')
+  }, [orderingSummary])
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -404,6 +476,17 @@ export default function PlanningPage() {
     }
   }
 
+  async function copyOrderingSummary() {
+    if (!orderingSummaryText) return
+
+    try {
+      await navigator.clipboard.writeText(orderingSummaryText)
+      setMessage('Ordering summary copied.')
+    } catch {
+      setError('Could not copy the ordering summary. Select the text and copy it manually.')
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-7xl">
@@ -663,6 +746,63 @@ export default function PlanningPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border bg-white shadow-sm">
+              <div className="flex flex-col gap-3 border-b px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">
+                    Summary List for Ordering
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Missing L3 ingredients grouped by supplier, ready to copy into an email.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={copyOrderingSummary}
+                  disabled={!orderingSummaryText}
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Copy List
+                </button>
+              </div>
+
+              <div className="px-6 py-5">
+                {orderingSummary.length === 0 ? (
+                  <div className="rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800">
+                    No missing L3 ingredients to order for this forecast.
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    {orderingSummary.map((group) => (
+                      <div key={group.supplier} className="rounded-xl border bg-slate-50 p-4">
+                        <h3 className="font-semibold text-slate-900">{group.supplier}</h3>
+                        <ul className="mt-3 space-y-2 text-sm text-slate-800">
+                          {group.rows.map((row) => (
+                            <li key={`${group.supplier}-${row.itemId}-${row.unitType}`}>
+                              {row.name}{' '}
+                              <span className="text-slate-500">
+                                ({row.supplierSku ? `Supplier SKU ${row.supplierSku}` : `SKU ${row.sku}`})
+                              </span>
+                              : {formatNumber(row.shortfallQty)} {row.unitType}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {orderingSummaryText ? (
+                  <textarea
+                    value={orderingSummaryText}
+                    readOnly
+                    className="mt-5 h-56 w-full rounded-xl border bg-white px-3 py-2 font-mono text-sm text-slate-800"
+                  />
+                ) : null}
               </div>
             </section>
 

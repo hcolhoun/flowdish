@@ -3,6 +3,8 @@
 import Image from 'next/image'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { TurnstileWidget } from '@/app/components/TurnstileWidget'
+import { verifyTurnstileBeforeSubmit } from '@/lib/turnstile-client'
 import { createClient } from '@/lib/supabase'
 import loginLogo from '../login.logo.png'
 
@@ -15,6 +17,8 @@ export default function LoginPage() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [resetSending, setResetSending] = useState(false)
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0)
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -23,6 +27,8 @@ export default function LoginPage() {
       setError('')
       setMessage('')
       setLoading(true)
+
+      await verifyTurnstileBeforeSubmit(turnstileToken)
 
       const supabase = createClient()
 
@@ -39,6 +45,7 @@ export default function LoginPage() {
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
+      setTurnstileResetKey((key) => key + 1)
     } finally {
       setLoading(false)
     }
@@ -147,6 +154,11 @@ export default function LoginPage() {
               {resetSending ? 'Sending reset email...' : 'Forgot password?'}
             </button>
           </div>
+
+          <TurnstileWidget
+            onToken={setTurnstileToken}
+            resetKey={turnstileResetKey}
+          />
 
           <button
             type="submit"

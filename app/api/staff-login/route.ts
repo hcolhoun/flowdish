@@ -6,6 +6,7 @@ import {
   STAFF_SESSION_SECONDS,
   verifyPin,
 } from '@/lib/staff-auth'
+import { turnstileErrorMessage, verifyTurnstileToken } from '@/lib/turnstile'
 
 export async function POST(req: Request) {
   try {
@@ -14,6 +15,13 @@ export async function POST(req: Request) {
     const restaurantCode = String(body.restaurantCode || '').trim()
     const username = String(body.username || '').trim().toLowerCase()
     const pin = String(body.pin || '').trim()
+    const remoteIp = req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for')
+
+    try {
+      await verifyTurnstileToken(body.turnstileToken, remoteIp)
+    } catch (error) {
+      return NextResponse.json({ error: turnstileErrorMessage(error) }, { status: 400 })
+    }
 
     if (!restaurantCode) {
       return NextResponse.json({ error: 'Restaurant code is required.' }, { status: 400 })
