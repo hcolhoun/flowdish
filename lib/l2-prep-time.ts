@@ -140,6 +140,10 @@ Rules:
 - Estimate one standard batch, not one serving.
 - Do not include the labour needed to make child L2 components. They are planned separately.
 - Include only the handling time needed to collect or add already-prepared child L2 components.
+- Treat every L3 ingredient as already supplied in the state described by its saved name.
+- Do not invent cooking, thawing, washing, peeling, trimming, or other transformation of an L3
+  unless the L2 SOP explicitly requires that operation or the L3 name explicitly says it is raw
+  and the finished L2 clearly requires cooking.
 - Do not add breaks, general kitchen setup, closing, management, waiting for deliveries, or roster inefficiency.
 - Use the SOP where it gives useful method detail.
 - If there are no BOM rows, infer cautiously from the item name and SOP. This may represent trim,

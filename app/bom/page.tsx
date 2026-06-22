@@ -1920,6 +1920,7 @@ export default function BomPage() {
               </div>
             </section>
 
+            {false && parentItem ? (
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div>
@@ -1932,14 +1933,14 @@ export default function BomPage() {
 
                 <span
                   className={`rounded-lg px-3 py-2 text-sm font-semibold ${
-                    parentItem.prepTimeStatus === 'CONFIRMED'
+                    parentItem?.prepTimeStatus === 'CONFIRMED'
                       ? 'bg-green-50 text-green-700'
-                      : parentItem.prepTimeStatus === 'ESTIMATED'
+                      : parentItem?.prepTimeStatus === 'ESTIMATED'
                         ? 'bg-blue-50 text-blue-700'
                         : 'bg-amber-50 text-amber-800'
                   }`}
                 >
-                  {parentItem.prepTimeStatus || 'MISSING'}
+                  {parentItem?.prepTimeStatus || 'MISSING'}
                 </span>
               </div>
 
@@ -2032,10 +2033,10 @@ export default function BomPage() {
                 <div className="rounded-xl border bg-slate-50 p-4">
                   <div className="text-xs text-slate-500">AI confidence</div>
                   <div className="mt-1 text-xl font-semibold text-slate-900">
-                    {parentItem.prepTimeConfidence === null ||
-                    parentItem.prepTimeConfidence === undefined
+                    {parentItem?.prepTimeConfidence === null ||
+                    parentItem?.prepTimeConfidence === undefined
                       ? 'N/A'
-                      : `${Math.round(parentItem.prepTimeConfidence * 100)}%`}
+                      : `${Math.round((parentItem?.prepTimeConfidence ?? 0) * 100)}%`}
                   </div>
                 </div>
               </div>
@@ -2067,8 +2068,8 @@ export default function BomPage() {
                   onClick={confirmPrepTime}
                   disabled={
                     confirmingPrepTime ||
-                    (parentItem.prepTimeStatus !== 'ESTIMATED' &&
-                      parentItem.prepTimeStatus !== 'CONFIRMED')
+                    (parentItem?.prepTimeStatus !== 'ESTIMATED' &&
+                      parentItem?.prepTimeStatus !== 'CONFIRMED')
                   }
                   className="rounded-xl border border-green-400 px-5 py-3 font-medium text-green-800 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -2076,6 +2077,7 @@ export default function BomPage() {
                 </button>
               </div>
             </section>
+            ) : null}
 
             <div className="flex flex-wrap gap-3">
               <button
@@ -2241,6 +2243,118 @@ export default function BomPage() {
               </div>
             </section>
 
+            {false && parentItem ? (
+            <section className="rounded-2xl border bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">L2 Prep Time</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Review the DeepSeek estimate for one standard batch, correct it if needed,
+                    then confirm it.
+                  </p>
+                </div>
+                <span className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
+                  {parentItem?.prepTimeStatus || 'MISSING'}
+                </span>
+              </div>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  ['Setup minutes', prepSetupMinutes, setPrepSetupMinutes],
+                  ['Active prep minutes', prepActiveMinutes, setPrepActiveMinutes],
+                  ['Cleanup minutes', prepCleanupMinutes, setPrepCleanupMinutes],
+                  ['Passive minutes', prepPassiveMinutes, setPrepPassiveMinutes],
+                ].map(([label, value, setter]) => (
+                  <div key={String(label)}>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      {String(label)}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={String(value)}
+                      onChange={(e) => (setter as (value: string) => void)(e.target.value)}
+                      className="w-full rounded-xl border px-3 py-2"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Hands-on per batch</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {numberLabel(
+                      getQty(prepSetupMinutes) +
+                        getQty(prepActiveMinutes) +
+                        getQty(prepCleanupMinutes),
+                      1
+                    )}{' '}
+                    min
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Elapsed per batch</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {numberLabel(
+                      getQty(prepSetupMinutes) +
+                        getQty(prepActiveMinutes) +
+                        getQty(prepCleanupMinutes) +
+                        getQty(prepPassiveMinutes),
+                      1
+                    )}{' '}
+                    min
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">AI confidence</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {parentItem?.prepTimeConfidence === null ||
+                    parentItem?.prepTimeConfidence === undefined
+                      ? 'N/A'
+                      : `${Math.round((parentItem?.prepTimeConfidence ?? 0) * 100)}%`}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <label className="mb-1 block text-sm font-medium text-slate-900">
+                  Assumptions
+                </label>
+                <textarea
+                  value={prepTimeAssumptions}
+                  onChange={(e) => setPrepTimeAssumptions(e.target.value)}
+                  className="h-28 w-full rounded-xl border px-3 py-2 text-sm"
+                  placeholder="One assumption per line"
+                />
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={calculatePrepTime}
+                  disabled={calculatingPrepTime}
+                  className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {calculatingPrepTime ? 'Calculating...' : 'Calculate Prep Time'}
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmPrepTime}
+                  disabled={
+                    confirmingPrepTime ||
+                    (parentItem?.prepTimeStatus !== 'ESTIMATED' &&
+                      parentItem?.prepTimeStatus !== 'CONFIRMED')
+                  }
+                  className="rounded-xl border border-green-400 px-5 py-3 font-medium text-green-800 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {confirmingPrepTime ? 'Confirming...' : 'Confirm Prep Time'}
+                </button>
+              </div>
+            </section>
+            ) : null}
+
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
@@ -2402,6 +2516,137 @@ export default function BomPage() {
                     </div>
                   )
                 })}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">L2 Prep Time</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Review the estimate for one standard batch, correct it if needed, then confirm it.
+                  </p>
+                </div>
+                <span className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
+                  {parentItem.prepTimeStatus || 'MISSING'}
+                </span>
+              </div>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="text-sm font-medium text-slate-900">
+                  Setup minutes
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={prepSetupMinutes}
+                    onChange={(e) => setPrepSetupMinutes(e.target.value)}
+                    className="mt-1 w-full rounded-xl border px-3 py-2"
+                  />
+                </label>
+                <label className="text-sm font-medium text-slate-900">
+                  Active prep minutes
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={prepActiveMinutes}
+                    onChange={(e) => setPrepActiveMinutes(e.target.value)}
+                    className="mt-1 w-full rounded-xl border px-3 py-2"
+                  />
+                </label>
+                <label className="text-sm font-medium text-slate-900">
+                  Cleanup minutes
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={prepCleanupMinutes}
+                    onChange={(e) => setPrepCleanupMinutes(e.target.value)}
+                    className="mt-1 w-full rounded-xl border px-3 py-2"
+                  />
+                </label>
+                <label className="text-sm font-medium text-slate-900">
+                  Passive minutes
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={prepPassiveMinutes}
+                    onChange={(e) => setPrepPassiveMinutes(e.target.value)}
+                    className="mt-1 w-full rounded-xl border px-3 py-2"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Hands-on per batch</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {numberLabel(
+                      getQty(prepSetupMinutes) +
+                        getQty(prepActiveMinutes) +
+                        getQty(prepCleanupMinutes),
+                      1
+                    )}{' '}
+                    min
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Elapsed per batch</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {numberLabel(
+                      getQty(prepSetupMinutes) +
+                        getQty(prepActiveMinutes) +
+                        getQty(prepCleanupMinutes) +
+                        getQty(prepPassiveMinutes),
+                      1
+                    )}{' '}
+                    min
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">AI confidence</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {parentItem.prepTimeConfidence === null ||
+                    parentItem.prepTimeConfidence === undefined
+                      ? 'N/A'
+                      : `${Math.round(parentItem.prepTimeConfidence * 100)}%`}
+                  </div>
+                </div>
+              </div>
+
+              <label className="mt-4 block text-sm font-medium text-slate-900">
+                Assumptions
+                <textarea
+                  value={prepTimeAssumptions}
+                  onChange={(e) => setPrepTimeAssumptions(e.target.value)}
+                  className="mt-1 h-28 w-full rounded-xl border px-3 py-2 text-sm"
+                  placeholder="One assumption per line"
+                />
+              </label>
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={calculatePrepTime}
+                  disabled={calculatingPrepTime}
+                  className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {calculatingPrepTime ? 'Calculating...' : 'Calculate Prep Time'}
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmPrepTime}
+                  disabled={
+                    confirmingPrepTime ||
+                    (parentItem.prepTimeStatus !== 'ESTIMATED' &&
+                      parentItem.prepTimeStatus !== 'CONFIRMED')
+                  }
+                  className="rounded-xl border border-green-400 px-5 py-3 font-medium text-green-800 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {confirmingPrepTime ? 'Confirming...' : 'Confirm Prep Time'}
+                </button>
               </div>
             </section>
 
