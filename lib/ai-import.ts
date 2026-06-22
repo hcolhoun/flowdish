@@ -4,7 +4,11 @@ import { prisma } from '@/lib/prisma'
 
 const require = createRequire(import.meta.url)
 
-export type AiFeature = 'delivery_docket' | 'sales_zread' | 'supplier_price_import'
+export type AiFeature =
+  | 'delivery_docket'
+  | 'sales_zread'
+  | 'supplier_price_import'
+  | 'l2_prep_time'
 
 type DeepSeekOptions = {
   restaurantId: string

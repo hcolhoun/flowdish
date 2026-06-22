@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 type ItemType = 'L0' | 'L1' | 'L2' | 'L3'
 type UnitType = 'g' | 'ml' | 'each'
 type BuildStatus = 'UNBUILT' | 'BUILT'
+type PrepTimeStatus = 'MISSING' | 'ESTIMATED' | 'CONFIRMED' | 'STALE'
 
 type BestSupplierPrice = {
   supplier: string
@@ -25,6 +26,15 @@ type Item = {
   sellingPrice?: number | null
   standardBatchOutput?: number | null
   buildStatus?: BuildStatus
+  prepSetupMinutes?: number | null
+  prepActiveMinutes?: number | null
+  prepCleanupMinutes?: number | null
+  prepPassiveMinutes?: number | null
+  prepHandsOnMinutes?: number | null
+  prepElapsedMinutes?: number | null
+  prepTimeConfidence?: number | null
+  prepTimeAssumptions?: string[] | null
+  prepTimeStatus?: PrepTimeStatus
   bestSupplierPrice?: BestSupplierPrice | null
 }
 
@@ -411,6 +421,13 @@ export default function BomPage() {
 
   const [parentSellingPrice, setParentSellingPrice] = useState('')
   const [parentStandardBatchOutput, setParentStandardBatchOutput] = useState('')
+  const [prepSetupMinutes, setPrepSetupMinutes] = useState('')
+  const [prepActiveMinutes, setPrepActiveMinutes] = useState('')
+  const [prepCleanupMinutes, setPrepCleanupMinutes] = useState('')
+  const [prepPassiveMinutes, setPrepPassiveMinutes] = useState('')
+  const [prepTimeAssumptions, setPrepTimeAssumptions] = useState('')
+  const [calculatingPrepTime, setCalculatingPrepTime] = useState(false)
+  const [confirmingPrepTime, setConfirmingPrepTime] = useState(false)
 
   const [l0ToL1Rows, setL0ToL1Rows] = useState<ChildRow[]>([])
   const [l1ToL2Rows, setL1ToL2Rows] = useState<ChildRow[]>([])
@@ -573,6 +590,50 @@ export default function BomPage() {
         : String(parentItem.standardBatchOutput)
     )
   }, [parentItem?.id])
+
+  useEffect(() => {
+    if (!parentItem || parentItem.itemType !== 'L2') {
+      setPrepSetupMinutes('')
+      setPrepActiveMinutes('')
+      setPrepCleanupMinutes('')
+      setPrepPassiveMinutes('')
+      setPrepTimeAssumptions('')
+      return
+    }
+
+    setPrepSetupMinutes(
+      parentItem.prepSetupMinutes === null || parentItem.prepSetupMinutes === undefined
+        ? ''
+        : String(parentItem.prepSetupMinutes)
+    )
+    setPrepActiveMinutes(
+      parentItem.prepActiveMinutes === null || parentItem.prepActiveMinutes === undefined
+        ? ''
+        : String(parentItem.prepActiveMinutes)
+    )
+    setPrepCleanupMinutes(
+      parentItem.prepCleanupMinutes === null || parentItem.prepCleanupMinutes === undefined
+        ? ''
+        : String(parentItem.prepCleanupMinutes)
+    )
+    setPrepPassiveMinutes(
+      parentItem.prepPassiveMinutes === null || parentItem.prepPassiveMinutes === undefined
+        ? ''
+        : String(parentItem.prepPassiveMinutes)
+    )
+    setPrepTimeAssumptions(
+      Array.isArray(parentItem.prepTimeAssumptions)
+        ? parentItem.prepTimeAssumptions.join('\n')
+        : ''
+    )
+  }, [
+    parentItem?.id,
+    parentItem?.prepSetupMinutes,
+    parentItem?.prepActiveMinutes,
+    parentItem?.prepCleanupMinutes,
+    parentItem?.prepPassiveMinutes,
+    parentItem?.prepTimeAssumptions,
+  ])
 
   const l0LiveCosting = useMemo(() => {
     if (!parentItem || parentItem.itemType !== 'L0') {
@@ -1178,12 +1239,82 @@ export default function BomPage() {
     }
   }
 
+  async function calculatePrepTime() {
+    if (!parentItem || parentItem.itemType !== 'L2') return
+
+    try {
+      setCalculatingPrepTime(true)
+      setError('')
+      setMessage('Calculating prep time with DeepSeek...')
+
+      const res = await fetch('/api/l2-prep-time', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: parentItem.id }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to calculate prep time')
+
+      await loadItems()
+      setMessage('Prep time estimated. Review the minutes and assumptions, then confirm them.')
+    } catch (err) {
+      setMessage('')
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setCalculatingPrepTime(false)
+    }
+  }
+
+  async function confirmPrepTime() {
+    if (!parentItem || parentItem.itemType !== 'L2') return
+
+    try {
+      setConfirmingPrepTime(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/l2-prep-time', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemId: parentItem.id,
+          setupMinutes: prepSetupMinutes,
+          activePrepMinutes: prepActiveMinutes,
+          cleanupMinutes: prepCleanupMinutes,
+          passiveMinutes: prepPassiveMinutes,
+          assumptions: prepTimeAssumptions
+            .split('\n')
+            .map((value) => value.trim())
+            .filter(Boolean),
+        }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to confirm prep time')
+
+      await loadItems()
+      setMessage('Prep time confirmed. This L2 can now be marked as built.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setConfirmingPrepTime(false)
+    }
+  }
+
   async function saveL2(buildStatus?: BuildStatus) {
     if (!parentItem) return
 
     try {
       setError('')
-      setMessage('Saving L2 BOM…')
+      setMessage(buildStatus === 'BUILT' ? 'Marking L2 as built...' : 'Saving L2 BOM...')
+
+      if (buildStatus === 'BUILT') {
+        await patchParentItem('BUILT')
+        await loadItems()
+        setMessage('L2 marked as built with a confirmed prep time.')
+        return
+      }
 
       const validationError =
         validateRows(l2ToL2Rows, 'L2 → L2') || validateRows(l2ToL3Rows, 'L2 → L3')
@@ -1198,9 +1329,9 @@ export default function BomPage() {
         l2ToL2Rows.filter((row) => row.childId && row.qty !== '').length === 0 &&
         l2ToL3Rows.filter((row) => row.childId && row.qty !== '').length === 0
 
-      if (buildStatus === 'BUILT' && hasNoBomRows) {
+      if (hasNoBomRows) {
         const confirmed = window.confirm(
-          'This L2 has no ingredients or prep components.\n\nSave as built anyway?\n\nUse this only for free/byproduct prep stock such as fish trim, meat trim, offcuts, breadcrumbs from waste bread, rendered fat, or similar zero-cost prep stock.'
+          'This L2 has no ingredients or prep components.\n\nSave the empty BOM anyway?\n\nUse this only for free/byproduct prep stock such as fish trim, meat trim, offcuts, breadcrumbs from waste bread, rendered fat, or similar zero-cost prep stock.'
         )
 
         if (!confirmed) {
@@ -1209,7 +1340,7 @@ export default function BomPage() {
         }
       }
 
-      await patchParentItem(buildStatus)
+      await patchParentItem()
 
       const payloadL2L2 = {
         parentId: parentItem.id,
@@ -1254,9 +1385,7 @@ export default function BomPage() {
       await Promise.all([loadItems(), loadCosting()])
 
       setMessage(
-        buildStatus === 'BUILT'
-          ? `L2 BOM saved as built. Showing ${payloadL2L2.rows.length} child L2 row(s) and ${payloadL2L3.rows.length} L3 row(s).`
-          : `L2 BOM saved. Showing ${payloadL2L2.rows.length} child L2 row(s) and ${payloadL2L3.rows.length} L3 row(s).`
+        `L2 BOM saved. Showing ${payloadL2L2.rows.length} child L2 row(s) and ${payloadL2L3.rows.length} L3 row(s). Calculate or recalculate prep time before marking it as built.`
       )
     } catch (err) {
       setMessage('')
@@ -1791,6 +1920,163 @@ export default function BomPage() {
               </div>
             </section>
 
+            <section className="rounded-2xl border bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">L2 Prep Time</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Save the BOM first, calculate an estimate, review it, then confirm it.
+                    Child L2 production time is excluded because those items are planned separately.
+                  </p>
+                </div>
+
+                <span
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold ${
+                    parentItem.prepTimeStatus === 'CONFIRMED'
+                      ? 'bg-green-50 text-green-700'
+                      : parentItem.prepTimeStatus === 'ESTIMATED'
+                        ? 'bg-blue-50 text-blue-700'
+                        : 'bg-amber-50 text-amber-800'
+                  }`}
+                >
+                  {parentItem.prepTimeStatus || 'MISSING'}
+                </span>
+              </div>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Setup minutes
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={prepSetupMinutes}
+                    onChange={(e) => setPrepSetupMinutes(e.target.value)}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Active prep minutes
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={prepActiveMinutes}
+                    onChange={(e) => setPrepActiveMinutes(e.target.value)}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Cleanup minutes
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={prepCleanupMinutes}
+                    onChange={(e) => setPrepCleanupMinutes(e.target.value)}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Passive minutes
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={prepPassiveMinutes}
+                    onChange={(e) => setPrepPassiveMinutes(e.target.value)}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Hands-on per batch</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {numberLabel(
+                      getQty(prepSetupMinutes) +
+                        getQty(prepActiveMinutes) +
+                        getQty(prepCleanupMinutes),
+                      1
+                    )}{' '}
+                    min
+                  </div>
+                </div>
+
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Elapsed per batch</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {numberLabel(
+                      getQty(prepSetupMinutes) +
+                        getQty(prepActiveMinutes) +
+                        getQty(prepCleanupMinutes) +
+                        getQty(prepPassiveMinutes),
+                      1
+                    )}{' '}
+                    min
+                  </div>
+                </div>
+
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">AI confidence</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {parentItem.prepTimeConfidence === null ||
+                    parentItem.prepTimeConfidence === undefined
+                      ? 'N/A'
+                      : `${Math.round(parentItem.prepTimeConfidence * 100)}%`}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <label className="mb-1 block text-sm font-medium text-slate-900">
+                  Assumptions
+                </label>
+                <textarea
+                  value={prepTimeAssumptions}
+                  onChange={(e) => setPrepTimeAssumptions(e.target.value)}
+                  className="h-28 w-full rounded-xl border px-3 py-2 text-sm"
+                  placeholder="One assumption per line"
+                />
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={calculatePrepTime}
+                  disabled={calculatingPrepTime}
+                  className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {calculatingPrepTime ? 'Calculating...' : 'Calculate Prep Time'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={confirmPrepTime}
+                  disabled={
+                    confirmingPrepTime ||
+                    (parentItem.prepTimeStatus !== 'ESTIMATED' &&
+                      parentItem.prepTimeStatus !== 'CONFIRMED')
+                  }
+                  className="rounded-xl border border-green-400 px-5 py-3 font-medium text-green-800 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {confirmingPrepTime ? 'Confirming...' : 'Confirm Prep Time'}
+                </button>
+              </div>
+            </section>
+
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
@@ -2131,7 +2417,8 @@ export default function BomPage() {
               <button
                 type="button"
                 onClick={() => saveL2('BUILT')}
-                className="rounded-xl bg-green-700 px-5 py-3 text-white"
+                disabled={parentItem.prepTimeStatus !== 'CONFIRMED'}
+                className="rounded-xl bg-green-700 px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Save L2 as Built
               </button>

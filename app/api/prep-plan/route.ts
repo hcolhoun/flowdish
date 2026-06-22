@@ -478,6 +478,17 @@ export async function GET(req: Request) {
         canPrepNow: shortfallQty > 0 && missingIngredientCount === 0,
         missingIngredientCount,
         ingredientAvailability,
+        prepHandsOnMinutesPerBatch: item.prepHandsOnMinutes,
+        prepElapsedMinutesPerBatch: item.prepElapsedMinutes,
+        prepTimeStatus: item.prepTimeStatus,
+        totalPrepHandsOnMinutes:
+          item.prepTimeStatus === 'CONFIRMED' && item.prepHandsOnMinutes !== null
+            ? batchesToPrep * item.prepHandsOnMinutes
+            : null,
+        totalPrepElapsedMinutes:
+          item.prepTimeStatus === 'CONFIRMED' && item.prepElapsedMinutes !== null
+            ? batchesToPrep * item.prepElapsedMinutes
+            : null,
       })
     }
 
@@ -489,6 +500,20 @@ export async function GET(req: Request) {
       return a.name.localeCompare(b.name)
     })
 
+    const prepLabourSummary = {
+      totalHandsOnMinutes: l2Plan.reduce(
+        (sum, row) => sum + (row.totalPrepHandsOnMinutes ?? 0),
+        0
+      ),
+      totalElapsedMinutes: l2Plan.reduce(
+        (sum, row) => sum + (row.totalPrepElapsedMinutes ?? 0),
+        0
+      ),
+      missingPrepTimeCount: l2Plan.filter(
+        (row) => row.batchesToPrep > 0 && row.prepTimeStatus !== 'CONFIRMED'
+      ).length,
+    }
+
     return NextResponse.json({
       forecast: {
         id: forecast.id,
@@ -498,6 +523,7 @@ export async function GET(req: Request) {
       },
       l1Plan,
       l2Plan,
+      prepLabourSummary,
     })
   } catch (error) {
     const tenantError = tenantErrorResponse(error)

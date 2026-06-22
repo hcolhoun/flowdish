@@ -29,6 +29,13 @@ enum BuildStatus {
   BUILT
 }
 
+enum PrepTimeStatus {
+  MISSING
+  ESTIMATED
+  CONFIRMED
+  STALE
+}
+
 enum MembershipRole {
   OWNER
   ADMIN
@@ -123,6 +130,19 @@ model Item {
   sellingPrice        Float?
   standardBatchOutput Float?
   buildStatus         BuildStatus @default(UNBUILT)
+  prepSetupMinutes    Float?
+  prepActiveMinutes   Float?
+  prepCleanupMinutes  Float?
+  prepPassiveMinutes  Float?
+  prepHandsOnMinutes  Float?
+  prepElapsedMinutes  Float?
+  prepTimeConfidence  Float?
+  prepTimeAssumptions Json?
+  prepTimeStatus      PrepTimeStatus @default(MISSING)
+  prepTimeFingerprint String?
+  prepTimeCalculatedAt DateTime?
+  prepTimeConfirmedAt DateTime?
+  prepTimeConfirmedBy String?
   createdAt           DateTime    @default(now())
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { markL2PrepTimeStale } from '@/lib/l2-prep-time'
 
 async function buildSop({
   restaurantId,
@@ -304,6 +305,10 @@ export async function POST(req: Request) {
           instructions,
         },
       })
+    }
+
+    if (item.itemType === 'L2') {
+      await markL2PrepTimeStale(tenant.restaurantId, itemId)
     }
 
     const fullSop = await buildSop({

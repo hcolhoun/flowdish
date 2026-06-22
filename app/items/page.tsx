@@ -6,6 +6,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 type ItemType = 'L0' | 'L1' | 'L2' | 'L3'
 type UnitType = 'g' | 'ml' | 'each'
 type BuildStatus = 'UNBUILT' | 'BUILT'
+type PrepTimeStatus = 'MISSING' | 'ESTIMATED' | 'CONFIRMED' | 'STALE'
 
 type Item = {
   id: string
@@ -17,6 +18,10 @@ type Item = {
   sellingPrice: number | null
   standardBatchOutput: number | null
   buildStatus: BuildStatus
+  prepHandsOnMinutes: number | null
+  prepElapsedMinutes: number | null
+  prepTimeConfidence: number | null
+  prepTimeStatus: PrepTimeStatus
 }
 
 type CostingRow = {
@@ -105,6 +110,7 @@ export default function ItemsPage() {
 
   const [loading, setLoading] = useState(false)
   const [costingLoading, setCostingLoading] = useState(false)
+  const [bulkCalculatingPrepTime, setBulkCalculatingPrepTime] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -169,6 +175,15 @@ export default function ItemsPage() {
     return value === null || value === undefined ? 'N/A' : String(value)
   }
 
+  function minuteLabel(value: number | null) {
+    if (value === null || value === undefined) return 'N/A'
+    if (value < 60) return `${qty(value)} min`
+
+    const hours = Math.floor(value / 60)
+    const minutes = Math.round(value % 60)
+    return minutes > 0 ? `${hours} hr ${minutes} min` : `${hours} hr`
+  }
+
   function marginBadge(row: CostingRow | undefined) {
     const margin = row?.grossMarginPercent
 
@@ -192,7 +207,10 @@ export default function ItemsPage() {
       return <span className="text-slate-500">N/A</span>
     }
 
-    if (item.buildStatus === 'BUILT') {
+    if (
+      item.buildStatus === 'BUILT' &&
+      (item.itemType !== 'L2' || item.prepTimeStatus === 'CONFIRMED')
+    ) {
       return (
         <span className="rounded-lg bg-green-50 px-2 py-1 text-sm font-semibold text-green-700">
           Built
@@ -205,6 +223,29 @@ export default function ItemsPage() {
         Unbuilt
       </span>
     )
+  }
+
+  async function calculateMissingPrepTimes() {
+    try {
+      setBulkCalculatingPrepTime(true)
+      setError('')
+      setMessage('Calculating up to five missing L2 prep times...')
+
+      const res = await fetch('/api/l2-prep-time/bulk', { method: 'POST' })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to calculate prep times')
+
+      await loadItems()
+      setMessage(
+        `${data.calculated} L2 prep time(s) estimated. ${data.remaining} still need calculation or confirmation.`
+      )
+    } catch (err) {
+      setMessage('')
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setBulkCalculatingPrepTime(false)
+    }
   }
 
   async function loadItems() {
@@ -543,6 +584,21 @@ export default function ItemsPage() {
           </div>
         </section>
 
+        <div className="mt-4 flex flex-col gap-3 rounded-xl border bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-slate-700">
+            L2 prep times are estimated in batches of five. Review and confirm each estimate in
+            BOM Builder before the item is complete.
+          </div>
+          <button
+            type="button"
+            onClick={calculateMissingPrepTimes}
+            disabled={bulkCalculatingPrepTime}
+            className="shrink-0 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {bulkCalculatingPrepTime ? 'Calculating...' : 'Calculate Missing L2 Prep Times'}
+          </button>
+        </div>
+
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div className="overflow-x-auto">
             <table className="min-w-[1200px] w-full text-left">
@@ -558,6 +614,7 @@ export default function ItemsPage() {
                   <th className="px-4 py-3 text-slate-800">Food Cost</th>
                   <th className="px-4 py-3 text-slate-800">Gross Margin</th>
                   <th className="px-4 py-3 text-slate-800">Std Batch Output</th>
+                  <th className="px-4 py-3 text-slate-800">Prep Time</th>
                   <th className="px-4 py-3 text-slate-800">Actions</th>
                 </tr>
               </thead>
@@ -565,7 +622,7 @@ export default function ItemsPage() {
               <tbody>
                 {filteredItems.length === 0 ? (
                   <tr className="border-t">
-                    <td className="px-4 py-3 text-slate-700" colSpan={11}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={12}>
                       No items found.
                     </td>
                   </tr>
@@ -624,6 +681,26 @@ export default function ItemsPage() {
                               ? displayValue(item.standardBatchOutput)
                               : 'N/A'}
                           </td>
+                          <td className="px-4 py-3 text-slate-800">
+                            {item.itemType === 'L2' ? (
+                              <div className="min-w-40">
+                                <div className="font-medium">
+                                  {minuteLabel(item.prepHandsOnMinutes)} hands-on
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                  {minuteLabel(item.prepElapsedMinutes)} elapsed
+                                </div>
+                                <div className="mt-1 text-xs font-medium text-slate-600">
+                                  {item.prepTimeStatus}
+                                  {item.prepTimeConfidence === null
+                                    ? ''
+                                    : ` · ${Math.round(item.prepTimeConfidence * 100)}% confidence`}
+                                </div>
+                              </div>
+                            ) : (
+                              'N/A'
+                            )}
+                          </td>
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap gap-2">
                               {item.itemType === 'L0' || item.itemType === 'L1' || item.itemType === 'L2' ? (
@@ -660,7 +737,7 @@ export default function ItemsPage() {
 
                         {expanded && item.itemType === 'L1' && costing ? (
                           <tr className="border-t bg-slate-50">
-                            <td colSpan={11} className="px-4 py-5">
+                            <td colSpan={12} className="px-4 py-5">
                               <div className="grid gap-4 md:grid-cols-5">
                                 <div className="rounded-xl border bg-white p-4">
                                   <div className="text-xs text-slate-500">Selling Price</div>

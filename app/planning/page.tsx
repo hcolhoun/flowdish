@@ -87,12 +87,22 @@ type L2PlanRow = {
   canPrepNow?: boolean
   missingIngredientCount?: number
   ingredientAvailability?: IngredientAvailabilityRow[]
+  prepHandsOnMinutesPerBatch: number | null
+  prepElapsedMinutesPerBatch: number | null
+  prepTimeStatus: 'MISSING' | 'ESTIMATED' | 'CONFIRMED' | 'STALE'
+  totalPrepHandsOnMinutes: number | null
+  totalPrepElapsedMinutes: number | null
 }
 
 type PlanResponse = {
   forecast: Forecast
   l1Plan: L1PlanRow[]
   l2Plan: L2PlanRow[]
+  prepLabourSummary: {
+    totalHandsOnMinutes: number
+    totalElapsedMinutes: number
+    missingPrepTimeCount: number
+  }
 }
 
 type L0L1BomRow = {
@@ -212,6 +222,17 @@ export default function PlanningPage() {
 
   function formatNumber(value: number) {
     return Number.isInteger(value) ? String(value) : value.toFixed(3)
+  }
+
+  function durationLabel(value: number | null | undefined) {
+    if (value === null || value === undefined) return 'Not confirmed'
+
+    const rounded = Math.round(value)
+    const hours = Math.floor(rounded / 60)
+    const minutes = rounded % 60
+
+    if (hours === 0) return `${minutes} min`
+    return minutes > 0 ? `${hours} hr ${minutes} min` : `${hours} hr`
   }
 
   function loadSalesForecastDraft() {
@@ -815,8 +836,37 @@ export default function PlanningPage() {
                 </p>
               </div>
 
+              <div className="grid gap-4 border-b px-6 py-5 sm:grid-cols-3">
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Total hands-on prep</div>
+                  <div className="mt-1 text-2xl font-semibold text-slate-900">
+                    {durationLabel(plan.prepLabourSummary.totalHandsOnMinutes)}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Total elapsed process time</div>
+                  <div className="mt-1 text-2xl font-semibold text-slate-900">
+                    {durationLabel(plan.prepLabourSummary.totalElapsedMinutes)}
+                  </div>
+                </div>
+
+                <div
+                  className={`rounded-xl border p-4 ${
+                    plan.prepLabourSummary.missingPrepTimeCount > 0
+                      ? 'border-amber-300 bg-amber-50'
+                      : 'border-green-300 bg-green-50'
+                  }`}
+                >
+                  <div className="text-xs text-slate-600">Unconfirmed prep times</div>
+                  <div className="mt-1 text-2xl font-semibold text-slate-900">
+                    {plan.prepLabourSummary.missingPrepTimeCount}
+                  </div>
+                </div>
+              </div>
+
               <div className="overflow-x-auto">
-                <table className="min-w-[1200px] w-full text-left">
+                <table className="min-w-[1550px] w-full text-left">
                   <thead className="bg-slate-100 text-sm">
                     <tr>
                       <th className="px-4 py-3 text-slate-800">SKU</th>
@@ -826,6 +876,9 @@ export default function PlanningPage() {
                       <th className="px-4 py-3 text-slate-800">Shortfall</th>
                       <th className="px-4 py-3 text-slate-800">Std Batch Output</th>
                       <th className="px-4 py-3 text-slate-800">Batches</th>
+                      <th className="px-4 py-3 text-slate-800">Hands-on / Batch</th>
+                      <th className="px-4 py-3 text-slate-800">Elapsed / Batch</th>
+                      <th className="px-4 py-3 text-slate-800">Total Hands-on</th>
                       <th className="px-4 py-3 text-slate-800">Can Prep?</th>
                       <th className="px-4 py-3 text-slate-800">Next Expiry</th>
                       <th className="px-4 py-3 text-slate-800">Status</th>
@@ -835,7 +888,7 @@ export default function PlanningPage() {
                   <tbody>
                     {plan.l2Plan.length === 0 ? (
                       <tr className="border-t">
-                        <td className="px-4 py-3 text-slate-700" colSpan={10}>
+                        <td className="px-4 py-3 text-slate-700" colSpan={13}>
                           No L2 prep required.
                         </td>
                       </tr>
@@ -867,6 +920,20 @@ export default function PlanningPage() {
                               </td>
                               <td className="px-4 py-3 text-slate-800">{row.batchesToPrep}</td>
                               <td className="px-4 py-3 text-slate-800">
+                                {durationLabel(row.prepHandsOnMinutesPerBatch)}
+                              </td>
+                              <td className="px-4 py-3 text-slate-800">
+                                {durationLabel(row.prepElapsedMinutesPerBatch)}
+                              </td>
+                              <td className="px-4 py-3 text-slate-800">
+                                <div>{durationLabel(row.totalPrepHandsOnMinutes)}</div>
+                                {row.prepTimeStatus !== 'CONFIRMED' ? (
+                                  <div className="mt-1 text-xs font-medium text-amber-700">
+                                    {row.prepTimeStatus}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td className="px-4 py-3 text-slate-800">
                                 {row.shortfallQty <= 0 ? (
                                   <span className="rounded-lg bg-green-50 px-2 py-1 text-sm font-semibold text-green-700">
                                     No prep needed
@@ -897,7 +964,7 @@ export default function PlanningPage() {
 
                             {row.shortfallQty > 0 ? (
                               <tr className="border-t bg-slate-50">
-                                <td colSpan={10} className="px-4 py-4">
+                                <td colSpan={13} className="px-4 py-4">
                                   <div className="rounded-xl border bg-white p-4">
                                     <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                                       <div>

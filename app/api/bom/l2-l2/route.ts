@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { markL2PrepTimeStale } from '@/lib/l2-prep-time'
 
 type BomRowInput = {
   childId: string
@@ -200,6 +201,8 @@ export async function POST(req: Request) {
         })
       }
     })
+
+    await markL2PrepTimeStale(tenant.restaurantId, parentId)
 
     return NextResponse.json({ success: true })
   } catch (error) {

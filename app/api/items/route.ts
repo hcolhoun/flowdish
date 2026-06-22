@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 import { NextResponse } from 'next/server'
+import { getL2PrepTimeContext, markL2PrepTimeStale } from '@/lib/l2-prep-time'
 
 function makeSkuPrefix(itemType: string) {
   if (itemType === 'L0') return 'L0'
@@ -291,6 +292,24 @@ export async function PATCH(req: Request) {
       data.buildStatus = body.buildStatus
     }
 
+    if (existing.itemType === 'L2' && data.buildStatus === 'BUILT') {
+      if (existing.prepTimeStatus !== 'CONFIRMED') {
+        return NextResponse.json(
+          { error: 'Confirm the L2 prep-time estimate before marking this item as built.' },
+          { status: 400 }
+        )
+      }
+
+      const { fingerprint } = await getL2PrepTimeContext(tenant.restaurantId, existing.id)
+
+      if (existing.prepTimeFingerprint !== fingerprint) {
+        return NextResponse.json(
+          { error: 'The L2 recipe or SOP changed. Recalculate prep time before marking it as built.' },
+          { status: 400 }
+        )
+      }
+    }
+
     if ('sku' in data && !data.sku) {
       return NextResponse.json({ error: 'SKU is required' }, { status: 400 })
     }
@@ -324,6 +343,23 @@ export async function PATCH(req: Request) {
       where: { id },
       data,
     })
+
+    const prepTimeInputsChanged =
+      existing.itemType === 'L2' &&
+      (
+        ('sku' in data && data.sku !== existing.sku) ||
+        ('name' in data && data.name !== existing.name) ||
+        ('unitType' in data && data.unitType !== existing.unitType) ||
+        ('standardBatchOutput' in data &&
+          data.standardBatchOutput !== existing.standardBatchOutput)
+      )
+
+    if (prepTimeInputsChanged) {
+      await markL2PrepTimeStale(tenant.restaurantId, existing.id)
+      return NextResponse.json(
+        await prisma.item.findUnique({ where: { id: existing.id } })
+      )
+    }
 
     return NextResponse.json(item)
   } catch (error: any) {
