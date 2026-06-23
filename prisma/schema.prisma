@@ -36,6 +36,12 @@ enum PrepTimeStatus {
   STALE
 }
 
+enum SupplierCreditClaimStatus {
+  OPEN
+  CREDIT_RECEIVED
+  CLOSED
+}
+
 enum MembershipRole {
   OWNER
   ADMIN
@@ -82,6 +88,8 @@ model Restaurant {
   aiUsageLogs                 AiUsageLog[]
   coldStorageMonitors         ColdStorageMonitor[]
   coldStorageReadings         ColdStorageReading[]
+  supplierCreditClaims        SupplierCreditClaim[]
+  supplierCreditConfigs       SupplierCreditConfig[]
 }
 
 model UserMembership {
@@ -281,6 +289,54 @@ model Delivery {
 
   @@index([restaurantId])
   @@index([itemId])
+}
+
+model SupplierCreditClaim {
+  id                String                    @id @default(cuid())
+  restaurantId      String
+  supplier          String
+  supplierSku       String?
+  productName       String
+  qty               Float?
+  unitType          UnitType?
+  chargedAmount     Float?
+  docketNumber      String?
+  chargedAt         DateTime
+  notes             String?
+  status            SupplierCreditClaimStatus @default(OPEN)
+  followUpCount     Int                       @default(0)
+  nextFollowUpAt    DateTime?
+  lastFollowUpAt    DateTime?
+  lastEmailError    String?
+  createdByName     String?
+  createdByEmail    String?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([restaurantId, status])
+  @@index([nextFollowUpAt])
+}
+
+model SupplierCreditConfig {
+  id                String   @id @default(cuid())
+  restaurantId      String
+  supplier          String
+  supplierEmail     String
+  enabled           Boolean  @default(false)
+  firstFollowUpDays Int      @default(3)
+  repeatEveryDays   Int      @default(3)
+  maxFollowUps      Int      @default(5)
+  ccEmail           String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([restaurantId, supplier])
+  @@index([restaurantId])
 }
 
 model InventoryLot {

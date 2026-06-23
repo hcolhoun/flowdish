@@ -81,6 +81,7 @@ type ParsedDocketResponse = {
 type ReviewRow = {
   rowId: string
   include: boolean
+  creditClaimRecorded: boolean
   supplier: string
   supplierSku: string
   productName: string
@@ -158,6 +159,7 @@ export default function DeliveriesPage() {
   const [docketParsing, setDocketParsing] = useState(false)
   const [docketOcrProgress, setDocketOcrProgress] = useState('')
   const [docketSaving, setDocketSaving] = useState(false)
+  const [creditClaimSavingRowId, setCreditClaimSavingRowId] = useState('')
   const [parsedDocket, setParsedDocket] = useState<ParsedDocketResponse | null>(null)
   const [reviewRows, setReviewRows] = useState<ReviewRow[]>([])
   const [reviewSupplier, setReviewSupplier] = useState('')
@@ -779,6 +781,7 @@ export default function DeliveriesPage() {
         return {
           rowId: `${Date.now()}-${index}`,
           include: true,
+          creditClaimRecorded: false,
           supplier: row.supplier || data.supplier || '',
           supplierSku: row.supplierSku || '',
           productName: row.productName || '',
@@ -882,6 +885,54 @@ export default function DeliveriesPage() {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setDocketSaving(false)
+    }
+  }
+
+  async function markChargedNotReceived(row: ReviewRow) {
+    const confirmed = window.confirm(
+      `Record "${row.productName || row.supplierSku}" as charged but not received?\n\nThis row will not update inventory.`
+    )
+    if (!confirmed) return
+
+    try {
+      setCreditClaimSavingRowId(row.rowId)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/supplier-credit-claims', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supplier: row.supplier || reviewSupplier,
+          supplierSku: row.supplierSku,
+          productName: row.productName || row.itemSearch || row.supplierSku,
+          qty: row.qty,
+          unitType: row.unitType || null,
+          chargedAmount: row.totalCost,
+          docketNumber: parsedDocket?.docketNumber,
+          chargedAt: deliveredAt || parsedDocket?.deliveryDate,
+          notes: row.notes,
+        }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to record supplier credit claim')
+      }
+
+      updateReviewRow(row.rowId, {
+        include: false,
+        creditClaimRecorded: true,
+      })
+      setMessage(
+        data.automationConfigured
+          ? 'Charged, not received claim recorded. This row will not update inventory. Automatic follow-ups are configured in Admin.'
+          : 'Charged, not received claim recorded. This row will not update inventory. Configure supplier follow-up emails in the Admin tab.'
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setCreditClaimSavingRowId('')
     }
   }
 
@@ -1044,7 +1095,7 @@ export default function DeliveriesPage() {
             </div>
 
             <div className="max-h-[75vh] overflow-auto">
-              <table className="min-w-[1650px] w-full text-left">
+              <table className="min-w-[1750px] w-full text-left">
                 <thead className="bg-slate-100 text-sm">
                   <tr>
                     <th className="px-4 py-3 text-slate-800">Save</th>
@@ -1076,13 +1127,34 @@ export default function DeliveriesPage() {
                         }`}
                       >
                         <td className="px-4 py-3">
-                          <input
-                            type="checkbox"
-                            checked={row.include}
-                            onChange={(e) =>
-                              updateReviewRow(row.rowId, { include: e.target.checked })
-                            }
-                          />
+                          <div className="flex min-w-40 flex-col items-start gap-2">
+                            <label className="flex items-center gap-2 text-sm text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={row.include}
+                                disabled={row.creditClaimRecorded}
+                                onChange={(e) =>
+                                  updateReviewRow(row.rowId, { include: e.target.checked })
+                                }
+                              />
+                              Save
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => markChargedNotReceived(row)}
+                              disabled={
+                                row.creditClaimRecorded ||
+                                creditClaimSavingRowId === row.rowId
+                              }
+                              className="rounded-lg border border-amber-400 px-2 py-1 text-left text-xs font-medium text-amber-900 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {row.creditClaimRecorded
+                                ? 'Credit claim recorded'
+                                : creditClaimSavingRowId === row.rowId
+                                  ? 'Recording...'
+                                  : 'Charged, Not Received'}
+                            </button>
+                          </div>
                         </td>
 
                         <td className="px-4 py-3">

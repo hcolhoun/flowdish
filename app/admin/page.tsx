@@ -187,6 +187,42 @@ type ColdStorageAdminResponse = {
   monitors: ColdStorageAdminMonitor[]
 }
 
+type SupplierCreditConfig = {
+  id: string
+  supplier: string
+  supplierEmail: string
+  ccEmail: string | null
+  enabled: boolean
+  firstFollowUpDays: number
+  repeatEveryDays: number
+  maxFollowUps: number
+}
+
+type SupplierCreditClaim = {
+  id: string
+  supplier: string
+  supplierSku: string | null
+  productName: string
+  qty: number | null
+  unitType: string | null
+  chargedAmount: number | null
+  docketNumber: string | null
+  chargedAt: string
+  notes: string | null
+  status: 'OPEN' | 'CREDIT_RECEIVED' | 'CLOSED'
+  followUpCount: number
+  nextFollowUpAt: string | null
+  lastFollowUpAt: string | null
+  lastEmailError: string | null
+  createdAt: string
+}
+
+type SupplierCreditAdminResponse = {
+  configs: SupplierCreditConfig[]
+  claims: SupplierCreditClaim[]
+  emailServiceConfigured: boolean
+}
+
 export default function AdminPage() {
   const [data, setData] = useState<AdminData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -222,6 +258,20 @@ export default function AdminPage() {
   const [loadingAiUsage, setLoadingAiUsage] = useState(false)
   const [coldStorageAdmin, setColdStorageAdmin] = useState<ColdStorageAdminResponse | null>(null)
   const [loadingColdStorageAdmin, setLoadingColdStorageAdmin] = useState(false)
+  const [supplierCreditAdmin, setSupplierCreditAdmin] =
+    useState<SupplierCreditAdminResponse | null>(null)
+  const [loadingSupplierCredits, setLoadingSupplierCredits] = useState(false)
+  const [savingSupplierCreditConfig, setSavingSupplierCreditConfig] = useState(false)
+  const [updatingSupplierCreditClaimId, setUpdatingSupplierCreditClaimId] = useState('')
+  const [supplierCreditConfigForm, setSupplierCreditConfigForm] = useState({
+    supplier: '',
+    supplierEmail: '',
+    ccEmail: '',
+    enabled: false,
+    firstFollowUpDays: '3',
+    repeatEveryDays: '3',
+    maxFollowUps: '5',
+  })
   const [savingColdStorageMonitor, setSavingColdStorageMonitor] = useState(false)
   const [newColdStorageMonitor, setNewColdStorageMonitor] = useState({
     restaurantId: '',
@@ -359,6 +409,26 @@ export default function AdminPage() {
     }
   }
 
+  async function loadSupplierCredits() {
+    try {
+      setLoadingSupplierCredits(true)
+      const res = await fetch('/api/admin/supplier-credit-followups', {
+        cache: 'no-store',
+      })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to load supplier credit follow-ups')
+      }
+
+      setSupplierCreditAdmin(json)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoadingSupplierCredits(false)
+    }
+  }
+
   useEffect(() => {
     loadData()
   }, [])
@@ -371,6 +441,85 @@ export default function AdminPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.permissions.canCreateRestaurants])
+
+  useEffect(() => {
+    if (data?.permissions.canManageRestaurantMembers) {
+      loadSupplierCredits()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.permissions.canManageRestaurantMembers])
+
+  async function saveSupplierCreditConfig(e: React.FormEvent) {
+    e.preventDefault()
+
+    try {
+      setSavingSupplierCreditConfig(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/admin/supplier-credit-followups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(supplierCreditConfigForm),
+      })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to save supplier follow-up configuration')
+      }
+
+      setMessage('Supplier credit follow-up configuration saved.')
+      setSupplierCreditConfigForm({
+        supplier: '',
+        supplierEmail: '',
+        ccEmail: '',
+        enabled: false,
+        firstFollowUpDays: '3',
+        repeatEveryDays: '3',
+        maxFollowUps: '5',
+      })
+      await loadSupplierCredits()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSavingSupplierCreditConfig(false)
+    }
+  }
+
+  async function updateSupplierCreditClaim(
+    id: string,
+    status: SupplierCreditClaim['status']
+  ) {
+    try {
+      setUpdatingSupplierCreditClaimId(id)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/supplier-credit-claims', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status }),
+      })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to update supplier credit claim')
+      }
+
+      setMessage(
+        status === 'CREDIT_RECEIVED'
+          ? 'Claim marked as credit received. Automatic follow-ups stopped.'
+          : status === 'CLOSED'
+            ? 'Claim closed. Automatic follow-ups stopped.'
+            : 'Claim reopened.'
+      )
+      await loadSupplierCredits()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setUpdatingSupplierCreditClaimId('')
+    }
+  }
 
   async function handleCreateColdStorageMonitor(e: React.FormEvent) {
     e.preventDefault()
@@ -1349,6 +1498,324 @@ export default function AdminPage() {
                   </span>
                 </div>
               ) : null}
+            </section>
+
+            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">
+                    Supplier Credits & Follow-ups
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Manage items charged but not received and supplier reminder emails.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadSupplierCredits}
+                  disabled={loadingSupplierCredits}
+                  className="rounded-xl border px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loadingSupplierCredits ? 'Loading...' : 'Refresh'}
+                </button>
+              </div>
+
+              {supplierCreditAdmin && !supplierCreditAdmin.emailServiceConfigured ? (
+                <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  Automatic email sending is not connected yet. Claims will still be recorded.
+                  Add the Resend email settings in Vercel before enabling supplier reminders.
+                </div>
+              ) : null}
+
+              <form
+                onSubmit={saveSupplierCreditConfig}
+                className="mt-6 grid gap-4 rounded-xl border bg-slate-50 p-4 md:grid-cols-4"
+              >
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Supplier
+                  </label>
+                  <input
+                    value={supplierCreditConfigForm.supplier}
+                    onChange={(e) =>
+                      setSupplierCreditConfigForm((current) => ({
+                        ...current,
+                        supplier: e.target.value,
+                      }))
+                    }
+                    list="supplier-credit-names"
+                    className="w-full rounded-xl border bg-white px-3 py-2"
+                    required
+                  />
+                  <datalist id="supplier-credit-names">
+                    {Array.from(
+                      new Set(
+                        (supplierCreditAdmin?.claims || []).map((claim) => claim.supplier)
+                      )
+                    ).map((supplier) => (
+                      <option key={supplier} value={supplier} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Supplier Email
+                  </label>
+                  <input
+                    type="email"
+                    value={supplierCreditConfigForm.supplierEmail}
+                    onChange={(e) =>
+                      setSupplierCreditConfigForm((current) => ({
+                        ...current,
+                        supplierEmail: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-xl border bg-white px-3 py-2"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    CC Email
+                  </label>
+                  <input
+                    type="email"
+                    value={supplierCreditConfigForm.ccEmail}
+                    onChange={(e) =>
+                      setSupplierCreditConfigForm((current) => ({
+                        ...current,
+                        ccEmail: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-xl border bg-white px-3 py-2"
+                  />
+                </div>
+
+                <label className="flex items-center gap-3 self-end rounded-xl border bg-white px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={supplierCreditConfigForm.enabled}
+                    onChange={(e) =>
+                      setSupplierCreditConfigForm((current) => ({
+                        ...current,
+                        enabled: e.target.checked,
+                      }))
+                    }
+                  />
+                  <span className="text-sm font-medium text-slate-900">Automatic follow-ups</span>
+                </label>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    First Follow-up (days)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={supplierCreditConfigForm.firstFollowUpDays}
+                    onChange={(e) =>
+                      setSupplierCreditConfigForm((current) => ({
+                        ...current,
+                        firstFollowUpDays: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-xl border bg-white px-3 py-2"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Repeat Every (days)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={supplierCreditConfigForm.repeatEveryDays}
+                    onChange={(e) =>
+                      setSupplierCreditConfigForm((current) => ({
+                        ...current,
+                        repeatEveryDays: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-xl border bg-white px-3 py-2"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Maximum Follow-ups
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={supplierCreditConfigForm.maxFollowUps}
+                    onChange={(e) =>
+                      setSupplierCreditConfigForm((current) => ({
+                        ...current,
+                        maxFollowUps: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-xl border bg-white px-3 py-2"
+                    required
+                  />
+                </div>
+
+                <div className="flex items-end">
+                  <button
+                    type="submit"
+                    disabled={savingSupplierCreditConfig}
+                    className="rounded-xl bg-slate-900 px-5 py-2.5 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {savingSupplierCreditConfig ? 'Saving...' : 'Save Supplier Settings'}
+                  </button>
+                </div>
+              </form>
+
+              {supplierCreditAdmin?.configs.length ? (
+                <div className="mt-6 overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        <th className="px-3 py-2">Supplier</th>
+                        <th className="px-3 py-2">Email</th>
+                        <th className="px-3 py-2">Schedule</th>
+                        <th className="px-3 py-2">Status</th>
+                        <th className="px-3 py-2">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {supplierCreditAdmin.configs.map((config) => (
+                        <tr key={config.id} className="border-t">
+                          <td className="px-3 py-2">{config.supplier}</td>
+                          <td className="px-3 py-2">{config.supplierEmail}</td>
+                          <td className="px-3 py-2">
+                            Day {config.firstFollowUpDays}, then every {config.repeatEveryDays} day(s),
+                            max {config.maxFollowUps}
+                          </td>
+                          <td className="px-3 py-2">
+                            {config.enabled ? 'Enabled' : 'Disabled'}
+                          </td>
+                          <td className="px-3 py-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSupplierCreditConfigForm({
+                                  supplier: config.supplier,
+                                  supplierEmail: config.supplierEmail,
+                                  ccEmail: config.ccEmail || '',
+                                  enabled: config.enabled,
+                                  firstFollowUpDays: String(config.firstFollowUpDays),
+                                  repeatEveryDays: String(config.repeatEveryDays),
+                                  maxFollowUps: String(config.maxFollowUps),
+                                })
+                              }
+                              className="rounded-lg border px-3 py-1 text-xs hover:bg-slate-50"
+                            >
+                              Edit
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+
+              <div className="mt-8 overflow-x-auto">
+                <table className="min-w-[1100px] w-full text-left text-sm">
+                  <thead className="bg-slate-100">
+                    <tr>
+                      <th className="px-3 py-2">Supplier</th>
+                      <th className="px-3 py-2">Item</th>
+                      <th className="px-3 py-2">Docket</th>
+                      <th className="px-3 py-2">Charged</th>
+                      <th className="px-3 py-2">Follow-ups</th>
+                      <th className="px-3 py-2">Next Due</th>
+                      <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-2">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!supplierCreditAdmin?.claims.length ? (
+                      <tr className="border-t">
+                        <td colSpan={8} className="px-3 py-3 text-slate-600">
+                          No charged-but-not-received claims recorded.
+                        </td>
+                      </tr>
+                    ) : (
+                      supplierCreditAdmin.claims.map((claim) => (
+                        <tr key={claim.id} className="border-t align-top">
+                          <td className="px-3 py-2">{claim.supplier}</td>
+                          <td className="px-3 py-2">
+                            <div className="font-medium">{claim.productName}</div>
+                            <div className="text-xs text-slate-500">
+                              {claim.supplierSku || 'No SKU'} ·{' '}
+                              {claim.qty === null
+                                ? 'Qty not recorded'
+                                : `${claim.qty} ${claim.unitType || ''}`}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2">
+                            {claim.docketNumber || 'N/A'} · {formatDate(claim.chargedAt)}
+                          </td>
+                          <td className="px-3 py-2">{money(claim.chargedAmount)}</td>
+                          <td className="px-3 py-2">{claim.followUpCount}</td>
+                          <td className="px-3 py-2">
+                            {claim.nextFollowUpAt ? formatDate(claim.nextFollowUpAt) : 'Not scheduled'}
+                            {claim.lastEmailError ? (
+                              <div className="mt-1 max-w-64 text-xs text-red-700">
+                                Last send failed
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="px-3 py-2">{claim.status.replaceAll('_', ' ')}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex flex-wrap gap-2">
+                              {claim.status === 'OPEN' ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateSupplierCreditClaim(claim.id, 'CREDIT_RECEIVED')
+                                    }
+                                    disabled={updatingSupplierCreditClaimId === claim.id}
+                                    className="rounded-lg border border-green-400 px-2 py-1 text-xs text-green-800 hover:bg-green-50 disabled:opacity-50"
+                                  >
+                                    Credit Received
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateSupplierCreditClaim(claim.id, 'CLOSED')
+                                    }
+                                    disabled={updatingSupplierCreditClaimId === claim.id}
+                                    className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
+                                  >
+                                    Close
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => updateSupplierCreditClaim(claim.id, 'OPEN')}
+                                  disabled={updatingSupplierCreditClaimId === claim.id}
+                                  className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
+                                >
+                                  Reopen
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </section>
 
             {data.permissions.canCreateRestaurants ? (

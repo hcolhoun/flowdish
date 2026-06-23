@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/supplier-credit-followups",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}
