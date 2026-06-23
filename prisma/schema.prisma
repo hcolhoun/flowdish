@@ -42,6 +42,13 @@ enum SupplierCreditClaimStatus {
   CLOSED
 }
 
+enum VatReclaimStatus {
+  NOT_APPLICABLE
+  ELIGIBLE
+  CLAIMED
+  NOT_CLAIMED
+}
+
 enum MembershipRole {
   OWNER
   ADMIN
@@ -274,6 +281,9 @@ model Delivery {
   unitType     UnitType
   supplier     String?
   price        Float?
+  vatRatePercent Float              @default(0)
+  vatAmount      Float              @default(0)
+  vatReclaimStatus VatReclaimStatus @default(NOT_APPLICABLE)
   expiryAt     DateTime?
   createdAt    DateTime  @default(now())
 
@@ -289,6 +299,8 @@ model Delivery {
 
   @@index([restaurantId])
   @@index([itemId])
+  @@index([restaurantId, deliveredAt])
+  @@index([restaurantId, vatReclaimStatus])
 }
 
 model SupplierCreditClaim {

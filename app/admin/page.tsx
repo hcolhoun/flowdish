@@ -223,6 +223,31 @@ type SupplierCreditAdminResponse = {
   emailServiceConfigured: boolean
 }
 
+type VatReport = {
+  startDate: string
+  endDate: string
+  summary: {
+    grossPurchases: number
+    totalVatCharged: number
+    vatClaimed: number
+    vatNotClaimed: number
+    vatEligible: number
+    zeroRatedDeliveryCount: number
+  }
+  rows: Array<{
+    id: string
+    deliveredAt: string
+    supplier: string | null
+    itemSku: string
+    itemName: string
+    grossAmount: number
+    vatRatePercent: number
+    vatAmount: number
+    netAmount: number
+    vatReclaimStatus: 'NOT_APPLICABLE' | 'ELIGIBLE' | 'CLAIMED' | 'NOT_CLAIMED'
+  }>
+}
+
 export default function AdminPage() {
   const [data, setData] = useState<AdminData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -272,6 +297,11 @@ export default function AdminPage() {
     repeatEveryDays: '3',
     maxFollowUps: '5',
   })
+  const currentYear = new Date().getFullYear()
+  const [vatReport, setVatReport] = useState<VatReport | null>(null)
+  const [vatStartDate, setVatStartDate] = useState(`${currentYear}-01-01`)
+  const [vatEndDate, setVatEndDate] = useState(`${currentYear}-12-31`)
+  const [loadingVatReport, setLoadingVatReport] = useState(false)
   const [savingColdStorageMonitor, setSavingColdStorageMonitor] = useState(false)
   const [newColdStorageMonitor, setNewColdStorageMonitor] = useState({
     restaurantId: '',
@@ -429,6 +459,33 @@ export default function AdminPage() {
     }
   }
 
+  async function loadVatReport(
+    nextStartDate = vatStartDate,
+    nextEndDate = vatEndDate
+  ) {
+    try {
+      setLoadingVatReport(true)
+      const params = new URLSearchParams({
+        startDate: nextStartDate,
+        endDate: nextEndDate,
+      })
+      const res = await fetch(`/api/admin/vat-report?${params.toString()}`, {
+        cache: 'no-store',
+      })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to load VAT report')
+      }
+
+      setVatReport(json)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoadingVatReport(false)
+    }
+  }
+
   useEffect(() => {
     loadData()
   }, [])
@@ -445,6 +502,7 @@ export default function AdminPage() {
   useEffect(() => {
     if (data?.permissions.canManageRestaurantMembers) {
       loadSupplierCredits()
+      loadVatReport()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.permissions.canManageRestaurantMembers])
@@ -1498,6 +1556,131 @@ export default function AdminPage() {
                   </span>
                 </div>
               ) : null}
+            </section>
+
+            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">Delivery VAT Report</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    VAT charged on delivery lines, including claimed, unclaimed, and eligible amounts.
+                  </p>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-[160px_160px_auto] sm:items-end">
+                  <label className="text-sm font-medium text-slate-900">
+                    Start Date
+                    <input
+                      type="date"
+                      value={vatStartDate}
+                      onChange={(e) => setVatStartDate(e.target.value)}
+                      className="mt-1 w-full rounded-xl border px-3 py-2"
+                    />
+                  </label>
+                  <label className="text-sm font-medium text-slate-900">
+                    End Date
+                    <input
+                      type="date"
+                      value={vatEndDate}
+                      onChange={(e) => setVatEndDate(e.target.value)}
+                      className="mt-1 w-full rounded-xl border px-3 py-2"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => loadVatReport()}
+                    disabled={loadingVatReport}
+                    className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {loadingVatReport ? 'Loading...' : 'Apply'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">VAT Charged</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {money(vatReport?.summary.totalVatCharged ?? 0)}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-green-300 bg-green-50 p-4">
+                  <div className="text-xs text-green-800">Claimed</div>
+                  <div className="mt-1 text-xl font-semibold text-green-900">
+                    {money(vatReport?.summary.vatClaimed ?? 0)}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-blue-300 bg-blue-50 p-4">
+                  <div className="text-xs text-blue-800">Eligible / Outstanding</div>
+                  <div className="mt-1 text-xl font-semibold text-blue-900">
+                    {money(vatReport?.summary.vatEligible ?? 0)}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+                  <div className="text-xs text-amber-800">Not Claimed</div>
+                  <div className="mt-1 text-xl font-semibold text-amber-900">
+                    {money(vatReport?.summary.vatNotClaimed ?? 0)}
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Zero-rated Lines</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {vatReport?.summary.zeroRatedDeliveryCount ?? 0}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 overflow-x-auto">
+                <table className="min-w-[1050px] w-full text-left text-sm">
+                  <thead className="bg-slate-100">
+                    <tr>
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2">Supplier</th>
+                      <th className="px-3 py-2">Delivery Item</th>
+                      <th className="px-3 py-2">Gross</th>
+                      <th className="px-3 py-2">VAT Rate</th>
+                      <th className="px-3 py-2">VAT</th>
+                      <th className="px-3 py-2">Net</th>
+                      <th className="px-3 py-2">Treatment</th>
+                      <th className="px-3 py-2">Reference</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!vatReport?.rows.length ? (
+                      <tr className="border-t">
+                        <td colSpan={9} className="px-3 py-3 text-slate-600">
+                          No delivery VAT records in this period.
+                        </td>
+                      </tr>
+                    ) : (
+                      vatReport.rows.map((row) => (
+                        <tr key={row.id} className="border-t">
+                          <td className="px-3 py-2">{formatDate(row.deliveredAt)}</td>
+                          <td className="px-3 py-2">{row.supplier || 'Unknown'}</td>
+                          <td className="px-3 py-2">
+                            {row.itemName} [{row.itemSku}]
+                          </td>
+                          <td className="px-3 py-2">{money(row.grossAmount)}</td>
+                          <td className="px-3 py-2">{row.vatRatePercent}%</td>
+                          <td className="px-3 py-2">{money(row.vatAmount)}</td>
+                          <td className="px-3 py-2">{money(row.netAmount)}</td>
+                          <td className="px-3 py-2">
+                            {row.vatReclaimStatus.replaceAll('_', ' ')}
+                          </td>
+                          <td className="px-3 py-2">
+                            <a
+                              href={`/deliveries#delivery-${row.id}`}
+                              className="font-medium text-blue-700 underline hover:text-blue-900"
+                            >
+                              View delivery
+                            </a>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </section>
 
             <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">

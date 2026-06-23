@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 type UnitType = 'g' | 'ml' | 'each'
+type VatReclaimStatus = 'NOT_APPLICABLE' | 'ELIGIBLE' | 'CLAIMED' | 'NOT_CLAIMED'
 
 type Item = {
   id: string
@@ -19,6 +20,9 @@ type Delivery = {
   unitType: UnitType
   supplier: string | null
   price: number | null
+  vatRatePercent: number
+  vatAmount: number
+  vatReclaimStatus: VatReclaimStatus
   expiryAt: string | null
   createdAt?: string | null
   enteredByName?: string | null
@@ -88,6 +92,8 @@ type ReviewRow = {
   qty: string
   unitType: UnitType | ''
   totalCost: string
+  vatRatePercent: string
+  vatReclaimStatus: VatReclaimStatus
   selectedItemId: string
   itemSearch: string
   dropdownOpen: boolean
@@ -103,6 +109,8 @@ type EditingDelivery = {
   supplier: string
   totalCost: string
   expiryAt: string
+  vatRatePercent: string
+  vatReclaimStatus: VatReclaimStatus
 }
 
 type TesseractLog = {
@@ -146,6 +154,9 @@ export default function DeliveriesPage() {
   const [qty, setQty] = useState('')
   const [supplier, setSupplier] = useState('')
   const [totalCost, setTotalCost] = useState('')
+  const [vatRatePercent, setVatRatePercent] = useState('0')
+  const [vatReclaimStatus, setVatReclaimStatus] =
+    useState<VatReclaimStatus>('NOT_APPLICABLE')
   const [batchCode, setBatchCode] = useState('')
   const [latestSupplierProduct, setLatestSupplierProduct] =
     useState<LatestSupplierProduct | null>(null)
@@ -358,6 +369,17 @@ export default function DeliveriesPage() {
   }, [])
 
   useEffect(() => {
+    if (deliveries.length === 0 || !window.location.hash.startsWith('#delivery-')) return
+
+    window.setTimeout(() => {
+      document.querySelector(window.location.hash)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+    }, 50)
+  }, [deliveries])
+
+  useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (!itemPickerRef.current) return
 
@@ -453,6 +475,8 @@ export default function DeliveriesPage() {
           qty: Number(qty),
           supplier,
           totalCost: Number(totalCost),
+          vatRatePercent: Number(vatRatePercent),
+          vatReclaimStatus,
           batchCode,
         }),
       })
@@ -469,6 +493,8 @@ export default function DeliveriesPage() {
       setQty('')
       setSupplier('')
       setTotalCost('')
+      setVatRatePercent('0')
+      setVatReclaimStatus('NOT_APPLICABLE')
       setBatchCode('')
       setLatestSupplierProduct(null)
       setPriceManuallyEdited(false)
@@ -488,6 +514,8 @@ export default function DeliveriesPage() {
       supplier: delivery.supplier ?? '',
       totalCost: toInputValue(delivery.price),
       expiryAt: toDateInputValue(delivery.expiryAt),
+      vatRatePercent: String(delivery.vatRatePercent || 0),
+      vatReclaimStatus: delivery.vatReclaimStatus,
     })
     setError('')
     setMessage('')
@@ -515,6 +543,8 @@ export default function DeliveriesPage() {
           supplier: editingDelivery.supplier,
           totalCost: Number(editingDelivery.totalCost),
           expiryAt: editingDelivery.expiryAt || null,
+          vatRatePercent: Number(editingDelivery.vatRatePercent),
+          vatReclaimStatus: editingDelivery.vatReclaimStatus,
         }),
       })
 
@@ -788,6 +818,8 @@ export default function DeliveriesPage() {
           qty: toInputValue(row.qty),
           unitType: row.matchedItemUnitType || row.unitType || matchedItem?.unitType || '',
           totalCost: toInputValue(row.lineTotal ?? row.packPrice),
+          vatRatePercent: '0',
+          vatReclaimStatus: 'NOT_APPLICABLE',
           selectedItemId: row.matchedItemId || '',
           itemSearch:
             row.matchedItemName && row.matchedItemSku
@@ -860,6 +892,8 @@ export default function DeliveriesPage() {
             qty: Number(row.qty),
             supplier: row.supplier,
             totalCost: Number(row.totalCost),
+            vatRatePercent: Number(row.vatRatePercent),
+            vatReclaimStatus: row.vatReclaimStatus,
           }),
         })
 
@@ -1095,7 +1129,7 @@ export default function DeliveriesPage() {
             </div>
 
             <div className="max-h-[75vh] overflow-auto">
-              <table className="min-w-[1750px] w-full text-left">
+              <table className="min-w-[1950px] w-full text-left">
                 <thead className="bg-slate-100 text-sm">
                   <tr>
                     <th className="px-4 py-3 text-slate-800">Save</th>
@@ -1106,6 +1140,8 @@ export default function DeliveriesPage() {
                     <th className="px-4 py-3 text-slate-800">Qty</th>
                     <th className="px-4 py-3 text-slate-800">Unit</th>
                     <th className="px-4 py-3 text-slate-800">Total Cost</th>
+                    <th className="px-4 py-3 text-slate-800">VAT %</th>
+                    <th className="px-4 py-3 text-slate-800">VAT Treatment</th>
                     <th className="px-4 py-3 text-slate-800">Confidence</th>
                     <th className="px-4 py-3 text-slate-800">Notes</th>
                   </tr>
@@ -1302,6 +1338,47 @@ export default function DeliveriesPage() {
                               {money(Number(row.totalCost) / Number(row.qty), 5)} / {row.unitType}
                             </div>
                           ) : null}
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            value={row.vatRatePercent}
+                            onChange={(e) => {
+                              const nextRate = e.target.value
+                              updateReviewRow(row.rowId, {
+                                vatRatePercent: nextRate,
+                                vatReclaimStatus:
+                                  Number(nextRate) > 0
+                                    ? row.vatReclaimStatus === 'NOT_APPLICABLE'
+                                      ? 'ELIGIBLE'
+                                      : row.vatReclaimStatus
+                                    : 'NOT_APPLICABLE',
+                              })
+                            }}
+                            className="w-20 rounded-lg border px-2 py-1 text-sm"
+                          />
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <select
+                            value={row.vatReclaimStatus}
+                            disabled={Number(row.vatRatePercent) <= 0}
+                            onChange={(e) =>
+                              updateReviewRow(row.rowId, {
+                                vatReclaimStatus: e.target.value as VatReclaimStatus,
+                              })
+                            }
+                            className="w-36 rounded-lg border px-2 py-1 text-sm disabled:bg-slate-100"
+                          >
+                            <option value="NOT_APPLICABLE">Not applicable</option>
+                            <option value="ELIGIBLE">Eligible</option>
+                            <option value="CLAIMED">Claimed</option>
+                            <option value="NOT_CLAIMED">Not claimed</option>
+                          </select>
                         </td>
 
                         <td className="px-4 py-3 text-sm text-slate-700">
@@ -1564,6 +1641,48 @@ export default function DeliveriesPage() {
             ) : null}
           </div>
 
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-900">
+              VAT Rate (%)
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.1"
+              value={vatRatePercent}
+              onChange={(e) => {
+                const nextRate = e.target.value
+                setVatRatePercent(nextRate)
+                setVatReclaimStatus((current) =>
+                  Number(nextRate) > 0
+                    ? current === 'NOT_APPLICABLE'
+                      ? 'ELIGIBLE'
+                      : current
+                    : 'NOT_APPLICABLE'
+                )
+              }}
+              className="w-full rounded-xl border px-3 py-2"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-900">
+              VAT Treatment
+            </label>
+            <select
+              value={vatReclaimStatus}
+              disabled={Number(vatRatePercent) <= 0}
+              onChange={(e) => setVatReclaimStatus(e.target.value as VatReclaimStatus)}
+              className="w-full rounded-xl border px-3 py-2 disabled:bg-slate-100"
+            >
+              <option value="NOT_APPLICABLE">Not applicable</option>
+              <option value="ELIGIBLE">Eligible to reclaim</option>
+              <option value="CLAIMED">Claimed</option>
+              <option value="NOT_CLAIMED">Not claimed</option>
+            </select>
+          </div>
+
           <div className="flex items-end">
             <button type="submit" className="rounded-xl bg-slate-900 px-5 py-3 text-white">
               Save Delivery
@@ -1573,7 +1692,7 @@ export default function DeliveriesPage() {
 
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="min-w-[1250px] w-full text-left">
+            <table className="min-w-[1550px] w-full text-left">
               <thead className="bg-slate-100 text-sm">
                 <tr>
                   <th className="px-4 py-3 text-slate-800">Date</th>
@@ -1582,6 +1701,8 @@ export default function DeliveriesPage() {
                   <th className="px-4 py-3 text-slate-800">Unit</th>
                   <th className="px-4 py-3 text-slate-800">Supplier</th>
                   <th className="px-4 py-3 text-slate-800">Total Cost</th>
+                  <th className="px-4 py-3 text-slate-800">VAT</th>
+                  <th className="px-4 py-3 text-slate-800">VAT Treatment</th>
                   <th className="px-4 py-3 text-slate-800">Cost / Unit</th>
                   <th className="px-4 py-3 text-slate-800">Expiry</th>
                   <th className="px-4 py-3 text-slate-800">Entered</th>
@@ -1592,7 +1713,7 @@ export default function DeliveriesPage() {
               <tbody>
                 {deliveries.length === 0 ? (
                   <tr className="border-t">
-                    <td className="px-4 py-3 text-slate-700" colSpan={10}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={12}>
                       No deliveries yet.
                     </td>
                   </tr>
@@ -1611,7 +1732,11 @@ export default function DeliveriesPage() {
                         : unitCost
 
                     return (
-                      <tr key={delivery.id} className="border-t align-top">
+                      <tr
+                        key={delivery.id}
+                        id={`delivery-${delivery.id}`}
+                        className="scroll-mt-24 border-t align-top"
+                      >
                         <td className="px-4 py-3 text-slate-800">
                           {isEditing ? (
                             <input
@@ -1688,6 +1813,62 @@ export default function DeliveriesPage() {
                             />
                           ) : (
                             money(delivery.price)
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.1"
+                              value={editingDelivery.vatRatePercent}
+                              onChange={(e) => {
+                                const nextRate = e.target.value
+                                setEditingDelivery({
+                                  ...editingDelivery,
+                                  vatRatePercent: nextRate,
+                                  vatReclaimStatus:
+                                    Number(nextRate) > 0
+                                      ? editingDelivery.vatReclaimStatus === 'NOT_APPLICABLE'
+                                        ? 'ELIGIBLE'
+                                        : editingDelivery.vatReclaimStatus
+                                      : 'NOT_APPLICABLE',
+                                })
+                              }}
+                              className="w-20 rounded-lg border px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            <div>
+                              <div>{delivery.vatRatePercent}%</div>
+                              <div className="text-xs text-slate-500">
+                                {money(delivery.vatAmount)}
+                              </div>
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditing ? (
+                            <select
+                              value={editingDelivery.vatReclaimStatus}
+                              disabled={Number(editingDelivery.vatRatePercent) <= 0}
+                              onChange={(e) =>
+                                setEditingDelivery({
+                                  ...editingDelivery,
+                                  vatReclaimStatus: e.target.value as VatReclaimStatus,
+                                })
+                              }
+                              className="w-36 rounded-lg border px-2 py-1 text-sm disabled:bg-slate-100"
+                            >
+                              <option value="NOT_APPLICABLE">Not applicable</option>
+                              <option value="ELIGIBLE">Eligible</option>
+                              <option value="CLAIMED">Claimed</option>
+                              <option value="NOT_CLAIMED">Not claimed</option>
+                            </select>
+                          ) : (
+                            delivery.vatReclaimStatus.replaceAll('_', ' ')
                           )}
                         </td>
 

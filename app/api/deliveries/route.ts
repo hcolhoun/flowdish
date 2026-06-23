@@ -26,6 +26,34 @@ function sameDate(a: Date | null, b: Date | null) {
   return a.getTime() === b.getTime()
 }
 
+const VAT_RECLAIM_STATUSES = [
+  'NOT_APPLICABLE',
+  'ELIGIBLE',
+  'CLAIMED',
+  'NOT_CLAIMED',
+] as const
+
+function vatFields(body: any, totalCost: number) {
+  const requestedRate = Number(body.vatRatePercent ?? 0)
+  const vatRatePercent =
+    Number.isFinite(requestedRate) && requestedRate >= 0 && requestedRate <= 100
+      ? requestedRate
+      : 0
+  const requestedStatus = String(body.vatReclaimStatus || '')
+  const vatReclaimStatus =
+    vatRatePercent <= 0
+      ? 'NOT_APPLICABLE'
+      : VAT_RECLAIM_STATUSES.includes(requestedStatus as any)
+        ? requestedStatus
+        : 'ELIGIBLE'
+  const vatAmount =
+    vatRatePercent > 0
+      ? Math.round((totalCost * vatRatePercent * 100) / (100 + vatRatePercent)) / 100
+      : 0
+
+  return { vatRatePercent, vatAmount, vatReclaimStatus }
+}
+
 export async function GET() {
   try {
     const tenant = await requireTenant()
@@ -101,6 +129,7 @@ export async function POST(req: Request) {
     }
 
     const unitCost = totalCost / qty
+    const deliveryVat = vatFields(body, totalCost)
     const batchCode =
       typeof body.batchCode === 'string' && body.batchCode.trim() !== ''
         ? body.batchCode.trim()
@@ -127,6 +156,7 @@ export async function POST(req: Request) {
           unitType: item.unitType,
           supplier: body.supplier || null,
           price: totalCost,
+          ...deliveryVat,
           expiryAt,
           ...actorFieldsFromTenant(tenant),
         },
@@ -158,6 +188,119 @@ export async function POST(req: Request) {
 
     console.error('POST /api/deliveries failed:', error)
     return NextResponse.json({ error: 'Failed to save delivery' }, { status: 500 })
+  }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to update deliveries.' },
+        { status: 403 }
+      )
+    }
+
+    const body = await req.json()
+    const id = String(body.id || '').trim()
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing delivery id' }, { status: 400 })
+    }
+
+    const delivery = await prisma.delivery.findFirst({
+      where: {
+        id,
+        restaurantId: tenant.restaurantId,
+      },
+    })
+
+    if (!delivery) {
+      return NextResponse.json({ error: 'Delivery not found' }, { status: 404 })
+    }
+
+    const lots = (await prisma.inventoryLot.findMany({
+      where: {
+        restaurantId: tenant.restaurantId,
+        deliveryId: delivery.id,
+      },
+    })) as InventoryLotForDelete[]
+
+    if (lots.some((lot) => lot.qtyRemaining !== lot.qtyInitial)) {
+      return NextResponse.json(
+        { error: 'Cannot edit delivery because some of its stock has already been used.' },
+        { status: 400 }
+      )
+    }
+
+    const deliveredAt = new Date(body.deliveredAt)
+    const qty = Number(body.qty)
+    const totalCost = Number(body.totalCost)
+    const expiryAt =
+      body.expiryAt !== undefined && body.expiryAt !== null && body.expiryAt !== ''
+        ? new Date(body.expiryAt)
+        : null
+
+    if (Number.isNaN(deliveredAt.getTime())) {
+      return NextResponse.json({ error: 'Valid delivery date is required' }, { status: 400 })
+    }
+
+    if (!qty || qty <= 0 || Number.isNaN(qty)) {
+      return NextResponse.json({ error: 'Quantity must be greater than 0' }, { status: 400 })
+    }
+
+    if (!totalCost || totalCost <= 0 || Number.isNaN(totalCost)) {
+      return NextResponse.json(
+        { error: 'Total delivery cost must be greater than 0' },
+        { status: 400 }
+      )
+    }
+
+    if (expiryAt && Number.isNaN(expiryAt.getTime())) {
+      return NextResponse.json({ error: 'Valid expiry date is required' }, { status: 400 })
+    }
+
+    const deliveryVat = vatFields(body, totalCost)
+    const unitCost = totalCost / qty
+
+    const updated = await prisma.$transaction(async (tx: any) => {
+      const updatedDelivery = await tx.delivery.update({
+        where: { id: delivery.id },
+        data: {
+          deliveredAt,
+          qty,
+          supplier: String(body.supplier || '').trim() || null,
+          price: totalCost,
+          expiryAt,
+          ...deliveryVat,
+        },
+        include: { item: true },
+      })
+
+      await tx.inventoryLot.updateMany({
+        where: {
+          restaurantId: tenant.restaurantId,
+          deliveryId: delivery.id,
+        },
+        data: {
+          qtyInitial: qty,
+          qtyRemaining: qty,
+          expiryAt,
+          unitCost,
+        },
+      })
+
+      return updatedDelivery
+    })
+
+    return NextResponse.json(updated)
+  } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
+    console.error('PATCH /api/deliveries failed:', error)
+    return NextResponse.json({ error: 'Failed to update delivery' }, { status: 500 })
   }
 }
 
