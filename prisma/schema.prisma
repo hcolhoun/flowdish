@@ -49,6 +49,11 @@ enum VatReclaimStatus {
   NOT_CLAIMED
 }
 
+enum SupportTicketStatus {
+  OPEN
+  CLOSED
+}
+
 enum MembershipRole {
   OWNER
   ADMIN
@@ -97,6 +102,7 @@ model Restaurant {
   coldStorageReadings         ColdStorageReading[]
   supplierCreditClaims        SupplierCreditClaim[]
   supplierCreditConfigs       SupplierCreditConfig[]
+  supportTickets              SupportTicket[]
 }
 
 model UserMembership {
@@ -349,6 +355,29 @@ model SupplierCreditConfig {
 
   @@unique([restaurantId, supplier])
   @@index([restaurantId])
+}
+
+model SupportTicket {
+  id                  String              @id @default(cuid())
+  restaurantId        String
+  subject             String
+  category            String
+  priority            String
+  message             String
+  errorText           String?
+  pageUrl             String?
+  status              SupportTicketStatus @default(OPEN)
+  createdByName       String?
+  createdByEmail      String?
+  createdByAuthUserId String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model InventoryLot {

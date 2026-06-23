@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import CopyableError from '@/app/components/CopyableError'
 
 type ItemType = 'L0' | 'L1' | 'L2' | 'L3'
 type UnitType = 'g' | 'ml' | 'each'
@@ -1412,9 +1413,7 @@ export default function BomPage() {
         </div>
 
         {error ? (
-          <div className="mt-4 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
+          <CopyableError message={error} className="mt-4" />
         ) : null}
 
         {message ? (
@@ -1779,9 +1778,7 @@ export default function BomPage() {
                           ) : null}
 
                           {expandedBom?.error ? (
-                            <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-                              {expandedBom.error}
-                            </div>
+                            <CopyableError message={expandedBom.error} className="mt-4" />
                           ) : null}
 
                           {expandedBom && !expandedBom.loading && !expandedBom.error ? (

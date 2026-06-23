@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
+import CopyableError from '@/app/components/CopyableError'
 import { TurnstileWidget } from '@/app/components/TurnstileWidget'
 
 export default function StaffLoginPage() {
@@ -83,9 +84,7 @@ export default function StaffLoginPage() {
         </p>
 
         {error ? (
-          <div className="mt-5 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
+          <CopyableError message={error} className="mt-5" />
         ) : null}
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">

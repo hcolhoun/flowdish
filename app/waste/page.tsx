@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import CopyableError from '@/app/components/CopyableError'
 
 type UnitType = 'g' | 'ml' | 'each'
 type ItemType = 'L1' | 'L2' | 'L3'
@@ -218,9 +219,7 @@ export default function WastePage() {
         </div>
 
         {error ? (
-          <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
+          <CopyableError message={error} className="mt-4" />
         ) : null}
 
         {message ? (

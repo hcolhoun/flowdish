@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import CopyableError from '@/app/components/CopyableError'
 
 type TurnstileWidgetProps = {
   onToken: (token: string) => void
@@ -101,7 +102,7 @@ export function TurnstileWidget({ onToken, resetKey }: TurnstileWidgetProps) {
     <div>
       <div ref={containerRef} className="min-h-[65px]" />
       {loadError ? (
-        <p className="mt-1 text-sm text-red-700">{loadError}</p>
+        <CopyableError message={loadError} className="mt-1" />
       ) : null}
     </div>
   )

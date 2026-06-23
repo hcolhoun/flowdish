@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import CopyableError from '@/app/components/CopyableError'
 
 type DashboardData = {
   totals: {
@@ -134,9 +135,7 @@ export default function HomePage() {
         </p>
 
         {error ? (
-          <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 whitespace-pre-wrap">
-            {error}
-          </div>
+          <CopyableError message={error} className="mt-4" />
         ) : null}
 
         {!data ? (

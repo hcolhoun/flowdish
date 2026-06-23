@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import CopyableError from '@/app/components/CopyableError'
 
 type UnitType = 'g' | 'ml' | 'each'
 type VatReclaimStatus = 'NOT_APPLICABLE' | 'ELIGIBLE' | 'CLAIMED' | 'NOT_CLAIMED'
@@ -976,9 +977,7 @@ export default function DeliveriesPage() {
         <h1 className="text-3xl font-semibold text-slate-900">Deliveries</h1>
 
         {error ? (
-          <div className="mt-4 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
+          <CopyableError message={error} className="mt-4" />
         ) : null}
 
         {message ? (

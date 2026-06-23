@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import CopyableError from '@/app/components/CopyableError'
 
 type Membership = {
   id: string
@@ -248,6 +249,27 @@ type VatReport = {
   }>
 }
 
+type SupportTicket = {
+  id: string
+  subject: string
+  category: string
+  priority: string
+  message: string
+  errorText: string | null
+  pageUrl: string | null
+  status: 'OPEN' | 'CLOSED'
+  createdByEmail: string | null
+  createdAt: string
+  restaurant: {
+    name: string
+    plan: 'BASIC' | 'PREMIUM'
+  }
+}
+
+type SupportTicketsResponse = {
+  tickets: SupportTicket[]
+}
+
 export default function AdminPage() {
   const [data, setData] = useState<AdminData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -302,6 +324,17 @@ export default function AdminPage() {
   const [vatStartDate, setVatStartDate] = useState(`${currentYear}-01-01`)
   const [vatEndDate, setVatEndDate] = useState(`${currentYear}-12-31`)
   const [loadingVatReport, setLoadingVatReport] = useState(false)
+  const [supportTickets, setSupportTickets] = useState<SupportTicketsResponse | null>(null)
+  const [loadingSupportTickets, setLoadingSupportTickets] = useState(false)
+  const [submittingSupportTicket, setSubmittingSupportTicket] = useState(false)
+  const [updatingSupportTicketId, setUpdatingSupportTicketId] = useState('')
+  const [supportTicketForm, setSupportTicketForm] = useState({
+    subject: '',
+    category: 'General',
+    priority: 'Normal',
+    message: '',
+    errorText: '',
+  })
   const [savingColdStorageMonitor, setSavingColdStorageMonitor] = useState(false)
   const [newColdStorageMonitor, setNewColdStorageMonitor] = useState({
     restaurantId: '',
@@ -323,6 +356,16 @@ export default function AdminPage() {
   const staffPinUsers = useMemo(
     () => data?.staffUsers.filter((staff) => !staff.isAccountPin) || [],
     [data?.staffUsers]
+  )
+
+  const openSupportTickets = useMemo(
+    () => supportTickets?.tickets.filter((ticket) => ticket.status === 'OPEN') || [],
+    [supportTickets?.tickets]
+  )
+
+  const closedSupportTickets = useMemo(
+    () => supportTickets?.tickets.filter((ticket) => ticket.status === 'CLOSED') || [],
+    [supportTickets?.tickets]
   )
 
   async function safeJson(res: Response) {
@@ -486,6 +529,24 @@ export default function AdminPage() {
     }
   }
 
+  async function loadSupportTickets() {
+    try {
+      setLoadingSupportTickets(true)
+      const res = await fetch('/api/support-tickets', { cache: 'no-store' })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to load support tickets')
+      }
+
+      setSupportTickets(json)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoadingSupportTickets(false)
+    }
+  }
+
   useEffect(() => {
     loadData()
   }, [])
@@ -503,9 +564,74 @@ export default function AdminPage() {
     if (data?.permissions.canManageRestaurantMembers) {
       loadSupplierCredits()
       loadVatReport()
+      loadSupportTickets()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.permissions.canManageRestaurantMembers])
+
+  async function submitSupportTicket(e: React.FormEvent) {
+    e.preventDefault()
+
+    try {
+      setSubmittingSupportTicket(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/support-tickets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...supportTicketForm,
+          pageUrl: window.location.href,
+        }),
+      })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to send support ticket')
+      }
+
+      setSupportTicketForm({
+        subject: '',
+        category: 'General',
+        priority: 'Normal',
+        message: '',
+        errorText: '',
+      })
+      setMessage('Support ticket saved for Flowdish support.')
+      await loadSupportTickets()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSubmittingSupportTicket(false)
+    }
+  }
+
+  async function updateSupportTicketStatus(id: string, status: SupportTicket['status']) {
+    try {
+      setUpdatingSupportTicketId(id)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/support-tickets', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status }),
+      })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to update support ticket')
+      }
+
+      setMessage(status === 'CLOSED' ? 'Support ticket closed.' : 'Support ticket reopened.')
+      await loadSupportTickets()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setUpdatingSupportTicketId('')
+    }
+  }
 
   async function saveSupplierCreditConfig(e: React.FormEvent) {
     e.preventDefault()
@@ -919,6 +1045,11 @@ export default function AdminPage() {
                 loadAiUsage()
                 loadColdStorageAdmin()
               }
+              if (data?.permissions.canManageRestaurantMembers) {
+                loadSupplierCredits()
+                loadVatReport()
+                loadSupportTickets()
+              }
             }}
             className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
           >
@@ -933,9 +1064,7 @@ export default function AdminPage() {
         ) : null}
 
         {error ? (
-          <div className="mt-6 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
+          <CopyableError message={error} className="mt-6" />
         ) : null}
 
         {message ? (
@@ -984,6 +1113,237 @@ export default function AdminPage() {
               <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
                 Staff users log in at <span className="font-mono">/staff-login</span> using
                 the staff login code, username, and 4-digit PIN. Staff sessions expire after 2 hours.
+              </div>
+            </section>
+
+            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">Support Ticket</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Save a problem report for Flowdish support. If you see a red error message,
+                    use its copy button and paste it into the error box.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadSupportTickets}
+                  disabled={loadingSupportTickets}
+                  className="rounded-xl border px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loadingSupportTickets ? 'Loading...' : 'Refresh Tickets'}
+                </button>
+              </div>
+
+              <form onSubmit={submitSupportTicket} className="mt-6 grid gap-4">
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Subject
+                    </label>
+                    <input
+                      value={supportTicketForm.subject}
+                      onChange={(e) =>
+                        setSupportTicketForm((current) => ({
+                          ...current,
+                          subject: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-xl border px-3 py-2"
+                      placeholder="Problem with deliveries"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Category
+                    </label>
+                    <select
+                      value={supportTicketForm.category}
+                      onChange={(e) =>
+                        setSupportTicketForm((current) => ({
+                          ...current,
+                          category: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-xl border px-3 py-2"
+                    >
+                      <option>General</option>
+                      <option>Bug/Error</option>
+                      <option>Data issue</option>
+                      <option>AI import</option>
+                      <option>Login/access</option>
+                      <option>Billing</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Priority
+                    </label>
+                    <select
+                      value={supportTicketForm.priority}
+                      onChange={(e) =>
+                        setSupportTicketForm((current) => ({
+                          ...current,
+                          priority: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-xl border px-3 py-2"
+                    >
+                      <option>Normal</option>
+                      <option>Urgent</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    What happened?
+                  </label>
+                  <textarea
+                    value={supportTicketForm.message}
+                    onChange={(e) =>
+                      setSupportTicketForm((current) => ({
+                        ...current,
+                        message: e.target.value,
+                      }))
+                    }
+                    className="min-h-28 w-full rounded-xl border px-3 py-2"
+                    placeholder="Tell us what you were trying to do and what went wrong."
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Error text/code
+                  </label>
+                  <textarea
+                    value={supportTicketForm.errorText}
+                    onChange={(e) =>
+                      setSupportTicketForm((current) => ({
+                        ...current,
+                        errorText: e.target.value,
+                      }))
+                    }
+                    className="min-h-20 w-full rounded-xl border px-3 py-2 font-mono text-sm"
+                    placeholder="Paste the red highlighted error message here, if there is one."
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="submit"
+                    disabled={submittingSupportTicket}
+                    className="rounded-xl bg-slate-900 px-5 py-2.5 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {submittingSupportTicket ? 'Sending...' : 'Send Ticket'}
+                  </button>
+                  <span className="text-sm text-slate-500">
+                    Flowdish will include this page address automatically.
+                  </span>
+                </div>
+              </form>
+
+              <div className="mt-8 overflow-x-auto">
+                <table className="min-w-[1000px] w-full text-left text-sm">
+                  <thead className="bg-slate-100">
+                    <tr>
+                      <th className="px-3 py-2">Created</th>
+                      <th className="px-3 py-2">Restaurant</th>
+                      <th className="px-3 py-2">Subject</th>
+                      <th className="px-3 py-2">Category</th>
+                      <th className="px-3 py-2">Priority</th>
+                      <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-2">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!supportTickets?.tickets.length ? (
+                      <tr className="border-t">
+                        <td colSpan={7} className="px-3 py-3 text-slate-600">
+                          No support tickets yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      <>
+                        <tr className="border-t bg-slate-50">
+                          <td colSpan={7} className="px-3 py-2 font-semibold text-slate-900">
+                            Open Tickets ({openSupportTickets.length})
+                          </td>
+                        </tr>
+                        {openSupportTickets.map((ticket) => (
+                          <tr key={ticket.id} className="border-t align-top">
+                            <td className="px-3 py-2">{formatDate(ticket.createdAt)}</td>
+                            <td className="px-3 py-2">{ticket.restaurant.name}</td>
+                            <td className="px-3 py-2">
+                              <div className="font-medium text-slate-900">{ticket.subject}</div>
+                              <div className="mt-1 max-w-md truncate text-xs text-slate-500">
+                                {ticket.message}
+                              </div>
+                              {ticket.errorText ? (
+                                <div className="mt-1 text-xs text-red-700">Has error text</div>
+                              ) : null}
+                            </td>
+                            <td className="px-3 py-2">{ticket.category}</td>
+                            <td className="px-3 py-2">{ticket.priority}</td>
+                            <td className="px-3 py-2">Open</td>
+                            <td className="px-3 py-2">
+                              {data.currentUser.isSystemOwner ? (
+                                <button
+                                  type="button"
+                                  onClick={() => updateSupportTicketStatus(ticket.id, 'CLOSED')}
+                                  disabled={updatingSupportTicketId === ticket.id}
+                                  className="rounded-lg border px-3 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Close
+                                </button>
+                              ) : (
+                                <span className="text-xs text-slate-500">Logged</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="border-t bg-slate-50">
+                          <td colSpan={7} className="px-3 py-2 font-semibold text-slate-900">
+                            Closed Tickets ({closedSupportTickets.length})
+                          </td>
+                        </tr>
+                        {closedSupportTickets.map((ticket) => (
+                          <tr key={ticket.id} className="border-t align-top text-slate-600">
+                            <td className="px-3 py-2">{formatDate(ticket.createdAt)}</td>
+                            <td className="px-3 py-2">{ticket.restaurant.name}</td>
+                            <td className="px-3 py-2">
+                              <div className="font-medium">{ticket.subject}</div>
+                              <div className="mt-1 max-w-md truncate text-xs text-slate-500">
+                                {ticket.message}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">{ticket.category}</td>
+                            <td className="px-3 py-2">{ticket.priority}</td>
+                            <td className="px-3 py-2">Closed</td>
+                            <td className="px-3 py-2">
+                              {data.currentUser.isSystemOwner ? (
+                                <button
+                                  type="button"
+                                  onClick={() => updateSupportTicketStatus(ticket.id, 'OPEN')}
+                                  disabled={updatingSupportTicketId === ticket.id}
+                                  className="rounded-lg border px-3 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Reopen
+                                </button>
+                              ) : (
+                                <span className="text-xs text-slate-500">Logged</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </section>
 

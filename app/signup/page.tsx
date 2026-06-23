@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import CopyableError from '@/app/components/CopyableError'
 import { TurnstileWidget } from '@/app/components/TurnstileWidget'
 import { createClient } from '@/lib/supabase'
 import { verifyTurnstileBeforeSubmit } from '@/lib/turnstile-client'
@@ -104,9 +105,7 @@ export default function SignupPage() {
         </p>
 
         {error ? (
-          <div className="mt-5 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
+          <CopyableError message={error} className="mt-5" />
         ) : null}
 
         {message ? (

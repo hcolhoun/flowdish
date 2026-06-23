@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import CopyableError from '@/app/components/CopyableError'
 
 type Forecast = {
   id: string
@@ -107,9 +108,7 @@ export default function PrepPlanPage() {
         <h1 className="text-3xl font-semibold text-slate-900">Prep Plan</h1>
 
         {error ? (
-          <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 whitespace-pre-wrap">
-            {error}
-          </div>
+          <CopyableError message={error} className="mt-4" />
         ) : null}
 
         <div className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">

@@ -3,6 +3,7 @@
 import Image from 'next/image'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import CopyableError from '@/app/components/CopyableError'
 import { TurnstileWidget } from '@/app/components/TurnstileWidget'
 import { verifyTurnstileBeforeSubmit } from '@/lib/turnstile-client'
 import { createClient } from '@/lib/supabase'
@@ -96,9 +97,7 @@ export default function LoginPage() {
         </div>
 
         {error ? (
-          <div className="mt-4 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
+          <CopyableError message={error} className="mt-4" />
         ) : null}
 
         {message ? (
