@@ -32,6 +32,27 @@ function addDays(date: Date, days: number) {
   return next
 }
 
+function validEmail(value: string | null | undefined) {
+  return Boolean(value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))
+}
+
+function replyToEmail(
+  memberships: Array<{ email: string | null; role: string }>,
+  fallbackEmail: string | null
+) {
+  const preferredRoles = ['OWNER', 'ADMIN']
+
+  for (const role of preferredRoles) {
+    const membership = memberships.find(
+      (member) => member.role === role && validEmail(member.email)
+    )
+
+    if (membership?.email) return membership.email
+  }
+
+  return validEmail(fallbackEmail) ? fallbackEmail : null
+}
+
 export async function sendSupplierCreditFollowUp({
   claimId,
 }: SendSupplierCreditFollowUpOptions) {
@@ -48,6 +69,12 @@ export async function sendSupplierCreditFollowUp({
       restaurant: {
         select: {
           name: true,
+          memberships: {
+            select: {
+              email: true,
+              role: true,
+            },
+          },
         },
       },
     },
@@ -81,6 +108,10 @@ export async function sendSupplierCreditFollowUp({
   }
 
   const followUpNumber = claim.followUpCount + 1
+  const supplierReplyTo = replyToEmail(
+    claim.restaurant.memberships,
+    claim.createdByEmail
+  )
   const subject = `Credit follow-up: ${claim.productName}${
     claim.docketNumber ? ` - docket ${claim.docketNumber}` : ''
   }`
@@ -116,7 +147,7 @@ export async function sendSupplierCreditFollowUp({
       from,
       to: [config.supplierEmail],
       ...(config.ccEmail ? { cc: [config.ccEmail] } : {}),
-      ...(claim.createdByEmail ? { reply_to: claim.createdByEmail } : {}),
+      ...(supplierReplyTo ? { reply_to: supplierReplyTo } : {}),
       subject,
       text,
       tags: [

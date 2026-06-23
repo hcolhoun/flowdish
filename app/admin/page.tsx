@@ -1691,6 +1691,7 @@ export default function AdminPage() {
                   </h2>
                   <p className="mt-1 text-sm text-slate-600">
                     Manage items charged but not received and supplier reminder emails.
+                    Supplier replies go to the restaurant Head Chef/Owner email.
                   </p>
                 </div>
                 <button
