@@ -265,8 +265,10 @@ Extract only sold menu item rows. Ignore payment totals, tax/VAT totals, tender 
 
 Also extract modifier/add-on/removal rows into modifierRows, not normal sales rows. Examples:
 - Extra cheese, add cheese, extra sauce, extra bacon => modifierType EXTRA.
-- No sauce, without sauce, remove onions, no cheese => modifierType REMOVE.
+- No sauce, without sauce, remove onions, no cheese, no baby turnip => modifierType REMOVE.
 - Modifier rows may be L1, L2, or L3 stock corrections. They must be reviewed by a human before saving.
+- Removal/no rows are stock-only corrections. They do not reduce the dish sale quantity, revenue, or selling price.
+- If a POS lists "Beef Bourguignon" plus "No baby turnip", keep Beef Bourguignon as a normal L1 sale row and put "No baby turnip" in modifierRows with modifierType REMOVE.
 
 Fields:
 - salesDate: ISO date YYYY-MM-DD if visible, else null.

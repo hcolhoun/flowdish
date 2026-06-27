@@ -532,7 +532,7 @@ export default function PlanningPage() {
         ) : null}
 
         {message ? (
-          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+          <div className="sticky top-4 z-40 mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700 shadow-sm">
             {message}
           </div>
         ) : null}
@@ -770,63 +770,6 @@ export default function PlanningPage() {
             </section>
 
             <section className="rounded-2xl border bg-white shadow-sm">
-              <div className="flex flex-col gap-3 border-b px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-xl font-semibold text-slate-900">
-                    Summary List for Ordering
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Missing L3 ingredients grouped by supplier, ready to copy into an email.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={copyOrderingSummary}
-                  disabled={!orderingSummaryText}
-                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Copy List
-                </button>
-              </div>
-
-              <div className="px-6 py-5">
-                {orderingSummary.length === 0 ? (
-                  <div className="rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800">
-                    No missing L3 ingredients to order for this forecast.
-                  </div>
-                ) : (
-                  <div className="space-y-5">
-                    {orderingSummary.map((group) => (
-                      <div key={group.supplier} className="rounded-xl border bg-slate-50 p-4">
-                        <h3 className="font-semibold text-slate-900">{group.supplier}</h3>
-                        <ul className="mt-3 space-y-2 text-sm text-slate-800">
-                          {group.rows.map((row) => (
-                            <li key={`${group.supplier}-${row.itemId}-${row.unitType}`}>
-                              {row.name}{' '}
-                              <span className="text-slate-500">
-                                ({row.supplierSku ? `Supplier SKU ${row.supplierSku}` : `SKU ${row.sku}`})
-                              </span>
-                              : {formatNumber(row.shortfallQty)} {row.unitType}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {orderingSummaryText ? (
-                  <textarea
-                    value={orderingSummaryText}
-                    readOnly
-                    className="mt-5 h-56 w-full rounded-xl border bg-white px-3 py-2 font-mono text-sm text-slate-800"
-                  />
-                ) : null}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border bg-white shadow-sm">
               <div className="border-b px-6 py-4">
                 <h2 className="text-xl font-semibold text-slate-900">L2 Prep List</h2>
                 <p className="mt-1 text-sm text-slate-600">
@@ -1054,6 +997,67 @@ export default function PlanningPage() {
                     )}
                   </tbody>
                 </table>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border bg-white shadow-sm">
+              <div className="flex flex-col gap-3 border-b px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">
+                    Summary List for Ordering
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Missing L3 ingredients grouped by supplier, ready to copy into an email.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={copyOrderingSummary}
+                  disabled={!orderingSummaryText}
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Copy List
+                </button>
+              </div>
+
+              <div className="px-6 py-5">
+                {orderingSummary.length === 0 ? (
+                  <div className="rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800">
+                    No missing L3 ingredients to order for this forecast.
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    {orderingSummary.map((group) => (
+                      <div key={group.supplier} className="rounded-xl border bg-slate-50 p-4">
+                        <h3 className="font-semibold text-slate-900">{group.supplier}</h3>
+                        <ul className="mt-3 space-y-2 text-sm text-slate-800">
+                          {group.rows.map((row) => (
+                            <li key={`${group.supplier}-${row.itemId}-${row.unitType}`}>
+                              {row.name}{' '}
+                              <span className="text-slate-500">
+                                (
+                                {row.supplierSku
+                                  ? `Supplier SKU ${row.supplierSku}`
+                                  : `SKU ${row.sku}`}
+                                )
+                              </span>
+                              : {formatNumber(row.shortfallQty)} {row.unitType}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {orderingSummaryText ? (
+                  <textarea
+                    value={orderingSummaryText}
+                    readOnly
+                    className="mt-5 h-56 w-full rounded-xl border bg-white px-3 py-2 font-mono text-sm text-slate-800"
+                  />
+                ) : null}
               </div>
             </section>
           </div>

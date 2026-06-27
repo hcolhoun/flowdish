@@ -22,7 +22,7 @@ export default function CopyableError({ message, className = '' }: CopyableError
 
   return (
     <div
-      className={`flex flex-col gap-3 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 sm:flex-row sm:items-start sm:justify-between ${className}`}
+      className={`sticky top-4 z-40 flex flex-col gap-3 whitespace-pre-wrap rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-sm sm:flex-row sm:items-start sm:justify-between ${className}`}
     >
       <div className="min-w-0 flex-1">{message}</div>
       <button

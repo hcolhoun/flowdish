@@ -419,7 +419,7 @@ export default function ColdStoragePage() {
         ) : null}
 
         {message ? (
-          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800">
+          <div className="sticky top-4 z-40 mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800 shadow-sm">
             {message}
           </div>
         ) : null}

@@ -429,6 +429,7 @@ export default function BomPage() {
   const [prepTimeAssumptions, setPrepTimeAssumptions] = useState('')
   const [calculatingPrepTime, setCalculatingPrepTime] = useState(false)
   const [confirmingPrepTime, setConfirmingPrepTime] = useState(false)
+  const [savedBomSignature, setSavedBomSignature] = useState('')
 
   const [l0ToL1Rows, setL0ToL1Rows] = useState<ChildRow[]>([])
   const [l1ToL2Rows, setL1ToL2Rows] = useState<ChildRow[]>([])
@@ -480,6 +481,78 @@ export default function BomPage() {
   function getQty(value: string) {
     const number = Number(value)
     return Number.isFinite(number) ? number : 0
+  }
+
+  function normaliseRows(rows: ChildRow[]) {
+    return rows.map((row) => ({
+      childId: row.childId,
+      qty: row.qty,
+    }))
+  }
+
+  function bomSignature(input: {
+    parentId: string
+    itemType: ItemType | ''
+    parentSellingPrice: string
+    parentStandardBatchOutput: string
+    prepSetupMinutes: string
+    prepActiveMinutes: string
+    prepCleanupMinutes: string
+    prepPassiveMinutes: string
+    prepTimeAssumptions: string
+    l0ToL1Rows: ChildRow[]
+    l1ToL2Rows: ChildRow[]
+    l1ToL3Rows: ChildRow[]
+    l2ToL2Rows: ChildRow[]
+    l2ToL3Rows: ChildRow[]
+  }) {
+    return JSON.stringify({
+      parentId: input.parentId,
+      itemType: input.itemType,
+      parentSellingPrice: input.parentSellingPrice,
+      parentStandardBatchOutput: input.parentStandardBatchOutput,
+      prepSetupMinutes: input.prepSetupMinutes,
+      prepActiveMinutes: input.prepActiveMinutes,
+      prepCleanupMinutes: input.prepCleanupMinutes,
+      prepPassiveMinutes: input.prepPassiveMinutes,
+      prepTimeAssumptions: input.prepTimeAssumptions,
+      l0ToL1Rows: normaliseRows(input.l0ToL1Rows),
+      l1ToL2Rows: normaliseRows(input.l1ToL2Rows),
+      l1ToL3Rows: normaliseRows(input.l1ToL3Rows),
+      l2ToL2Rows: normaliseRows(input.l2ToL2Rows),
+      l2ToL3Rows: normaliseRows(input.l2ToL3Rows),
+    })
+  }
+
+  function parentValuesForSignature(item: Item | null) {
+    return {
+      parentSellingPrice:
+        item?.sellingPrice === null || item?.sellingPrice === undefined
+          ? ''
+          : String(item.sellingPrice),
+      parentStandardBatchOutput:
+        item?.standardBatchOutput === null || item?.standardBatchOutput === undefined
+          ? ''
+          : String(item.standardBatchOutput),
+      prepSetupMinutes:
+        item?.prepSetupMinutes === null || item?.prepSetupMinutes === undefined
+          ? ''
+          : String(item.prepSetupMinutes),
+      prepActiveMinutes:
+        item?.prepActiveMinutes === null || item?.prepActiveMinutes === undefined
+          ? ''
+          : String(item.prepActiveMinutes),
+      prepCleanupMinutes:
+        item?.prepCleanupMinutes === null || item?.prepCleanupMinutes === undefined
+          ? ''
+          : String(item.prepCleanupMinutes),
+      prepPassiveMinutes:
+        item?.prepPassiveMinutes === null || item?.prepPassiveMinutes === undefined
+          ? ''
+          : String(item.prepPassiveMinutes),
+      prepTimeAssumptions:
+        Array.isArray(item?.prepTimeAssumptions) ? item.prepTimeAssumptions.join('\n') : '',
+    }
   }
 
   async function loadItems() {
@@ -864,6 +937,46 @@ export default function BomPage() {
     }
   }, [parentItem, l1ToL2Rows, l1ToL3Rows, costingData, items, parentSellingPrice])
 
+  const currentBomSignature = useMemo(
+    () =>
+      bomSignature({
+        parentId,
+        itemType: parentItem?.itemType ?? '',
+        parentSellingPrice,
+        parentStandardBatchOutput,
+        prepSetupMinutes,
+        prepActiveMinutes,
+        prepCleanupMinutes,
+        prepPassiveMinutes,
+        prepTimeAssumptions,
+        l0ToL1Rows,
+        l1ToL2Rows,
+        l1ToL3Rows,
+        l2ToL2Rows,
+        l2ToL3Rows,
+      }),
+    [
+      parentId,
+      parentItem?.itemType,
+      parentSellingPrice,
+      parentStandardBatchOutput,
+      prepSetupMinutes,
+      prepActiveMinutes,
+      prepCleanupMinutes,
+      prepPassiveMinutes,
+      prepTimeAssumptions,
+      l0ToL1Rows,
+      l1ToL2Rows,
+      l1ToL3Rows,
+      l2ToL2Rows,
+      l2ToL3Rows,
+    ]
+  )
+  const hasUnsavedBomChanges =
+    Boolean(parentItem) && Boolean(savedBomSignature) && currentBomSignature !== savedBomSignature
+  const unsavedBomMessage =
+    'You have unsaved BOM changes. Save the BOM before leaving or changing parent item.'
+
   useEffect(() => {
     if (!parentItem) {
       setL0ToL1Rows([])
@@ -871,6 +984,7 @@ export default function BomPage() {
       setL1ToL3Rows([])
       setL2ToL2Rows([])
       setL2ToL3Rows([])
+      setSavedBomSignature('')
       return
     }
 
@@ -889,17 +1003,28 @@ export default function BomPage() {
 
           if (!res.ok) throw new Error(data?.error || 'Failed to load L0 → L1 BOM')
 
-          setL0ToL1Rows(
-            data.map((row: any) => ({
-              childId: row.l1ItemId,
-              qty: String(row.qty),
-            }))
-          )
+          const nextL0ToL1Rows = data.map((row: any) => ({
+            childId: row.l1ItemId,
+            qty: String(row.qty),
+          }))
 
+          setL0ToL1Rows(nextL0ToL1Rows)
           setL1ToL2Rows([])
           setL1ToL3Rows([])
           setL2ToL2Rows([])
           setL2ToL3Rows([])
+          setSavedBomSignature(
+            bomSignature({
+              parentId: parentItem.id,
+              itemType: parentItem.itemType,
+              ...parentValuesForSignature(parentItem),
+              l0ToL1Rows: nextL0ToL1Rows,
+              l1ToL2Rows: [],
+              l1ToL3Rows: [],
+              l2ToL2Rows: [],
+              l2ToL3Rows: [],
+            })
+          )
         }
 
         if (parentItem.itemType === 'L1') {
@@ -914,23 +1039,33 @@ export default function BomPage() {
           if (!l1l2Res.ok) throw new Error(l1l2Data?.error || 'Failed to load L1 → L2 BOM')
           if (!l1l3Res.ok) throw new Error(l1l3Data?.error || 'Failed to load L1 → L3 BOM')
 
-          setL1ToL2Rows(
-            l1l2Data.map((row: any) => ({
-              childId: row.l2ItemId,
-              qty: String(row.qty),
-            }))
-          )
+          const nextL1ToL2Rows = l1l2Data.map((row: any) => ({
+            childId: row.l2ItemId,
+            qty: String(row.qty),
+          }))
 
-          setL1ToL3Rows(
-            l1l3Data.map((row: any) => ({
-              childId: row.l3ItemId,
-              qty: String(row.qty),
-            }))
-          )
+          const nextL1ToL3Rows = l1l3Data.map((row: any) => ({
+            childId: row.l3ItemId,
+            qty: String(row.qty),
+          }))
 
+          setL1ToL2Rows(nextL1ToL2Rows)
+          setL1ToL3Rows(nextL1ToL3Rows)
           setL0ToL1Rows([])
           setL2ToL2Rows([])
           setL2ToL3Rows([])
+          setSavedBomSignature(
+            bomSignature({
+              parentId: parentItem.id,
+              itemType: parentItem.itemType,
+              ...parentValuesForSignature(parentItem),
+              l0ToL1Rows: [],
+              l1ToL2Rows: nextL1ToL2Rows,
+              l1ToL3Rows: nextL1ToL3Rows,
+              l2ToL2Rows: [],
+              l2ToL3Rows: [],
+            })
+          )
         }
 
         if (parentItem.itemType === 'L2') {
@@ -945,23 +1080,33 @@ export default function BomPage() {
           if (!l2l2Res.ok) throw new Error(l2l2Data?.error || 'Failed to load L2 → L2 BOM')
           if (!l2l3Res.ok) throw new Error(l2l3Data?.error || 'Failed to load L2 → L3 BOM')
 
-          setL2ToL2Rows(
-            l2l2Data.map((row: any) => ({
-              childId: row.childL2ItemId,
-              qty: String(row.qty),
-            }))
-          )
+          const nextL2ToL2Rows = l2l2Data.map((row: any) => ({
+            childId: row.childL2ItemId,
+            qty: String(row.qty),
+          }))
 
-          setL2ToL3Rows(
-            l2l3Data.map((row: any) => ({
-              childId: row.l3ItemId,
-              qty: String(row.qty),
-            }))
-          )
+          const nextL2ToL3Rows = l2l3Data.map((row: any) => ({
+            childId: row.l3ItemId,
+            qty: String(row.qty),
+          }))
 
+          setL2ToL2Rows(nextL2ToL2Rows)
+          setL2ToL3Rows(nextL2ToL3Rows)
           setL0ToL1Rows([])
           setL1ToL2Rows([])
           setL1ToL3Rows([])
+          setSavedBomSignature(
+            bomSignature({
+              parentId: parentItem.id,
+              itemType: parentItem.itemType,
+              ...parentValuesForSignature(parentItem),
+              l0ToL1Rows: [],
+              l1ToL2Rows: [],
+              l1ToL3Rows: [],
+              l2ToL2Rows: nextL2ToL2Rows,
+              l2ToL3Rows: nextL2ToL3Rows,
+            })
+          )
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error')
@@ -970,6 +1115,64 @@ export default function BomPage() {
       }
     })()
   }, [parentItem?.id, parentItem?.itemType])
+
+  useEffect(() => {
+    if (!hasUnsavedBomChanges) return
+
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [hasUnsavedBomChanges, unsavedBomMessage])
+
+  useEffect(() => {
+    if (!hasUnsavedBomChanges) return
+
+    function handleDocumentClick(event: MouseEvent) {
+      const target = event.target as HTMLElement | null
+      const anchor = target?.closest('a[href]') as HTMLAnchorElement | null
+
+      if (!anchor || anchor.target || anchor.hasAttribute('download')) return
+
+      const url = new URL(anchor.href, window.location.href)
+
+      if (url.origin !== window.location.origin) return
+      if (
+        url.pathname === window.location.pathname &&
+        url.search === window.location.search &&
+        url.hash
+      ) {
+        return
+      }
+
+      if (!window.confirm(unsavedBomMessage)) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+    }
+
+    document.addEventListener('click', handleDocumentClick, true)
+    return () => document.removeEventListener('click', handleDocumentClick, true)
+  }, [hasUnsavedBomChanges, unsavedBomMessage])
+
+  function confirmDiscardBomChanges() {
+    return !hasUnsavedBomChanges || window.confirm(unsavedBomMessage)
+  }
+
+  function handleParentChange(nextParentId: string) {
+    if (nextParentId === parentId) return
+    if (!confirmDiscardBomChanges()) return
+
+    setSavedBomSignature('')
+    setParentId(nextParentId)
+    setExpandedL1Ids([])
+    setExpandedL1BomById({})
+    setMessage('')
+    setError('')
+  }
 
   function addRow(setter: React.Dispatch<React.SetStateAction<ChildRow[]>>) {
     setter((prev) => [...prev, { childId: '', qty: '1' }])
@@ -1158,6 +1361,7 @@ export default function BomPage() {
       }
 
       await Promise.all([loadItems(), loadCosting()])
+      setSavedBomSignature(currentBomSignature)
 
       setMessage(
         buildStatus === 'BUILT'
@@ -1228,6 +1432,7 @@ export default function BomPage() {
       if (!l1l3Res.ok) throw new Error(l1l3Data?.error || 'Failed to save L1 → L3')
 
       await Promise.all([loadItems(), loadCosting()])
+      setSavedBomSignature(currentBomSignature)
 
       setMessage(
         buildStatus === 'BUILT'
@@ -1295,6 +1500,7 @@ export default function BomPage() {
       if (!res.ok) throw new Error(data?.error || 'Failed to confirm prep time')
 
       await loadItems()
+      setSavedBomSignature(currentBomSignature)
       setMessage('Prep time confirmed. This L2 can now be marked as built.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -1313,6 +1519,9 @@ export default function BomPage() {
       if (buildStatus === 'BUILT') {
         await patchParentItem('BUILT')
         await loadItems()
+        if (!hasUnsavedBomChanges) {
+          setSavedBomSignature(currentBomSignature)
+        }
         setMessage('L2 marked as built with a confirmed prep time.')
         return
       }
@@ -1384,6 +1593,7 @@ export default function BomPage() {
       if (!l2l3Res.ok) throw new Error(l2l3Data?.error || 'Failed to save L2 → L3')
 
       await Promise.all([loadItems(), loadCosting()])
+      setSavedBomSignature(currentBomSignature)
 
       setMessage(
         `L2 BOM saved. Showing ${payloadL2L2.rows.length} child L2 row(s) and ${payloadL2L3.rows.length} L3 row(s). Calculate or recalculate prep time before marking it as built.`
@@ -1417,7 +1627,7 @@ export default function BomPage() {
         ) : null}
 
         {message ? (
-          <div className="mt-4 whitespace-pre-wrap rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+          <div className="sticky top-4 z-40 mt-4 whitespace-pre-wrap rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700 shadow-sm">
             {message}
           </div>
         ) : null}
@@ -1429,13 +1639,7 @@ export default function BomPage() {
 
           <select
             value={parentId}
-            onChange={(e) => {
-              setParentId(e.target.value)
-              setExpandedL1Ids([])
-              setExpandedL1BomById({})
-              setMessage('')
-              setError('')
-            }}
+            onChange={(e) => handleParentChange(e.target.value)}
             className="w-full rounded-xl border px-3 py-2"
           >
             <option value="">Select parent item</option>
@@ -1447,6 +1651,12 @@ export default function BomPage() {
               </option>
             ))}
           </select>
+
+          {hasUnsavedBomChanges ? (
+            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
+              Unsaved BOM changes. Save before changing tab or parent item.
+            </div>
+          ) : null}
         </div>
 
         {loading ? <div className="mt-6 text-sm text-slate-700">Loading BOM…</div> : null}

@@ -532,7 +532,7 @@ export default function SalesPage() {
         ) : null}
 
         {message ? (
-          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+          <div className="sticky top-4 z-40 mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700 shadow-sm">
             {message}
           </div>
         ) : null}
@@ -741,7 +741,8 @@ export default function SalesPage() {
                   <div className="border-b bg-blue-50 px-6 py-3">
                     <h3 className="font-semibold text-slate-900">Extras / Subtractions Review</h3>
                     <p className="mt-1 text-xs text-slate-600">
-                      Review POS modifiers separately before stock is adjusted.
+                      Review POS modifiers separately before stock is adjusted. Removed/no items
+                      return stock only; they do not reduce the dish selling price.
                     </p>
                   </div>
 

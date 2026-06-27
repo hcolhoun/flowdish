@@ -102,6 +102,7 @@ type ReviewRow = {
   matchReason: string
   notes: string
   needsReview: boolean
+  matchedSupplierProductId: string | null
 }
 
 type EditingDelivery = {
@@ -305,6 +306,103 @@ export default function DeliveriesPage() {
   function formatUnitPrice(value: number | null | undefined, unitType?: string) {
     if (value === null || value === undefined) return ''
     return `${money(value, 5)} / ${unitType || 'unit'}`
+  }
+
+  function supplierProductForReviewRow(row: ReviewRow) {
+    if (row.matchedSupplierProductId) {
+      const exact = supplierProducts.find(
+        (product) => product.id === row.matchedSupplierProductId
+      )
+      if (exact) return exact
+    }
+
+    const supplier = row.supplier.trim().toLowerCase()
+    const supplierSku = row.supplierSku.trim().toLowerCase()
+
+    if (supplierSku && supplier) {
+      const exactSupplierSku = supplierProducts.find(
+        (product) =>
+          product.supplierSku?.toLowerCase() === supplierSku &&
+          product.supplier.toLowerCase() === supplier
+      )
+      if (exactSupplierSku) return exactSupplierSku
+    }
+
+    if (supplierSku) {
+      const skuMatch = supplierProducts.find(
+        (product) => product.supplierSku?.toLowerCase() === supplierSku
+      )
+      if (skuMatch) return skuMatch
+    }
+
+    if (row.selectedItemId) {
+      const linkedProducts = supplierProductsByItemId.get(row.selectedItemId) ?? []
+      if (supplier) {
+        const supplierMatch = linkedProducts.find(
+          (product) => product.supplier.toLowerCase() === supplier
+        )
+        if (supplierMatch) return supplierMatch
+      }
+
+      return linkedProducts[0] ?? null
+    }
+
+    return null
+  }
+
+  function priceCheckForReviewRow(row: ReviewRow) {
+    const product = supplierProductForReviewRow(row)
+    const qtyNumber = Number(row.qty)
+    const actualTotal = Number(row.totalCost)
+
+    if (!product || !Number.isFinite(actualTotal) || actualTotal <= 0) {
+      return null
+    }
+
+    let expectedTotal: number | null = null
+    let basis = ''
+
+    if (
+      product.unitPrice !== null &&
+      product.unitPrice !== undefined &&
+      Number.isFinite(product.unitPrice) &&
+      Number.isFinite(qtyNumber) &&
+      qtyNumber > 0
+    ) {
+      expectedTotal = product.unitPrice * qtyNumber
+      basis = `${money(product.unitPrice, 5)} / ${row.unitType || 'unit'}`
+    } else if (
+      product.packPrice !== null &&
+      product.packPrice !== undefined &&
+      Number.isFinite(product.packPrice)
+    ) {
+      expectedTotal =
+        row.unitType === 'each' && Number.isFinite(qtyNumber) && qtyNumber > 0
+          ? product.packPrice * qtyNumber
+          : product.packPrice
+      basis =
+        row.unitType === 'each' && Number.isFinite(qtyNumber) && qtyNumber > 0
+          ? `${money(product.packPrice, 2)} pack x ${qtyNumber}`
+          : `${money(product.packPrice, 2)} pack`
+    }
+
+    if (expectedTotal === null || expectedTotal <= 0) {
+      return null
+    }
+
+    const difference = actualTotal - expectedTotal
+    const tolerance = Math.max(0.1, expectedTotal * 0.02)
+    const percent = (difference / expectedTotal) * 100
+    const hasWarning = Math.abs(difference) > tolerance
+
+    return {
+      product,
+      expectedTotal,
+      difference,
+      percent,
+      basis,
+      hasWarning,
+    }
   }
 
   function toInputValue(value: string | number | null | undefined) {
@@ -609,7 +707,13 @@ export default function DeliveriesPage() {
 
   function applyReviewSupplierToAllRows() {
     const nextSupplier = reviewSupplier.trim()
-    setReviewRows((rows) => rows.map((row) => ({ ...row, supplier: nextSupplier })))
+    setReviewRows((rows) =>
+      rows.map((row) => ({
+        ...row,
+        supplier: nextSupplier,
+        matchedSupplierProductId: null,
+      }))
+    )
   }
 
   function selectReviewItem(rowId: string, item: Item) {
@@ -618,6 +722,7 @@ export default function DeliveriesPage() {
       itemSearch: `${item.name} [${item.sku}]`,
       unitType: item.unitType,
       dropdownOpen: false,
+      matchedSupplierProductId: null,
     })
   }
 
@@ -626,6 +731,7 @@ export default function DeliveriesPage() {
       selectedItemId: '',
       itemSearch: '',
       dropdownOpen: false,
+      matchedSupplierProductId: null,
     })
   }
 
@@ -831,6 +937,7 @@ export default function DeliveriesPage() {
           matchReason: row.matchReason || '',
           notes: row.notes || '',
           needsReview: Boolean(row.needsReview),
+          matchedSupplierProductId: row.matchedSupplierProductId,
         }
       })
 
@@ -981,7 +1088,7 @@ export default function DeliveriesPage() {
         ) : null}
 
         {message ? (
-          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+          <div className="sticky top-4 z-40 mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700 shadow-sm">
             {message}
           </div>
         ) : null}
@@ -1128,7 +1235,7 @@ export default function DeliveriesPage() {
             </div>
 
             <div className="max-h-[75vh] overflow-auto">
-              <table className="min-w-[1950px] w-full text-left">
+              <table className="min-w-[2120px] w-full text-left">
                 <thead className="bg-slate-100 text-sm">
                   <tr>
                     <th className="px-4 py-3 text-slate-800">Save</th>
@@ -1139,6 +1246,7 @@ export default function DeliveriesPage() {
                     <th className="px-4 py-3 text-slate-800">Qty</th>
                     <th className="px-4 py-3 text-slate-800">Unit</th>
                     <th className="px-4 py-3 text-slate-800">Total Cost</th>
+                    <th className="px-4 py-3 text-slate-800">Price Check</th>
                     <th className="px-4 py-3 text-slate-800">VAT %</th>
                     <th className="px-4 py-3 text-slate-800">VAT Treatment</th>
                     <th className="px-4 py-3 text-slate-800">Confidence</th>
@@ -1152,7 +1260,9 @@ export default function DeliveriesPage() {
                       (item) => item.id === row.selectedItemId
                     )
                     const dropdownItems = filteredReviewItems(row.itemSearch)
-                    const rowNeedsReview = row.needsReview || !selectedReviewItem
+                    const priceCheck = priceCheckForReviewRow(row)
+                    const rowNeedsReview =
+                      row.needsReview || !selectedReviewItem || Boolean(priceCheck?.hasWarning)
 
                     return (
                       <tr
@@ -1196,7 +1306,10 @@ export default function DeliveriesPage() {
                           <input
                             value={row.supplier}
                             onChange={(e) =>
-                              updateReviewRow(row.rowId, { supplier: e.target.value })
+                              updateReviewRow(row.rowId, {
+                                supplier: e.target.value,
+                                matchedSupplierProductId: null,
+                              })
                             }
                             className="w-32 rounded-lg border px-2 py-1 text-sm"
                           />
@@ -1206,7 +1319,10 @@ export default function DeliveriesPage() {
                           <input
                             value={row.supplierSku}
                             onChange={(e) =>
-                              updateReviewRow(row.rowId, { supplierSku: e.target.value })
+                              updateReviewRow(row.rowId, {
+                                supplierSku: e.target.value,
+                                matchedSupplierProductId: null,
+                              })
                             }
                             className="w-32 rounded-lg border px-2 py-1 text-sm"
                           />
@@ -1337,6 +1453,31 @@ export default function DeliveriesPage() {
                               {money(Number(row.totalCost) / Number(row.qty), 5)} / {row.unitType}
                             </div>
                           ) : null}
+                        </td>
+
+                        <td className="px-4 py-3">
+                          {!priceCheck ? (
+                            <div className="w-44 text-xs text-slate-500">
+                              No saved supplier price to compare
+                            </div>
+                          ) : priceCheck.hasWarning ? (
+                            <div className="w-48 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                              <div className="font-semibold">Price differs</div>
+                              <div>Expected {money(priceCheck.expectedTotal, 2)}</div>
+                              <div>Scanned {money(Number(row.totalCost), 2)}</div>
+                              <div>
+                                Diff {money(priceCheck.difference, 2)} (
+                                {priceCheck.percent.toFixed(1)}%)
+                              </div>
+                              <div className="mt-1 text-amber-800">{priceCheck.basis}</div>
+                            </div>
+                          ) : (
+                            <div className="w-44 rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-xs text-green-800">
+                              <div className="font-semibold">Price OK</div>
+                              <div>Expected {money(priceCheck.expectedTotal, 2)}</div>
+                              <div>{priceCheck.basis}</div>
+                            </div>
+                          )}
                         </td>
 
                         <td className="px-4 py-3">

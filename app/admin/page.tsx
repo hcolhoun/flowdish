@@ -1068,7 +1068,7 @@ export default function AdminPage() {
         ) : null}
 
         {message ? (
-          <div className="mt-6 whitespace-pre-wrap rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+          <div className="sticky top-4 z-40 mt-6 whitespace-pre-wrap rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700 shadow-sm">
             {message}
           </div>
         ) : null}

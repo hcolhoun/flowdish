@@ -112,6 +112,7 @@ export default function ItemsPage() {
   const [loading, setLoading] = useState(false)
   const [costingLoading, setCostingLoading] = useState(false)
   const [bulkCalculatingPrepTime, setBulkCalculatingPrepTime] = useState(false)
+  const [copyingItemId, setCopyingItemId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -414,6 +415,41 @@ export default function ItemsPage() {
     }
   }
 
+  async function copyItem(item: Item) {
+    setError('')
+    setMessage('')
+
+    const confirmed = window.confirm(
+      `Copy ${item.name} [${item.sku}] to a new ${item.itemType} item?\n\nThe BOM and SOP will be copied, but the new item will stay unbuilt until reviewed.`
+    )
+    if (!confirmed) return
+
+    try {
+      setCopyingItemId(item.id)
+      const res = await fetch('/api/items/copy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceItemId: item.id }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to copy item')
+      }
+
+      setMessage(`Copied to ${data.item.name} [${data.item.sku}]. Open it in BOM Builder to make changes.`)
+      setTypeFilter(data.item.itemType)
+      setSearch(data.item.sku)
+      scrollToMessage()
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+      scrollToMessage()
+    } finally {
+      setCopyingItemId(null)
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-7xl">
@@ -441,7 +477,7 @@ export default function ItemsPage() {
           ) : null}
 
           {message ? (
-            <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+            <div className="sticky top-4 z-40 mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700 shadow-sm">
               {message}
             </div>
           ) : null}
@@ -720,6 +756,17 @@ export default function ItemsPage() {
                                   className="rounded-lg border px-3 py-1 text-sm text-slate-800 hover:bg-slate-50"
                                 >
                                   {expanded ? 'Hide Costing' : 'View Costing'}
+                                </button>
+                              ) : null}
+
+                              {item.itemType === 'L1' || item.itemType === 'L2' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => copyItem(item)}
+                                  disabled={copyingItemId === item.id}
+                                  className="rounded-lg border border-slate-300 px-3 py-1 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {copyingItemId === item.id ? 'Copying...' : 'Copy to New'}
                                 </button>
                               ) : null}
 
