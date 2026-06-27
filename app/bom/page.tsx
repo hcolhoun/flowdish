@@ -1480,7 +1480,7 @@ export default function BomPage() {
     })
   }
 
-  async function saveExpandedL2(l2ItemId: string) {
+  async function saveExpandedL2(l2ItemId: string, buildStatus?: BuildStatus) {
     const expandedBom = expandedL2BomById[l2ItemId]
     if (!expandedBom) return
 
@@ -1514,6 +1514,7 @@ export default function BomPage() {
           standardBatchOutput: expandedBom.standardBatchOutput
             ? Number(expandedBom.standardBatchOutput)
             : null,
+          ...(buildStatus ? { buildStatus } : {}),
         }),
       })
       const itemData = await safeJson(itemRes)
@@ -1571,7 +1572,10 @@ export default function BomPage() {
         ...current,
         saving: false,
         error: '',
-        message: `L2 BOM saved. ${payloadL2L2.rows.length} child L2 row(s), ${payloadL2L3.rows.length} L3 row(s).`,
+        message:
+          buildStatus === 'BUILT'
+            ? `L2 BOM saved as built. ${payloadL2L2.rows.length} child L2 row(s), ${payloadL2L3.rows.length} L3 row(s).`
+            : `L2 BOM saved. ${payloadL2L2.rows.length} child L2 row(s), ${payloadL2L3.rows.length} L3 row(s).`,
       }))
     } catch (err) {
       setExpandedL2Bom(l2ItemId, (current) => ({
@@ -1916,6 +1920,189 @@ export default function BomPage() {
     }
   }
 
+  function renderInlineL2Editor(l2Item: Item, contextText: string) {
+    const l2ExpandedBom = expandedL2BomById[l2Item.id]
+
+    return (
+      <div className="rounded-2xl border bg-slate-50 p-4">
+        {l2ExpandedBom?.loading ? (
+          <div className="rounded-xl border bg-white px-4 py-3 text-sm text-slate-600">
+            Loading L2 BOM...
+          </div>
+        ) : null}
+
+        {l2ExpandedBom?.error ? (
+          <CopyableError message={l2ExpandedBom.error} className="mb-4" />
+        ) : null}
+
+        {l2ExpandedBom && !l2ExpandedBom.loading ? (
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <h5 className="font-semibold text-slate-900">Build {l2Item.name}</h5>
+                <p className="mt-1 text-sm text-slate-600">{contextText}</p>
+              </div>
+
+              <div className="w-full lg:w-72">
+                <label className="mb-1 block text-xs font-medium text-slate-700">
+                  Standard batch output ({l2Item.unitType})
+                </label>
+                <input
+                  type="number"
+                  step="0.001"
+                  value={l2ExpandedBom.standardBatchOutput}
+                  onChange={(e) =>
+                    setExpandedL2Bom(l2Item.id, (current) => ({
+                      ...current,
+                      message: '',
+                      standardBatchOutput: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded-xl border px-3 py-2"
+                />
+              </div>
+            </div>
+
+            {l2ExpandedBom.message ? (
+              <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+                {l2ExpandedBom.message}
+              </div>
+            ) : null}
+
+            <div className="mt-5 grid gap-5 xl:grid-cols-2">
+              <div>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h6 className="font-semibold text-slate-900">Child L2 Prep</h6>
+                  <button
+                    type="button"
+                    onClick={() => addExpandedL2Row(l2Item.id, 'l2ToL2Rows')}
+                    className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
+                  >
+                    Add L2
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <div className="space-y-3">
+                    {l2ExpandedBom.l2ToL2Rows.map((row, rowIndex) => (
+                      <div
+                        key={rowIndex}
+                        className="grid min-w-[560px] grid-cols-[minmax(260px,1fr)_150px_110px] gap-3"
+                      >
+                        <L2Picker
+                          selectedId={row.childId}
+                          l2Items={l2Items.filter((candidate) => candidate.id !== l2Item.id)}
+                          onSelect={(id) =>
+                            updateExpandedL2Row(
+                              l2Item.id,
+                              'l2ToL2Rows',
+                              rowIndex,
+                              'childId',
+                              id
+                            )
+                          }
+                        />
+                        <QtyInput
+                          value={row.qty}
+                          unit={getUnit(row.childId)}
+                          placeholder="Qty"
+                          onChange={(value) =>
+                            updateExpandedL2Row(l2Item.id, 'l2ToL2Rows', rowIndex, 'qty', value)
+                          }
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeExpandedL2Row(l2Item.id, 'l2ToL2Rows', rowIndex)}
+                          className="rounded-xl border px-3 py-2 whitespace-nowrap"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h6 className="font-semibold text-slate-900">L3 Ingredients</h6>
+                  <button
+                    type="button"
+                    onClick={() => addExpandedL2Row(l2Item.id, 'l2ToL3Rows')}
+                    className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
+                  >
+                    Add L3
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <div className="space-y-3">
+                    {l2ExpandedBom.l2ToL3Rows.map((row, rowIndex) => (
+                      <div
+                        key={rowIndex}
+                        className="grid min-w-[560px] grid-cols-[minmax(260px,1fr)_150px_110px] gap-3"
+                      >
+                        <L3SearchPicker
+                          selectedId={row.childId}
+                          l3Items={l3Items}
+                          onError={setError}
+                          onSelect={(id) =>
+                            updateExpandedL2Row(
+                              l2Item.id,
+                              'l2ToL3Rows',
+                              rowIndex,
+                              'childId',
+                              id
+                            )
+                          }
+                        />
+                        <QtyInput
+                          value={row.qty}
+                          unit={getUnit(row.childId)}
+                          placeholder="Qty"
+                          onChange={(value) =>
+                            updateExpandedL2Row(l2Item.id, 'l2ToL3Rows', rowIndex, 'qty', value)
+                          }
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeExpandedL2Row(l2Item.id, 'l2ToL3Rows', rowIndex)}
+                          className="rounded-xl border px-3 py-2 whitespace-nowrap"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => saveExpandedL2(l2Item.id)}
+                disabled={l2ExpandedBom.saving}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {l2ExpandedBom.saving ? 'Saving...' : 'Save L2 BOM'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => saveExpandedL2(l2Item.id, 'BUILT')}
+                disabled={l2ExpandedBom.saving}
+                className="rounded-xl bg-green-700 px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {l2ExpandedBom.saving ? 'Saving...' : 'Save L2 as Built'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-7xl">
@@ -1956,7 +2143,39 @@ export default function BomPage() {
           >
             <option value="">Select parent item</option>
 
-            {[...l0Items, ...l1Items, ...l2Items].map((item) => (
+            <optgroup label="L0">
+              {l0Items.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} [{item.sku}] {item.buildStatus === 'BUILT' ? '- Built' : '- Unbuilt'}
+                </option>
+              ))}
+            </optgroup>
+
+            <optgroup label="L1">
+              {l1Items.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} [{item.sku}] {item.buildStatus === 'BUILT' ? '- Built' : '- Unbuilt'}
+                </option>
+              ))}
+            </optgroup>
+
+            <optgroup label="L2">
+              {l2Items.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} [{item.sku}] {item.buildStatus === 'BUILT' ? '- Built' : '- Unbuilt'}
+                </option>
+              ))}
+            </optgroup>
+
+            <optgroup label="L3">
+              {l3Items.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} [{item.sku}]
+                </option>
+              ))}
+            </optgroup>
+
+            {false && [...l0Items, ...l1Items, ...l2Items].map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name} [{item.sku}] ({item.itemType}){' '}
                 {item.buildStatus === 'BUILT' ? '— Built' : '— Unbuilt'}
@@ -2454,12 +2673,12 @@ export default function BomPage() {
                                                               </button>
                                                             </div>
 
-                                                            <div className="space-y-3">
+                                                            <div className="space-y-3 overflow-x-auto pb-1">
                                                               {l2ExpandedBom.l2ToL2Rows.map(
                                                                 (row, rowIndex) => (
                                                                   <div
                                                                     key={rowIndex}
-                                                                    className="grid gap-3 lg:grid-cols-[1fr_150px_90px]"
+                                                                    className="grid min-w-[560px] grid-cols-[minmax(260px,1fr)_150px_110px] gap-3"
                                                                   >
                                                                     <L2Picker
                                                                       selectedId={row.childId}
@@ -2501,7 +2720,7 @@ export default function BomPage() {
                                                                           rowIndex
                                                                         )
                                                                       }
-                                                                      className="rounded-xl border px-3 py-2"
+                                                                      className="rounded-xl border px-3 py-2 whitespace-nowrap"
                                                                     >
                                                                       Remove
                                                                     </button>
@@ -2530,12 +2749,12 @@ export default function BomPage() {
                                                               </button>
                                                             </div>
 
-                                                            <div className="space-y-3">
+                                                            <div className="space-y-3 overflow-x-auto pb-1">
                                                               {l2ExpandedBom.l2ToL3Rows.map(
                                                                 (row, rowIndex) => (
                                                                   <div
                                                                     key={rowIndex}
-                                                                    className="grid gap-3 lg:grid-cols-[1fr_150px_90px]"
+                                                                    className="grid min-w-[560px] grid-cols-[minmax(260px,1fr)_150px_110px] gap-3"
                                                                   >
                                                                     <L3SearchPicker
                                                                       selectedId={row.childId}
@@ -2574,7 +2793,7 @@ export default function BomPage() {
                                                                           rowIndex
                                                                         )
                                                                       }
-                                                                      className="rounded-xl border px-3 py-2"
+                                                                      className="rounded-xl border px-3 py-2 whitespace-nowrap"
                                                                     >
                                                                       Remove
                                                                     </button>
@@ -2585,7 +2804,7 @@ export default function BomPage() {
                                                           </div>
                                                         </div>
 
-                                                        <div className="mt-5">
+                                                        <div className="mt-5 flex flex-wrap gap-3">
                                                           <button
                                                             type="button"
                                                             onClick={() => saveExpandedL2(bomRow.l2ItemId)}
@@ -2595,6 +2814,19 @@ export default function BomPage() {
                                                             {l2ExpandedBom.saving
                                                               ? 'Saving...'
                                                               : 'Save L2 BOM'}
+                                                          </button>
+
+                                                          <button
+                                                            type="button"
+                                                            onClick={() =>
+                                                              saveExpandedL2(bomRow.l2ItemId, 'BUILT')
+                                                            }
+                                                            disabled={l2ExpandedBom.saving}
+                                                            className="rounded-xl bg-green-700 px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
+                                                          >
+                                                            {l2ExpandedBom.saving
+                                                              ? 'Saving...'
+                                                              : 'Save L2 as Built'}
                                                           </button>
                                                         </div>
                                                       </div>
@@ -2884,6 +3116,7 @@ export default function BomPage() {
                 {l1ToL2Rows.map((row, index) => {
                   const item = getItem(row.childId)
                   const cost = getL2Cost(row.childId)
+                  const l2Expanded = row.childId ? isL2Expanded(row.childId) : false
                   const qty = getQty(row.qty)
                   const lineCost =
                     cost?.costPerUnit !== null && cost?.costPerUnit !== undefined
@@ -2891,45 +3124,62 @@ export default function BomPage() {
                       : null
 
                   return (
-                    <div
-                      key={index}
-                      className="grid gap-3 md:grid-cols-[1fr_220px_150px_150px_100px]"
-                    >
-                      <L2Picker
-                        selectedId={row.childId}
-                        l2Items={l2Items}
-                        onSelect={(id) =>
-                          updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'childId', id)
-                        }
-                      />
+                    <Fragment key={index}>
+                      <div className="grid gap-3 md:grid-cols-[1fr_220px_150px_150px_100px_110px]">
+                        <L2Picker
+                          selectedId={row.childId}
+                          l2Items={l2Items}
+                          onSelect={(id) =>
+                            updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'childId', id)
+                          }
+                        />
 
-                      <QtyInput
-                        value={row.qty}
-                        unit={getUnit(row.childId)}
-                        placeholder="Qty per dish"
-                        onChange={(value) =>
-                          updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'qty', value)
-                        }
-                      />
+                        <QtyInput
+                          value={row.qty}
+                          unit={getUnit(row.childId)}
+                          placeholder="Qty per dish"
+                          onChange={(value) =>
+                            updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'qty', value)
+                          }
+                        />
 
-                      <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
-                        {cost?.costPerUnit !== null && cost?.costPerUnit !== undefined && item
-                          ? `${money(cost.costPerUnit, 5)} / ${item.unitType}`
-                          : 'Missing cost'}
+                        <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                          {cost?.costPerUnit !== null && cost?.costPerUnit !== undefined && item
+                            ? `${money(cost.costPerUnit, 5)} / ${item.unitType}`
+                            : 'Missing cost'}
+                        </div>
+
+                        <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
+                          {money(lineCost)}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => removeRow(l1ToL2Rows, setL1ToL2Rows, index)}
+                          className="rounded-xl border px-3 py-2 whitespace-nowrap"
+                        >
+                          Remove
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={!row.childId}
+                          onClick={() => toggleL2Expanded(row.childId)}
+                          className="rounded-xl border px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {l2Expanded ? 'Close L2' : 'Build L2'}
+                        </button>
                       </div>
 
-                      <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
-                        {money(lineCost)}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => removeRow(l1ToL2Rows, setL1ToL2Rows, index)}
-                        className="rounded-xl border px-3 py-2"
-                      >
-                        Remove
-                      </button>
-                    </div>
+                      {l2Expanded && item ? (
+                        <div className="rounded-2xl border bg-slate-50 p-4">
+                          {renderInlineL2Editor(
+                            item,
+                            'Edit this L2 without leaving the selected L1 dish.'
+                          )}
+                        </div>
+                      ) : null}
+                    </Fragment>
                   )
                 })}
               </div>
