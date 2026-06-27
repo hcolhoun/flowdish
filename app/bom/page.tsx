@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import CopyableError from '@/app/components/CopyableError'
 
 type ItemType = 'L0' | 'L1' | 'L2' | 'L3'
@@ -112,6 +112,16 @@ type ExpandedL1Bom = {
     qty: number
     l3: Item
   }>
+}
+
+type ExpandedL2Bom = {
+  loading: boolean
+  saving: boolean
+  error: string
+  message: string
+  standardBatchOutput: string
+  l2ToL2Rows: ChildRow[]
+  l2ToL3Rows: ChildRow[]
 }
 
 function QtyInput({
@@ -439,6 +449,11 @@ export default function BomPage() {
 
   const [expandedL1Ids, setExpandedL1Ids] = useState<string[]>([])
   const [expandedL1BomById, setExpandedL1BomById] = useState<Record<string, ExpandedL1Bom>>({})
+  const [expandedL2Ids, setExpandedL2Ids] = useState<string[]>([])
+  const [expandedL2BomById, setExpandedL2BomById] = useState<Record<string, ExpandedL2Bom>>({})
+  const [savedExpandedL2SignatureById, setSavedExpandedL2SignatureById] = useState<
+    Record<string, string>
+  >({})
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -553,6 +568,14 @@ export default function BomPage() {
       prepTimeAssumptions:
         Array.isArray(item?.prepTimeAssumptions) ? item.prepTimeAssumptions.join('\n') : '',
     }
+  }
+
+  function expandedL2Signature(input: ExpandedL2Bom) {
+    return JSON.stringify({
+      standardBatchOutput: input.standardBatchOutput,
+      l2ToL2Rows: normaliseRows(input.l2ToL2Rows),
+      l2ToL3Rows: normaliseRows(input.l2ToL3Rows),
+    })
   }
 
   async function loadItems() {
@@ -972,8 +995,21 @@ export default function BomPage() {
       l2ToL3Rows,
     ]
   )
+  const hasUnsavedExpandedL2Changes = useMemo(
+    () =>
+      Object.entries(expandedL2BomById).some(([l2ItemId, expandedBom]) => {
+        const savedSignature = savedExpandedL2SignatureById[l2ItemId]
+        return (
+          Boolean(savedSignature) &&
+          !expandedBom.loading &&
+          expandedL2Signature(expandedBom) !== savedSignature
+        )
+      }),
+    [expandedL2BomById, savedExpandedL2SignatureById]
+  )
   const hasUnsavedBomChanges =
-    Boolean(parentItem) && Boolean(savedBomSignature) && currentBomSignature !== savedBomSignature
+    (Boolean(parentItem) && Boolean(savedBomSignature) && currentBomSignature !== savedBomSignature) ||
+    hasUnsavedExpandedL2Changes
   const unsavedBomMessage =
     'You have unsaved BOM changes. Save the BOM before leaving or changing parent item.'
 
@@ -985,6 +1021,9 @@ export default function BomPage() {
       setL2ToL2Rows([])
       setL2ToL3Rows([])
       setSavedBomSignature('')
+      setExpandedL2Ids([])
+      setExpandedL2BomById({})
+      setSavedExpandedL2SignatureById({})
       return
     }
 
@@ -1170,6 +1209,9 @@ export default function BomPage() {
     setParentId(nextParentId)
     setExpandedL1Ids([])
     setExpandedL1BomById({})
+    setExpandedL2Ids([])
+    setExpandedL2BomById({})
+    setSavedExpandedL2SignatureById({})
     setMessage('')
     setError('')
   }
@@ -1269,6 +1311,276 @@ export default function BomPage() {
 
   function expandedL1Costing(l1ItemId: string) {
     return l1CostingByItemId.get(l1ItemId) ?? null
+  }
+
+  function isL2Expanded(l2ItemId: string) {
+    return expandedL2Ids.includes(l2ItemId)
+  }
+
+  function setExpandedL2Bom(
+    l2ItemId: string,
+    updater: (current: ExpandedL2Bom) => ExpandedL2Bom
+  ) {
+    setExpandedL2BomById((prev) => {
+      const current =
+        prev[l2ItemId] ??
+        ({
+          loading: false,
+          saving: false,
+          error: '',
+          message: '',
+          standardBatchOutput: '',
+          l2ToL2Rows: [],
+          l2ToL3Rows: [],
+        } satisfies ExpandedL2Bom)
+
+      return {
+        ...prev,
+        [l2ItemId]: updater(current),
+      }
+    })
+  }
+
+  async function toggleL2Expanded(l2ItemId: string) {
+    const alreadyExpanded = expandedL2Ids.includes(l2ItemId)
+
+    if (alreadyExpanded) {
+      setExpandedL2Ids((prev) => prev.filter((id) => id !== l2ItemId))
+      return
+    }
+
+    setExpandedL2Ids((prev) => [...prev, l2ItemId])
+
+    if (expandedL2BomById[l2ItemId]) {
+      return
+    }
+
+    const item = getItem(l2ItemId)
+
+    setExpandedL2BomById((prev) => ({
+      ...prev,
+      [l2ItemId]: {
+        loading: true,
+        saving: false,
+        error: '',
+        message: '',
+        standardBatchOutput:
+          item?.standardBatchOutput === null || item?.standardBatchOutput === undefined
+            ? ''
+            : String(item.standardBatchOutput),
+        l2ToL2Rows: [],
+        l2ToL3Rows: [],
+      },
+    }))
+
+    try {
+      const [l2l2Res, l2l3Res] = await Promise.all([
+        fetch(`/api/bom/l2-l2?parentId=${l2ItemId}`, { cache: 'no-store' }),
+        fetch(`/api/bom/l2-l3?parentId=${l2ItemId}`, { cache: 'no-store' }),
+      ])
+
+      const l2l2Data = await safeJson(l2l2Res)
+      const l2l3Data = await safeJson(l2l3Res)
+
+      if (!l2l2Res.ok) {
+        throw new Error(l2l2Data?.error || 'Failed to load L2 prep rows')
+      }
+
+      if (!l2l3Res.ok) {
+        throw new Error(l2l3Data?.error || 'Failed to load L2 ingredient rows')
+      }
+
+      const existingExpandedL2Bom = expandedL2BomById[l2ItemId]
+      const baseExpandedL2Bom: ExpandedL2Bom = existingExpandedL2Bom ?? {
+        loading: false,
+        saving: false,
+        error: '',
+        message: '',
+        standardBatchOutput:
+          item?.standardBatchOutput === null || item?.standardBatchOutput === undefined
+            ? ''
+            : String(item.standardBatchOutput),
+        l2ToL2Rows: [],
+        l2ToL3Rows: [],
+      }
+      const loadedExpandedL2Bom = {
+        ...baseExpandedL2Bom,
+        loading: false,
+        error: '',
+        l2ToL2Rows: l2l2Data.map((row: any) => ({
+          childId: row.childL2ItemId,
+          qty: String(row.qty),
+        })),
+        l2ToL3Rows: l2l3Data.map((row: any) => ({
+          childId: row.l3ItemId,
+          qty: String(row.qty),
+        })),
+      } satisfies ExpandedL2Bom
+
+      setExpandedL2BomById((prev) => ({
+        ...prev,
+        [l2ItemId]: loadedExpandedL2Bom,
+      }))
+      setSavedExpandedL2SignatureById((prev) => ({
+        ...prev,
+        [l2ItemId]: expandedL2Signature(loadedExpandedL2Bom),
+      }))
+    } catch (err) {
+      setExpandedL2Bom(l2ItemId, (current) => ({
+        ...current,
+        loading: false,
+        error: err instanceof Error ? err.message : 'Unknown error',
+        l2ToL2Rows: [],
+        l2ToL3Rows: [],
+      }))
+    }
+  }
+
+  function addExpandedL2Row(l2ItemId: string, rowType: 'l2ToL2Rows' | 'l2ToL3Rows') {
+    setExpandedL2Bom(l2ItemId, (current) => ({
+      ...current,
+      message: '',
+      [rowType]: [...current[rowType], { childId: '', qty: '1' }],
+    }))
+  }
+
+  function updateExpandedL2Row(
+    l2ItemId: string,
+    rowType: 'l2ToL2Rows' | 'l2ToL3Rows',
+    index: number,
+    field: 'childId' | 'qty',
+    value: string
+  ) {
+    setExpandedL2Bom(l2ItemId, (current) => {
+      const nextRows = [...current[rowType]]
+      nextRows[index] = { ...nextRows[index], [field]: value }
+
+      return {
+        ...current,
+        message: '',
+        [rowType]: nextRows,
+      }
+    })
+  }
+
+  function removeExpandedL2Row(
+    l2ItemId: string,
+    rowType: 'l2ToL2Rows' | 'l2ToL3Rows',
+    index: number
+  ) {
+    setExpandedL2Bom(l2ItemId, (current) => {
+      const nextRows = [...current[rowType]]
+      nextRows.splice(index, 1)
+
+      return {
+        ...current,
+        message: '',
+        [rowType]: nextRows,
+      }
+    })
+  }
+
+  async function saveExpandedL2(l2ItemId: string) {
+    const expandedBom = expandedL2BomById[l2ItemId]
+    if (!expandedBom) return
+
+    try {
+      setExpandedL2Bom(l2ItemId, (current) => ({
+        ...current,
+        saving: true,
+        error: '',
+        message: 'Saving L2 BOM...',
+      }))
+
+      const validationError =
+        validateRows(expandedBom.l2ToL2Rows, 'L2 -> L2') ||
+        validateRows(expandedBom.l2ToL3Rows, 'L2 -> L3')
+
+      if (validationError) {
+        setExpandedL2Bom(l2ItemId, (current) => ({
+          ...current,
+          saving: false,
+          message: '',
+          error: validationError,
+        }))
+        return
+      }
+
+      const itemRes = await fetch('/api/items', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: l2ItemId,
+          standardBatchOutput: expandedBom.standardBatchOutput
+            ? Number(expandedBom.standardBatchOutput)
+            : null,
+        }),
+      })
+      const itemData = await safeJson(itemRes)
+
+      if (!itemRes.ok) {
+        throw new Error(itemData?.error || 'Failed to update L2 batch output')
+      }
+
+      const payloadL2L2 = {
+        parentId: l2ItemId,
+        rows: expandedBom.l2ToL2Rows
+          .filter((row) => row.childId && row.qty !== '')
+          .map((row) => ({
+            childId: row.childId,
+            qty: Number(row.qty),
+          })),
+      }
+
+      const payloadL2L3 = {
+        parentId: l2ItemId,
+        rows: expandedBom.l2ToL3Rows
+          .filter((row) => row.childId && row.qty !== '')
+          .map((row) => ({
+            childId: row.childId,
+            qty: Number(row.qty),
+          })),
+      }
+
+      const [l2l2Res, l2l3Res] = await Promise.all([
+        fetch('/api/bom/l2-l2', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadL2L2),
+        }),
+        fetch('/api/bom/l2-l3', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadL2L3),
+        }),
+      ])
+
+      const l2l2Data = await safeJson(l2l2Res)
+      const l2l3Data = await safeJson(l2l3Res)
+
+      if (!l2l2Res.ok) throw new Error(l2l2Data?.error || 'Failed to save L2 prep rows')
+      if (!l2l3Res.ok) throw new Error(l2l3Data?.error || 'Failed to save L2 ingredient rows')
+
+      await Promise.all([loadItems(), loadCosting()])
+      setSavedExpandedL2SignatureById((prev) => ({
+        ...prev,
+        [l2ItemId]: expandedL2Signature(expandedBom),
+      }))
+
+      setExpandedL2Bom(l2ItemId, (current) => ({
+        ...current,
+        saving: false,
+        error: '',
+        message: `L2 BOM saved. ${payloadL2L2.rows.length} child L2 row(s), ${payloadL2L3.rows.length} L3 row(s).`,
+      }))
+    } catch (err) {
+      setExpandedL2Bom(l2ItemId, (current) => ({
+        ...current,
+        saving: false,
+        message: '',
+        error: err instanceof Error ? err.message : 'Unknown error',
+      }))
+    }
   }
 
   function validateRows(rows: ChildRow[], label: string) {
@@ -2006,19 +2318,22 @@ export default function BomPage() {
                                         <th className="px-3 py-2">Qty</th>
                                         <th className="px-3 py-2">Unit Cost</th>
                                         <th className="px-3 py-2">Line Cost</th>
+                                        <th className="px-3 py-2">Action</th>
                                       </tr>
                                     </thead>
 
                                     <tbody>
                                       {expandedBom.l1ToL2Rows.length === 0 ? (
                                         <tr className="border-t">
-                                          <td className="px-3 py-2 text-slate-600" colSpan={4}>
+                                          <td className="px-3 py-2 text-slate-600" colSpan={5}>
                                             No L2 components.
                                           </td>
                                         </tr>
                                       ) : (
                                         expandedBom.l1ToL2Rows.map((bomRow) => {
                                           const l2Cost = getL2Cost(bomRow.l2ItemId)
+                                          const l2Expanded = isL2Expanded(bomRow.l2ItemId)
+                                          const l2ExpandedBom = expandedL2BomById[bomRow.l2ItemId]
                                           const lineCost =
                                             l2Cost?.costPerUnit !== null &&
                                             l2Cost?.costPerUnit !== undefined
@@ -2026,29 +2341,268 @@ export default function BomPage() {
                                               : null
 
                                           return (
-                                            <tr key={bomRow.id} className="border-t">
-                                              <td className="px-3 py-2">
-                                                <div className="font-medium text-slate-900">
-                                                  {bomRow.l2.name}
-                                                </div>
-                                                <div className="text-xs text-slate-500">
-                                                  {bomRow.l2.sku}
-                                                </div>
-                                              </td>
+                                            <Fragment key={bomRow.id}>
+                                              <tr className="border-t">
+                                                <td className="px-3 py-2">
+                                                  <div className="font-medium text-slate-900">
+                                                    {bomRow.l2.name}
+                                                  </div>
+                                                  <div className="text-xs text-slate-500">
+                                                    {bomRow.l2.sku}
+                                                  </div>
+                                                </td>
 
-                                              <td className="px-3 py-2">
-                                                {numberLabel(bomRow.qty)} {bomRow.l2.unitType}
-                                              </td>
+                                                <td className="px-3 py-2">
+                                                  {numberLabel(bomRow.qty)} {bomRow.l2.unitType}
+                                                </td>
 
-                                              <td className="px-3 py-2">
-                                                {l2Cost?.costPerUnit !== null &&
-                                                l2Cost?.costPerUnit !== undefined
-                                                  ? `${money(l2Cost.costPerUnit, 5)} / ${bomRow.l2.unitType}`
-                                                  : 'Missing'}
-                                              </td>
+                                                <td className="px-3 py-2">
+                                                  {l2Cost?.costPerUnit !== null &&
+                                                  l2Cost?.costPerUnit !== undefined
+                                                    ? `${money(l2Cost.costPerUnit, 5)} / ${bomRow.l2.unitType}`
+                                                    : 'Missing'}
+                                                </td>
 
-                                              <td className="px-3 py-2">{money(lineCost)}</td>
-                                            </tr>
+                                                <td className="px-3 py-2">{money(lineCost)}</td>
+
+                                                <td className="px-3 py-2">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => toggleL2Expanded(bomRow.l2ItemId)}
+                                                    className="rounded-lg border px-3 py-2 text-sm text-slate-800 hover:bg-slate-50"
+                                                  >
+                                                    {l2Expanded ? 'Close L2' : 'Build L2'}
+                                                  </button>
+                                                </td>
+                                              </tr>
+
+                                              {l2Expanded ? (
+                                                <tr className="border-t bg-slate-50">
+                                                  <td colSpan={5} className="px-3 py-4">
+                                                    {l2ExpandedBom?.loading ? (
+                                                      <div className="rounded-xl border bg-white px-4 py-3 text-sm text-slate-600">
+                                                        Loading L2 BOM...
+                                                      </div>
+                                                    ) : null}
+
+                                                    {l2ExpandedBom?.error ? (
+                                                      <CopyableError
+                                                        message={l2ExpandedBom.error}
+                                                        className="mb-4"
+                                                      />
+                                                    ) : null}
+
+                                                    {l2ExpandedBom && !l2ExpandedBom.loading ? (
+                                                      <div className="rounded-2xl border bg-white p-4">
+                                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                                          <div>
+                                                            <h5 className="font-semibold text-slate-900">
+                                                              Build {bomRow.l2.name}
+                                                            </h5>
+                                                            <p className="mt-1 text-sm text-slate-600">
+                                                              Edit this L2 without leaving the parent L0 menu.
+                                                            </p>
+                                                          </div>
+
+                                                          <div className="w-full lg:w-72">
+                                                            <label className="mb-1 block text-xs font-medium text-slate-700">
+                                                              Standard batch output ({bomRow.l2.unitType})
+                                                            </label>
+                                                            <input
+                                                              type="number"
+                                                              step="0.001"
+                                                              value={l2ExpandedBom.standardBatchOutput}
+                                                              onChange={(e) =>
+                                                                setExpandedL2Bom(
+                                                                  bomRow.l2ItemId,
+                                                                  (current) => ({
+                                                                    ...current,
+                                                                    message: '',
+                                                                    standardBatchOutput:
+                                                                      e.target.value,
+                                                                  })
+                                                                )
+                                                              }
+                                                              className="w-full rounded-xl border px-3 py-2"
+                                                            />
+                                                          </div>
+                                                        </div>
+
+                                                        {l2ExpandedBom.message ? (
+                                                          <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+                                                            {l2ExpandedBom.message}
+                                                          </div>
+                                                        ) : null}
+
+                                                        <div className="mt-5 grid gap-5 xl:grid-cols-2">
+                                                          <div>
+                                                            <div className="mb-3 flex items-center justify-between gap-3">
+                                                              <h6 className="font-semibold text-slate-900">
+                                                                Child L2 Prep
+                                                              </h6>
+                                                              <button
+                                                                type="button"
+                                                                onClick={() =>
+                                                                  addExpandedL2Row(
+                                                                    bomRow.l2ItemId,
+                                                                    'l2ToL2Rows'
+                                                                  )
+                                                                }
+                                                                className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
+                                                              >
+                                                                Add L2
+                                                              </button>
+                                                            </div>
+
+                                                            <div className="space-y-3">
+                                                              {l2ExpandedBom.l2ToL2Rows.map(
+                                                                (row, rowIndex) => (
+                                                                  <div
+                                                                    key={rowIndex}
+                                                                    className="grid gap-3 lg:grid-cols-[1fr_150px_90px]"
+                                                                  >
+                                                                    <L2Picker
+                                                                      selectedId={row.childId}
+                                                                      l2Items={l2ChildOptions.filter(
+                                                                        (candidate) =>
+                                                                          candidate.id !==
+                                                                          bomRow.l2ItemId
+                                                                      )}
+                                                                      onSelect={(id) =>
+                                                                        updateExpandedL2Row(
+                                                                          bomRow.l2ItemId,
+                                                                          'l2ToL2Rows',
+                                                                          rowIndex,
+                                                                          'childId',
+                                                                          id
+                                                                        )
+                                                                      }
+                                                                    />
+                                                                    <QtyInput
+                                                                      value={row.qty}
+                                                                      unit={getUnit(row.childId)}
+                                                                      placeholder="Qty"
+                                                                      onChange={(value) =>
+                                                                        updateExpandedL2Row(
+                                                                          bomRow.l2ItemId,
+                                                                          'l2ToL2Rows',
+                                                                          rowIndex,
+                                                                          'qty',
+                                                                          value
+                                                                        )
+                                                                      }
+                                                                    />
+                                                                    <button
+                                                                      type="button"
+                                                                      onClick={() =>
+                                                                        removeExpandedL2Row(
+                                                                          bomRow.l2ItemId,
+                                                                          'l2ToL2Rows',
+                                                                          rowIndex
+                                                                        )
+                                                                      }
+                                                                      className="rounded-xl border px-3 py-2"
+                                                                    >
+                                                                      Remove
+                                                                    </button>
+                                                                  </div>
+                                                                )
+                                                              )}
+                                                            </div>
+                                                          </div>
+
+                                                          <div>
+                                                            <div className="mb-3 flex items-center justify-between gap-3">
+                                                              <h6 className="font-semibold text-slate-900">
+                                                                L3 Ingredients
+                                                              </h6>
+                                                              <button
+                                                                type="button"
+                                                                onClick={() =>
+                                                                  addExpandedL2Row(
+                                                                    bomRow.l2ItemId,
+                                                                    'l2ToL3Rows'
+                                                                  )
+                                                                }
+                                                                className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
+                                                              >
+                                                                Add L3
+                                                              </button>
+                                                            </div>
+
+                                                            <div className="space-y-3">
+                                                              {l2ExpandedBom.l2ToL3Rows.map(
+                                                                (row, rowIndex) => (
+                                                                  <div
+                                                                    key={rowIndex}
+                                                                    className="grid gap-3 lg:grid-cols-[1fr_150px_90px]"
+                                                                  >
+                                                                    <L3SearchPicker
+                                                                      selectedId={row.childId}
+                                                                      l3Items={l3Items}
+                                                                      onError={setError}
+                                                                      onSelect={(id) =>
+                                                                        updateExpandedL2Row(
+                                                                          bomRow.l2ItemId,
+                                                                          'l2ToL3Rows',
+                                                                          rowIndex,
+                                                                          'childId',
+                                                                          id
+                                                                        )
+                                                                      }
+                                                                    />
+                                                                    <QtyInput
+                                                                      value={row.qty}
+                                                                      unit={getUnit(row.childId)}
+                                                                      placeholder="Qty"
+                                                                      onChange={(value) =>
+                                                                        updateExpandedL2Row(
+                                                                          bomRow.l2ItemId,
+                                                                          'l2ToL3Rows',
+                                                                          rowIndex,
+                                                                          'qty',
+                                                                          value
+                                                                        )
+                                                                      }
+                                                                    />
+                                                                    <button
+                                                                      type="button"
+                                                                      onClick={() =>
+                                                                        removeExpandedL2Row(
+                                                                          bomRow.l2ItemId,
+                                                                          'l2ToL3Rows',
+                                                                          rowIndex
+                                                                        )
+                                                                      }
+                                                                      className="rounded-xl border px-3 py-2"
+                                                                    >
+                                                                      Remove
+                                                                    </button>
+                                                                  </div>
+                                                                )
+                                                              )}
+                                                            </div>
+                                                          </div>
+                                                        </div>
+
+                                                        <div className="mt-5">
+                                                          <button
+                                                            type="button"
+                                                            onClick={() => saveExpandedL2(bomRow.l2ItemId)}
+                                                            disabled={l2ExpandedBom.saving}
+                                                            className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
+                                                          >
+                                                            {l2ExpandedBom.saving
+                                                              ? 'Saving...'
+                                                              : 'Save L2 BOM'}
+                                                          </button>
+                                                        </div>
+                                                      </div>
+                                                    ) : null}
+                                                  </td>
+                                                </tr>
+                                              ) : null}
+                                            </Fragment>
                                           )
                                         })
                                       )}
