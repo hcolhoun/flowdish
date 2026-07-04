@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 import { isSystemOwnerEmail } from '@/lib/system-owner'
+import {
+  sendSupportTicketAlert,
+  supportTicketEmailConfigured,
+} from '@/lib/support-ticket-email'
 
 const CATEGORIES = ['General', 'Bug/Error', 'Data issue', 'AI import', 'Login/access', 'Billing']
 const PRIORITIES = ['Normal', 'Urgent']
@@ -31,7 +35,10 @@ export async function GET() {
       },
     })
 
-    return NextResponse.json({ tickets })
+    return NextResponse.json({
+      tickets,
+      emailServiceConfigured: supportTicketEmailConfigured(),
+    })
   } catch (error) {
     const tenantError = tenantErrorResponse(error)
     if (tenantError) return tenantError
@@ -74,9 +81,35 @@ export async function POST(req: Request) {
         createdByEmail: tenant.email,
         createdByAuthUserId: tenant.authUserId,
       },
+      include: {
+        restaurant: {
+          select: {
+            name: true,
+          },
+        },
+      },
     })
 
-    return NextResponse.json({ ticket })
+    let emailAlertSent = false
+    let emailAlertError: string | null = null
+
+    try {
+      await sendSupportTicketAlert({
+        ticket,
+        restaurantName: ticket.restaurant.name,
+      })
+      emailAlertSent = true
+    } catch (emailError) {
+      emailAlertError =
+        emailError instanceof Error ? emailError.message : 'Failed to send support ticket alert'
+      console.error('Support ticket alert email failed:', emailAlertError)
+    }
+
+    return NextResponse.json({
+      ticket,
+      emailAlertSent,
+      emailServiceConfigured: supportTicketEmailConfigured(),
+    })
   } catch (error) {
     const tenantError = tenantErrorResponse(error)
     if (tenantError) return tenantError

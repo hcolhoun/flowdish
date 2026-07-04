@@ -86,6 +86,7 @@ type ParsedDocketResponse = {
 type ReviewRow = {
   rowId: string
   include: boolean
+  chargedNotReceived: boolean
   creditClaimRecorded: boolean
   supplier: string
   supplierSku: string
@@ -918,6 +919,7 @@ export default function DeliveriesPage() {
         return {
           rowId: `${Date.now()}-${index}`,
           include: true,
+          chargedNotReceived: false,
           creditClaimRecorded: false,
           supplier: row.supplier || data.supplier || '',
           supplierSku: row.supplierSku || '',
@@ -967,9 +969,12 @@ export default function DeliveriesPage() {
       setDocketSaving(true)
 
       const rowsToSave = reviewRows.filter((row) => row.include)
+      const rowsToClaim = reviewRows.filter(
+        (row) => row.chargedNotReceived && !row.creditClaimRecorded
+      )
 
-      if (rowsToSave.length === 0) {
-        throw new Error('No rows selected to save.')
+      if (rowsToSave.length === 0 && rowsToClaim.length === 0) {
+        throw new Error('No rows selected to save or record as charged but not received.')
       }
 
       const invalidRows = rowsToSave.filter((row) => {
@@ -989,6 +994,7 @@ export default function DeliveriesPage() {
       }
 
       let savedCount = 0
+      let claimedCount = 0
 
       for (const row of rowsToSave) {
         const res = await fetch('/api/deliveries', {
@@ -1017,7 +1023,18 @@ export default function DeliveriesPage() {
         savedCount++
       }
 
-      setMessage(`${savedCount} delivery row(s) saved and inventory increased.`)
+      for (const row of rowsToClaim) {
+        await recordChargedNotReceived(row)
+        claimedCount++
+      }
+
+      setMessage(
+        `${savedCount} delivery row(s) saved and inventory increased.${
+          claimedCount > 0
+            ? ` ${claimedCount} charged-but-not-received claim(s) recorded.`
+            : ''
+        }`
+      )
       setParsedDocket(null)
       setReviewRows([])
       setReviewSupplier('')
@@ -1027,55 +1044,39 @@ export default function DeliveriesPage() {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setDocketSaving(false)
+      setCreditClaimSavingRowId('')
     }
   }
 
-  async function markChargedNotReceived(row: ReviewRow) {
-    const confirmed = window.confirm(
-      `Record "${row.productName || row.supplierSku}" as charged but not received?\n\nThis row will not update inventory.`
-    )
-    if (!confirmed) return
+  async function recordChargedNotReceived(row: ReviewRow) {
+    setCreditClaimSavingRowId(row.rowId)
 
-    try {
-      setCreditClaimSavingRowId(row.rowId)
-      setError('')
-      setMessage('')
+    const res = await fetch('/api/supplier-credit-claims', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        supplier: row.supplier || reviewSupplier,
+        supplierSku: row.supplierSku,
+        productName: row.productName || row.itemSearch || row.supplierSku,
+        qty: row.qty,
+        unitType: row.unitType || null,
+        chargedAmount: row.totalCost,
+        docketNumber: parsedDocket?.docketNumber,
+        chargedAt: deliveredAt || parsedDocket?.deliveryDate,
+        notes: row.notes,
+      }),
+    })
+    const data = await safeJson(res)
 
-      const res = await fetch('/api/supplier-credit-claims', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          supplier: row.supplier || reviewSupplier,
-          supplierSku: row.supplierSku,
-          productName: row.productName || row.itemSearch || row.supplierSku,
-          qty: row.qty,
-          unitType: row.unitType || null,
-          chargedAmount: row.totalCost,
-          docketNumber: parsedDocket?.docketNumber,
-          chargedAt: deliveredAt || parsedDocket?.deliveryDate,
-          notes: row.notes,
-        }),
-      })
-      const data = await safeJson(res)
-
-      if (!res.ok) {
-        throw new Error(data?.error || 'Failed to record supplier credit claim')
-      }
-
-      updateReviewRow(row.rowId, {
-        include: false,
-        creditClaimRecorded: true,
-      })
-      setMessage(
-        data.automationConfigured
-          ? 'Charged, not received claim recorded. This row will not update inventory. Automatic follow-ups are configured in Admin.'
-          : 'Charged, not received claim recorded. This row will not update inventory. Configure supplier follow-up emails in the Admin tab.'
-      )
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
-    } finally {
-      setCreditClaimSavingRowId('')
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to record supplier credit claim')
     }
+
+    updateReviewRow(row.rowId, {
+      include: false,
+      chargedNotReceived: false,
+      creditClaimRecorded: true,
+    })
   }
 
   return (
@@ -1279,26 +1280,39 @@ export default function DeliveriesPage() {
                                 checked={row.include}
                                 disabled={row.creditClaimRecorded}
                                 onChange={(e) =>
-                                  updateReviewRow(row.rowId, { include: e.target.checked })
+                                  updateReviewRow(row.rowId, {
+                                    include: e.target.checked,
+                                    chargedNotReceived: e.target.checked
+                                      ? false
+                                      : row.chargedNotReceived,
+                                  })
                                 }
                               />
                               Save
                             </label>
-                            <button
-                              type="button"
-                              onClick={() => markChargedNotReceived(row)}
-                              disabled={
-                                row.creditClaimRecorded ||
-                                creditClaimSavingRowId === row.rowId
-                              }
-                              className="rounded-lg border border-amber-400 px-2 py-1 text-left text-xs font-medium text-amber-900 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {row.creditClaimRecorded
-                                ? 'Credit claim recorded'
-                                : creditClaimSavingRowId === row.rowId
-                                  ? 'Recording...'
-                                  : 'Charged, Not Received'}
-                            </button>
+                            <label className="flex items-start gap-2 text-sm text-amber-900">
+                              <input
+                                type="checkbox"
+                                checked={row.chargedNotReceived || row.creditClaimRecorded}
+                                disabled={
+                                  row.creditClaimRecorded ||
+                                  creditClaimSavingRowId === row.rowId
+                                }
+                                onChange={(e) =>
+                                  updateReviewRow(row.rowId, {
+                                    chargedNotReceived: e.target.checked,
+                                    include: e.target.checked ? false : row.include,
+                                  })
+                                }
+                              />
+                              <span>
+                                {row.creditClaimRecorded
+                                  ? 'Credit claim recorded'
+                                  : creditClaimSavingRowId === row.rowId
+                                    ? 'Recording...'
+                                    : 'Charged, not received'}
+                              </span>
+                            </label>
                           </div>
                         </td>
 
@@ -1573,6 +1587,13 @@ export default function DeliveriesPage() {
 
               <div className="text-sm text-slate-600">
                 Selected rows: {reviewRows.filter((row) => row.include).length}
+                {reviewRows.some((row) => row.chargedNotReceived) ? (
+                  <>
+                    {' '}
+                    - Charged, not received:{' '}
+                    {reviewRows.filter((row) => row.chargedNotReceived).length}
+                  </>
+                ) : null}
               </div>
             </div>
           </section>

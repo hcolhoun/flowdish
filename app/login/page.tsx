@@ -1,6 +1,7 @@
 'use client'
 
 import Image from 'next/image'
+import Link from 'next/link'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import CopyableError from '@/app/components/CopyableError'
@@ -169,26 +170,26 @@ export default function LoginPage() {
         </form>
 
         <div className="mt-5 flex flex-col gap-2 text-center text-sm">
-          <a
+          <Link
             href="/signup"
             className="font-medium text-slate-700 underline hover:text-slate-900"
           >
             Head Chef sign up
-          </a>
+          </Link>
 
-          <a
+          <Link
             href="/staff-login"
             className="font-medium text-slate-700 underline hover:text-slate-900"
           >
             Staff PIN login
-          </a>
+          </Link>
 
-          <a
+          <Link
             href="/privacy"
             className="font-medium text-slate-700 underline hover:text-slate-900"
           >
             Privacy statement
-          </a>
+          </Link>
         </div>
       </div>
     </main>

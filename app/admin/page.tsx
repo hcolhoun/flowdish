@@ -268,6 +268,7 @@ type SupportTicket = {
 
 type SupportTicketsResponse = {
   tickets: SupportTicket[]
+  emailServiceConfigured?: boolean
 }
 
 export default function AdminPage() {
@@ -598,7 +599,13 @@ export default function AdminPage() {
         message: '',
         errorText: '',
       })
-      setMessage('Support ticket saved for Flowdish support.')
+      setMessage(
+        json.emailAlertSent
+          ? 'Support ticket saved and Flowdish support was emailed.'
+          : json.emailServiceConfigured
+            ? 'Support ticket saved. The email alert could not be sent, but it is visible to Flowdish support.'
+            : 'Support ticket saved. Email alerts are not configured yet, but it is visible to Flowdish support.'
+      )
       await loadSupportTickets()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -1280,11 +1287,28 @@ export default function AdminPage() {
                             <td className="px-3 py-2">{ticket.restaurant.name}</td>
                             <td className="px-3 py-2">
                               <div className="font-medium text-slate-900">{ticket.subject}</div>
-                              <div className="mt-1 max-w-md truncate text-xs text-slate-500">
+                              <div className="mt-1 w-[460px] whitespace-pre-wrap break-words text-xs leading-5 text-slate-600">
                                 {ticket.message}
                               </div>
+                              {ticket.createdByEmail ? (
+                                <div className="mt-2 text-xs text-slate-500">
+                                  From: {ticket.createdByEmail}
+                                </div>
+                              ) : null}
+                              {ticket.pageUrl ? (
+                                <a
+                                  href={ticket.pageUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="mt-1 block break-all text-xs text-blue-700 underline"
+                                >
+                                  {ticket.pageUrl}
+                                </a>
+                              ) : null}
                               {ticket.errorText ? (
-                                <div className="mt-1 text-xs text-red-700">Has error text</div>
+                                <div className="mt-2 w-[460px] whitespace-pre-wrap break-words rounded-lg border border-red-200 bg-red-50 px-3 py-2 font-mono text-xs leading-5 text-red-800">
+                                  {ticket.errorText}
+                                </div>
                               ) : null}
                             </td>
                             <td className="px-3 py-2">{ticket.category}</td>
@@ -1317,9 +1341,29 @@ export default function AdminPage() {
                             <td className="px-3 py-2">{ticket.restaurant.name}</td>
                             <td className="px-3 py-2">
                               <div className="font-medium">{ticket.subject}</div>
-                              <div className="mt-1 max-w-md truncate text-xs text-slate-500">
+                              <div className="mt-1 w-[460px] whitespace-pre-wrap break-words text-xs leading-5 text-slate-600">
                                 {ticket.message}
                               </div>
+                              {ticket.createdByEmail ? (
+                                <div className="mt-2 text-xs text-slate-500">
+                                  From: {ticket.createdByEmail}
+                                </div>
+                              ) : null}
+                              {ticket.pageUrl ? (
+                                <a
+                                  href={ticket.pageUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="mt-1 block break-all text-xs text-blue-700 underline"
+                                >
+                                  {ticket.pageUrl}
+                                </a>
+                              ) : null}
+                              {ticket.errorText ? (
+                                <div className="mt-2 w-[460px] whitespace-pre-wrap break-words rounded-lg border border-red-200 bg-red-50 px-3 py-2 font-mono text-xs leading-5 text-red-800">
+                                  {ticket.errorText}
+                                </div>
+                              ) : null}
                             </td>
                             <td className="px-3 py-2">{ticket.category}</td>
                             <td className="px-3 py-2">{ticket.priority}</td>
