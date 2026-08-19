@@ -124,7 +124,7 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8">
+    <main className="fd-page p-5 sm:p-8">
       <div className="mx-auto max-w-7xl">
         <h1 className="text-3xl font-semibold text-slate-900">
           Flowdish Dashboard
@@ -149,11 +149,13 @@ export default function HomePage() {
                 title="Gross Profit"
                 value={money(data.financials.grossProfit)}
                 subValue={percent(data.financials.grossMarginPercent)}
+                tone="positive"
               />
               <Card
                 title="Estimated Savings"
                 value={money(data.financials.estimatedSavings)}
                 subValue={`vs ${data.financials.baselineWastePercent}% waste baseline`}
+                tone="warning"
               />
             </div>
 
@@ -164,8 +166,13 @@ export default function HomePage() {
                 title="Waste Cost"
                 value={money(data.financials.wasteCost)}
                 subValue={percent(data.financials.wastePercent)}
+                tone="danger"
               />
-              <Card title="Expiring Soon Value" value={money(data.financials.expiringSoonValue)} />
+              <Card
+                title="Expiring Soon Value"
+                value={money(data.financials.expiringSoonValue)}
+                tone="warning"
+              />
             </div>
 
             <div className="mt-8 grid gap-6 xl:grid-cols-2">
@@ -284,13 +291,15 @@ function Card({
   title,
   value,
   subValue,
+  tone = 'primary',
 }: {
   title: string
   value: string
   subValue?: string
+  tone?: 'primary' | 'positive' | 'warning' | 'danger'
 }) {
   return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+    <div className="fd-metric-card p-5" data-tone={tone}>
       <div className="text-sm text-slate-700">{title}</div>
       <div className="mt-2 text-3xl font-semibold text-slate-900">{value}</div>
       {subValue ? <div className="mt-1 text-sm text-slate-700">{subValue}</div> : null}
@@ -306,8 +315,8 @@ function Panel({
   children: React.ReactNode
 }) {
   return (
-    <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
-      <div className="border-b px-5 py-4">
+    <section className="fd-panel">
+      <div className="fd-panel-heading px-5 py-4">
         <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
       </div>
       <div>{children}</div>
@@ -328,8 +337,8 @@ function SimpleTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-left">
-        <thead className="bg-slate-100 text-sm">
+      <table className="fd-data-table w-full text-left">
+        <thead className="text-sm">
           <tr>
             {headers.map((header) => (
               <th key={header} className="px-4 py-3 text-slate-800">
