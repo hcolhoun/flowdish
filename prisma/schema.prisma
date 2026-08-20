@@ -290,6 +290,7 @@ model Delivery {
   vatRatePercent Float              @default(0)
   vatAmount      Float              @default(0)
   vatReclaimStatus VatReclaimStatus @default(NOT_APPLICABLE)
+  deliveryVehicleOk Boolean          @default(false)
   expiryAt     DateTime?
   createdAt    DateTime  @default(now())
 
@@ -437,6 +438,7 @@ model PrepHaccpRecord {
   restaurantId        String
   prepBatchId         String    @unique
   cookingEnabled      Boolean   @default(false)
+  cookingStartedAt    DateTime?
   cookingFinishedAt   DateTime?
   cookingCoreTempC    Float?
   coolingEnabled      Boolean   @default(false)

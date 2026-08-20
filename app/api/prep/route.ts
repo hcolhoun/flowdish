@@ -12,6 +12,7 @@ type HaccpRecordInput = {
   hasAny: boolean
   data: {
     cookingEnabled: boolean
+    cookingStartedAt: Date | null
     cookingFinishedAt: Date | null
     cookingCoreTempC: number | null
     coolingEnabled: boolean
@@ -69,6 +70,7 @@ function haccpRecordInputFromBody(value: any): HaccpRecordInput {
 
   const data = {
     cookingEnabled,
+    cookingStartedAt: cookingEnabled ? nullableDate(source.cookingStartedAt) : null,
     cookingFinishedAt: cookingEnabled ? nullableDate(source.cookingFinishedAt) : null,
     cookingCoreTempC: cookingEnabled ? nullableNumber(source.cookingCoreTempC) : null,
     coolingEnabled,
@@ -83,6 +85,7 @@ function haccpRecordInputFromBody(value: any): HaccpRecordInput {
   }
 
   if (
+    data.cookingStartedAt === 'INVALID_DATE' ||
     data.cookingFinishedAt === 'INVALID_DATE' ||
     data.coolingIntoFridgeAt === 'INVALID_DATE' ||
     data.hotHoldStartedAt === 'INVALID_DATE'

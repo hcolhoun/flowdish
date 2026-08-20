@@ -6,6 +6,8 @@ export const FLOWDISH_PLANS = [
     priceLabel: 'Monthly price coming soon',
     features: [
       'Prep and HACCP records',
+      'Delivery intake and expiry records',
+      'Inventory records for high-risk foods',
       'Cold storage records and monitoring',
       'Admin and staff management',
     ],

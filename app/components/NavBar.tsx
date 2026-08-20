@@ -4,6 +4,22 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import {
+  Boxes,
+  CalendarRange,
+  ChartNoAxesCombined,
+  ClipboardCheck,
+  ClipboardList,
+  CookingPot,
+  GitBranch,
+  LayoutDashboard,
+  PackageSearch,
+  ShieldCheck,
+  Snowflake,
+  Trash2,
+  Truck,
+  type LucideIcon,
+} from 'lucide-react'
 import ThemeToggle from '@/app/components/ThemeToggle'
 import { createClient } from '@/lib/supabase'
 
@@ -27,24 +43,30 @@ type AccessProfile = {
   }
 }
 
-const fullLinks = [
-  { href: '/', label: 'Dashboard' },
-  { href: '/items', label: 'Items' },
-  { href: '/suppliers', label: 'Supplier Products' },
-  { href: '/bom', label: 'BOM' },
-  { href: '/sops', label: 'SOPs' },
-  { href: '/deliveries', label: 'Deliveries' },
-  { href: '/inventory', label: 'Inventory' },
-  { href: '/planning', label: 'Planning' },
-  { href: '/prep', label: 'Record Prep' },
-  { href: '/sales', label: 'Sales' },
-  { href: '/waste', label: 'Waste' },
-  { href: '/cold-storage', label: 'Cold Storage' },
+type NavLink = {
+  href: string
+  label: string
+  icon: LucideIcon
+}
+
+const fullLinks: NavLink[] = [
+  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/items', label: 'Items', icon: Boxes },
+  { href: '/suppliers', label: 'Supplier Products', icon: PackageSearch },
+  { href: '/bom', label: 'BOM', icon: GitBranch },
+  { href: '/sops', label: 'SOPs', icon: ClipboardList },
+  { href: '/deliveries', label: 'Deliveries', icon: Truck },
+  { href: '/inventory', label: 'Inventory', icon: Boxes },
+  { href: '/planning', label: 'Planning', icon: CalendarRange },
+  { href: '/prep', label: 'Record Prep', icon: CookingPot },
+  { href: '/sales', label: 'Sales', icon: ChartNoAxesCombined },
+  { href: '/waste', label: 'Waste', icon: Trash2 },
+  { href: '/cold-storage', label: 'Cold Storage', icon: Snowflake },
 ]
 
-const staffLinks = [
-  { href: '/prep', label: 'Record Prep' },
-  { href: '/waste', label: 'Waste' },
+const staffLinks: NavLink[] = [
+  { href: '/prep', label: 'Record Prep', icon: ClipboardCheck },
+  { href: '/waste', label: 'Waste', icon: Trash2 },
 ]
 
 const hiddenRoutes = ['/login', '/signup', '/reset-password', '/staff-login', '/privacy']
@@ -103,7 +125,7 @@ export default function NavBar() {
 
     if (access.permissions.canSeeFullKitchenSystem) {
       return access.permissions.canSeeAdmin
-        ? [...fullLinks, { href: '/admin', label: 'Admin' }]
+        ? [...fullLinks, { href: '/admin', label: 'Admin', icon: ShieldCheck }]
         : fullLinks
     }
 
@@ -170,6 +192,7 @@ export default function NavBar() {
         <div className="fd-app-nav">
           <nav className="mx-auto flex max-w-7xl items-center gap-1 overflow-x-auto px-4 py-2 sm:px-6 xl:justify-center">
             {links.map((link) => {
+              const Icon = link.icon
               const active =
                 pathname === link.href ||
                 (link.href !== '/' && pathname.startsWith(`${link.href}/`))
@@ -181,6 +204,7 @@ export default function NavBar() {
                   className="fd-nav-link"
                   data-active={active}
                 >
+                  <Icon aria-hidden="true" className="h-4 w-4 shrink-0" strokeWidth={1.8} />
                   {link.label}
                 </Link>
               )

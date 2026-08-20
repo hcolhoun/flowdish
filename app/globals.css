@@ -209,7 +209,10 @@ body .shadow-sm {
 }
 
 .fd-nav-link {
+  display: inline-flex;
   flex: none;
+  align-items: center;
+  gap: 0.45rem;
   border-radius: 0.375rem;
   padding: 0.65rem 0.8rem;
   color: rgb(255 255 255 / 82%);

@@ -18,6 +18,7 @@ type Item = {
 type PrepHaccpRecord = {
   id: string
   cookingEnabled: boolean
+  cookingStartedAt: string | null
   cookingFinishedAt: string | null
   cookingCoreTempC: number | null
   coolingEnabled: boolean
@@ -46,6 +47,7 @@ type PrepBatch = {
 
 type HaccpForm = {
   cookingEnabled: boolean
+  cookingStartedAt: string
   cookingFinishedAt: string
   cookingCoreTempC: string
   coolingEnabled: boolean
@@ -95,6 +97,7 @@ function addDaysToInputDate(dateValue: string, days: number | null) {
 function emptyHaccpForm(): HaccpForm {
   return {
     cookingEnabled: false,
+    cookingStartedAt: '',
     cookingFinishedAt: '',
     cookingCoreTempC: '',
     coolingEnabled: false,
@@ -112,6 +115,7 @@ function emptyHaccpForm(): HaccpForm {
 function haccpFormFromRecord(record: PrepHaccpRecord | null | undefined): HaccpForm {
   return {
     cookingEnabled: Boolean(record?.cookingEnabled),
+    cookingStartedAt: toTimeInputValue(record?.cookingStartedAt),
     cookingFinishedAt: toTimeInputValue(record?.cookingFinishedAt),
     cookingCoreTempC: record?.cookingCoreTempC != null ? String(record.cookingCoreTempC) : '',
     coolingEnabled: Boolean(record?.coolingEnabled),
@@ -138,6 +142,9 @@ function numberOrNull(value: string) {
 function haccpPayloadFromForm(form: HaccpForm, prepDate: string) {
   return {
     cookingEnabled: form.cookingEnabled,
+    cookingStartedAt: form.cookingEnabled
+      ? combineDateAndTime(prepDate, form.cookingStartedAt)
+      : null,
     cookingFinishedAt: form.cookingEnabled
       ? combineDateAndTime(prepDate, form.cookingFinishedAt)
       : null,
@@ -203,6 +210,18 @@ function HaccpChecksPanel({
         {form.cookingEnabled ? (
           <div className="mt-4 grid gap-3 rounded-lg border bg-white p-4">
             <h4 className="text-sm font-semibold text-slate-900">Cooking</h4>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-900">
+                Time Started Cooking
+              </label>
+              <input
+                type="time"
+                value={form.cookingStartedAt}
+                onChange={(e) => onChange('cookingStartedAt', e.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+              />
+              {auditTrailName()}
+            </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-900">
                 Time Finished Cooking
@@ -408,8 +427,11 @@ export default function PrepPage() {
     if (!record) return <span>None</span>
 
     const entries = [
+      record.cookingEnabled && record.cookingStartedAt
+        ? `Cooking started: ${formatDateTime(record.cookingStartedAt)}`
+        : '',
       record.cookingEnabled && record.cookingFinishedAt
-        ? `Cooking time: ${formatDateTime(record.cookingFinishedAt)}`
+        ? `Cooking finished: ${formatDateTime(record.cookingFinishedAt)}`
         : '',
       record.cookingEnabled && record.cookingCoreTempC != null
         ? `Cooking core temp: ${formatQty(record.cookingCoreTempC)} C`

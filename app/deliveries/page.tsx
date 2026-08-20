@@ -24,6 +24,7 @@ type Delivery = {
   vatRatePercent: number
   vatAmount: number
   vatReclaimStatus: VatReclaimStatus
+  deliveryVehicleOk: boolean
   expiryAt: string | null
   createdAt?: string | null
   enteredByName?: string | null
@@ -96,6 +97,7 @@ type ReviewRow = {
   totalCost: string
   vatRatePercent: string
   vatReclaimStatus: VatReclaimStatus
+  deliveryVehicleOk: boolean
   selectedItemId: string
   itemSearch: string
   dropdownOpen: boolean
@@ -114,6 +116,7 @@ type EditingDelivery = {
   expiryAt: string
   vatRatePercent: string
   vatReclaimStatus: VatReclaimStatus
+  deliveryVehicleOk: boolean
 }
 
 type TesseractLog = {
@@ -161,6 +164,7 @@ export default function DeliveriesPage() {
   const [vatReclaimStatus, setVatReclaimStatus] =
     useState<VatReclaimStatus>('NOT_APPLICABLE')
   const [batchCode, setBatchCode] = useState('')
+  const [deliveryVehicleOk, setDeliveryVehicleOk] = useState(false)
   const [latestSupplierProduct, setLatestSupplierProduct] =
     useState<LatestSupplierProduct | null>(null)
   const [priceManuallyEdited, setPriceManuallyEdited] = useState(false)
@@ -577,6 +581,7 @@ export default function DeliveriesPage() {
           totalCost: Number(totalCost),
           vatRatePercent: Number(vatRatePercent),
           vatReclaimStatus,
+          deliveryVehicleOk,
           batchCode,
         }),
       })
@@ -595,6 +600,7 @@ export default function DeliveriesPage() {
       setTotalCost('')
       setVatRatePercent('0')
       setVatReclaimStatus('NOT_APPLICABLE')
+      setDeliveryVehicleOk(false)
       setBatchCode('')
       setLatestSupplierProduct(null)
       setPriceManuallyEdited(false)
@@ -616,6 +622,7 @@ export default function DeliveriesPage() {
       expiryAt: toDateInputValue(delivery.expiryAt),
       vatRatePercent: String(delivery.vatRatePercent || 0),
       vatReclaimStatus: delivery.vatReclaimStatus,
+      deliveryVehicleOk: delivery.deliveryVehicleOk,
     })
     setError('')
     setMessage('')
@@ -645,6 +652,7 @@ export default function DeliveriesPage() {
           expiryAt: editingDelivery.expiryAt || null,
           vatRatePercent: Number(editingDelivery.vatRatePercent),
           vatReclaimStatus: editingDelivery.vatReclaimStatus,
+          deliveryVehicleOk: editingDelivery.deliveryVehicleOk,
         }),
       })
 
@@ -929,6 +937,7 @@ export default function DeliveriesPage() {
           totalCost: toInputValue(row.lineTotal ?? row.packPrice),
           vatRatePercent: '0',
           vatReclaimStatus: 'NOT_APPLICABLE',
+          deliveryVehicleOk: false,
           selectedItemId: row.matchedItemId || '',
           itemSearch:
             row.matchedItemName && row.matchedItemSku
@@ -1008,6 +1017,7 @@ export default function DeliveriesPage() {
             totalCost: Number(row.totalCost),
             vatRatePercent: Number(row.vatRatePercent),
             vatReclaimStatus: row.vatReclaimStatus,
+            deliveryVehicleOk: row.deliveryVehicleOk,
           }),
         })
 
@@ -1236,10 +1246,11 @@ export default function DeliveriesPage() {
             </div>
 
             <div className="max-h-[75vh] overflow-auto">
-              <table className="min-w-[2120px] w-full text-left">
+              <table className="min-w-[2260px] w-full text-left">
                 <thead className="bg-slate-100 text-sm">
                   <tr>
                     <th className="px-4 py-3 text-slate-800">Save</th>
+                    <th className="px-4 py-3 text-slate-800">Delivery Vehicle OK</th>
                     <th className="px-4 py-3 text-slate-800">Supplier</th>
                     <th className="px-4 py-3 text-slate-800">Supplier SKU</th>
                     <th className="px-4 py-3 text-slate-800">Docket Product</th>
@@ -1314,6 +1325,22 @@ export default function DeliveriesPage() {
                               </span>
                             </label>
                           </div>
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <label className="flex min-w-32 items-start gap-2 text-sm text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={row.deliveryVehicleOk}
+                              onChange={(e) =>
+                                updateReviewRow(row.rowId, {
+                                  deliveryVehicleOk: e.target.checked,
+                                })
+                              }
+                              className="mt-0.5 h-4 w-4"
+                            />
+                            <span>Cleanliness checked</span>
+                          </label>
                         </td>
 
                         <td className="px-4 py-3">
@@ -1845,6 +1872,23 @@ export default function DeliveriesPage() {
           </div>
 
           <div className="flex items-end">
+            <label className="flex w-full items-start gap-3 rounded-lg border bg-slate-50 px-4 py-3 text-sm text-slate-800">
+              <input
+                type="checkbox"
+                checked={deliveryVehicleOk}
+                onChange={(e) => setDeliveryVehicleOk(e.target.checked)}
+                className="mt-0.5 h-4 w-4"
+              />
+              <span>
+                <span className="block font-semibold">Delivery Vehicle OK</span>
+                <span className="mt-0.5 block text-xs text-slate-600">
+                  Delivery vehicle cleanliness checked.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <div className="flex items-end">
             <button type="submit" className="rounded-xl bg-slate-900 px-5 py-3 text-white">
               Save Delivery
             </button>
@@ -1853,10 +1897,11 @@ export default function DeliveriesPage() {
 
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="min-w-[1550px] w-full text-left">
+            <table className="min-w-[1690px] w-full text-left">
               <thead className="bg-slate-100 text-sm">
                 <tr>
                   <th className="px-4 py-3 text-slate-800">Date</th>
+                  <th className="px-4 py-3 text-slate-800">Delivery Vehicle OK</th>
                   <th className="px-4 py-3 text-slate-800">Item</th>
                   <th className="px-4 py-3 text-slate-800">Qty</th>
                   <th className="px-4 py-3 text-slate-800">Unit</th>
@@ -1874,7 +1919,7 @@ export default function DeliveriesPage() {
               <tbody>
                 {deliveries.length === 0 ? (
                   <tr className="border-t">
-                    <td className="px-4 py-3 text-slate-700" colSpan={12}>
+                    <td className="px-4 py-3 text-slate-700" colSpan={13}>
                       No deliveries yet.
                     </td>
                   </tr>
@@ -1974,6 +2019,37 @@ export default function DeliveriesPage() {
                             />
                           ) : (
                             money(delivery.price)
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
+                          {isEditing ? (
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={editingDelivery.deliveryVehicleOk}
+                                onChange={(e) =>
+                                  setEditingDelivery({
+                                    ...editingDelivery,
+                                    deliveryVehicleOk: e.target.checked,
+                                  })
+                                }
+                                className="h-4 w-4"
+                              />
+                              OK
+                            </label>
+                          ) : (
+                            <input
+                              type="checkbox"
+                              checked={delivery.deliveryVehicleOk}
+                              disabled
+                              aria-label={
+                                delivery.deliveryVehicleOk
+                                  ? 'Delivery vehicle OK'
+                                  : 'Delivery vehicle not marked OK'
+                              }
+                              className="h-4 w-4 disabled:opacity-100"
+                            />
                           )}
                         </td>
 
