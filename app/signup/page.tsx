@@ -1,10 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import CopyableError from '@/app/components/CopyableError'
+import BrandLogo from '@/app/components/BrandLogo'
 import { TurnstileWidget } from '@/app/components/TurnstileWidget'
 import { FLOWDISH_PLANS, type FlowdishPlanId } from '@/lib/plans'
 import { createClient } from '@/lib/supabase'
@@ -96,14 +96,7 @@ export default function SignupPage() {
     <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 sm:py-12">
       <div className="mx-auto w-full max-w-6xl">
         <div className="flex justify-center">
-          <Image
-            src="/flowdish-banner-logo.png"
-            alt="Flowdish"
-            width={220}
-            height={70}
-            priority
-            className="h-16 w-auto object-contain"
-          />
+          <BrandLogo className="h-16 w-[202px]" priority />
         </div>
 
         <h1 className="mt-5 text-center text-3xl font-semibold text-slate-900">

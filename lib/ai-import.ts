@@ -9,6 +9,8 @@ export type AiFeature =
   | 'sales_zread'
   | 'supplier_price_import'
   | 'l2_prep_time'
+  | 'waste_voice'
+  | 'prep_voice'
 
 type DeepSeekOptions = {
   restaurantId: string

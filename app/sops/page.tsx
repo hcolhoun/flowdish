@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import CopyableError from '@/app/components/CopyableError'
+import InteractiveSopReader from '@/app/components/InteractiveSopReader'
 
 type Item = {
   id: string
@@ -522,6 +523,10 @@ export default function SopsPage() {
 
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
               <h2 className="text-xl font-semibold text-slate-900">Instructions</h2>
+              <InteractiveSopReader
+                title={`${sop.item.name} SOP`}
+                instructions={instructions}
+              />
               <textarea
                 value={instructions}
                 onChange={(e) => setInstructions(e.target.value)}
@@ -575,8 +580,14 @@ export default function SopsPage() {
               ) : (
                 sopList.map((saved) => (
                   <tr key={saved.id} className="border-t">
-                    <td className="px-4 py-3 text-slate-800">
-                      {saved.item.name} [{saved.item.sku}]
+                    <td className="p-0 text-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => loadSop(saved.itemId)}
+                        className="block w-full px-4 py-3 text-left font-medium text-blue-700 hover:bg-blue-50 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+                      >
+                        {saved.item.name} [{saved.item.sku}]
+                      </button>
                     </td>
                     <td className="px-4 py-3 text-slate-800">
                       {saved.item.itemType}

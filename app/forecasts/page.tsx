@@ -149,7 +149,7 @@ export default function ForecastsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8">
+    <main className="min-h-screen bg-slate-50 p-4 sm:p-8">
       <div className="mx-auto max-w-6xl">
         <h1 className="text-3xl font-semibold text-slate-900">Forecasts</h1>
 
@@ -163,14 +163,14 @@ export default function ForecastsPage() {
           </div>
         ) : null}
 
-        <form onSubmit={handleSubmit} className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+        <form onSubmit={handleSubmit} className="mt-8 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-900">Forecast Name</label>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-xl border px-3 py-2"
+                className="min-w-0 w-full rounded-xl border px-3 py-2"
                 required
               />
             </div>
@@ -181,7 +181,7 @@ export default function ForecastsPage() {
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="w-full rounded-xl border px-3 py-2"
+                className="min-w-0 w-full rounded-xl border px-3 py-2"
                 required
               />
             </div>
@@ -192,14 +192,14 @@ export default function ForecastsPage() {
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="w-full rounded-xl border px-3 py-2"
+                className="min-w-0 w-full rounded-xl border px-3 py-2"
                 required
               />
             </div>
           </div>
 
           <div className="mt-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-lg font-semibold text-slate-900">Forecast Lines</h2>
               <button
                 type="button"
@@ -212,11 +212,11 @@ export default function ForecastsPage() {
 
             <div className="mt-4 space-y-3">
               {lines.map((line, index) => (
-                <div key={index} className="grid gap-3 md:grid-cols-[1fr_180px_100px]">
+                <div key={index} className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_180px_100px]">
                   <select
                     value={line.itemId}
                     onChange={(e) => updateLine(index, 'itemId', e.target.value)}
-                    className="rounded-xl border px-3 py-2"
+                    className="min-w-0 w-full rounded-xl border px-3 py-2"
                   >
                     <option value="">Select L1 item</option>
                     {items.map((item) => (
@@ -231,7 +231,7 @@ export default function ForecastsPage() {
                     step="1"
                     value={line.qty}
                     onChange={(e) => updateLine(index, 'qty', e.target.value)}
-                    className="rounded-xl border px-3 py-2"
+                    className="min-w-0 w-full rounded-xl border px-3 py-2"
                     placeholder="Forecast qty"
                   />
 
@@ -255,38 +255,40 @@ export default function ForecastsPage() {
         </form>
 
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <table className="w-full text-left">
-            <thead className="bg-slate-100 text-sm">
-              <tr>
-                <th className="px-4 py-3 text-slate-800">Name</th>
-                <th className="px-4 py-3 text-slate-800">Start</th>
-                <th className="px-4 py-3 text-slate-800">End</th>
-                <th className="px-4 py-3 text-slate-800">Lines</th>
-                <th className="px-4 py-3 text-slate-800">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {forecasts.map((forecast) => (
-                <tr key={forecast.id} className="border-t">
-                  <td className="px-4 py-3 text-slate-800">{forecast.name}</td>
-                  <td className="px-4 py-3 text-slate-800">{new Date(forecast.startDate).toLocaleDateString('en-GB')}</td>
-                  <td className="px-4 py-3 text-slate-800">{new Date(forecast.endDate).toLocaleDateString('en-GB')}</td>
-                  <td className="px-4 py-3 text-slate-800">
-                    {forecast.lines.map((line) => `${line.item.name} (${line.qty})`).join(', ')}
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(forecast.id, forecast.name)}
-                      className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-                    >
-                      Delete
-                    </button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="min-w-[900px] w-full text-left">
+              <thead className="bg-slate-100 text-sm">
+                <tr>
+                  <th className="px-4 py-3 text-slate-800">Name</th>
+                  <th className="px-4 py-3 text-slate-800">Start</th>
+                  <th className="px-4 py-3 text-slate-800">End</th>
+                  <th className="px-4 py-3 text-slate-800">Lines</th>
+                  <th className="px-4 py-3 text-slate-800">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {forecasts.map((forecast) => (
+                  <tr key={forecast.id} className="border-t">
+                    <td className="px-4 py-3 text-slate-800">{forecast.name}</td>
+                    <td className="px-4 py-3 text-slate-800">{new Date(forecast.startDate).toLocaleDateString('en-GB')}</td>
+                    <td className="px-4 py-3 text-slate-800">{new Date(forecast.endDate).toLocaleDateString('en-GB')}</td>
+                    <td className="px-4 py-3 text-slate-800">
+                      {forecast.lines.map((line) => `${line.item.name} (${line.qty})`).join(', ')}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(forecast.id, forecast.name)}
+                        className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </main>

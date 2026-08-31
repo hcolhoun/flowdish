@@ -510,7 +510,7 @@ export default function PlanningPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8">
+    <main className="min-h-screen bg-slate-50 p-4 sm:p-8">
       <div className="mx-auto max-w-7xl">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -537,7 +537,7 @@ export default function PlanningPage() {
           </div>
         ) : null}
 
-        <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+        <section className="mt-8 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
           <h2 className="text-xl font-semibold text-slate-900">Load L0 Menu</h2>
           <p className="mt-1 text-sm text-slate-600">
             Select a built L0 menu and pull its L1 dishes into the forecast lines.
@@ -549,7 +549,7 @@ export default function PlanningPage() {
               <select
                 value={selectedMenuId}
                 onChange={(e) => setSelectedMenuId(e.target.value)}
-                className="w-full rounded-xl border px-3 py-2"
+                className="min-w-0 w-full rounded-xl border px-3 py-2"
               >
                 <option value="">Select L0 menu</option>
                 {menus.map((menu) => (
@@ -577,7 +577,7 @@ export default function PlanningPage() {
           ) : null}
         </section>
 
-        <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+        <section className="mt-8 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
           <h2 className="text-xl font-semibold text-slate-900">New Forecast</h2>
 
           <form onSubmit={saveForecast} className="mt-6">
@@ -589,7 +589,7 @@ export default function PlanningPage() {
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full rounded-xl border px-3 py-2"
+                  className="min-w-0 w-full rounded-xl border px-3 py-2"
                   placeholder="Optional - auto-generated if blank"
                 />
               </div>
@@ -602,7 +602,7 @@ export default function PlanningPage() {
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full rounded-xl border px-3 py-2"
+                  className="min-w-0 w-full rounded-xl border px-3 py-2"
                   required
                 />
               </div>
@@ -615,14 +615,14 @@ export default function PlanningPage() {
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full rounded-xl border px-3 py-2"
+                  className="min-w-0 w-full rounded-xl border px-3 py-2"
                   required
                 />
               </div>
             </div>
 
             <div className="mt-6">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">Forecast Lines</h3>
                   <p className="mt-1 text-sm text-slate-600">
@@ -641,11 +641,11 @@ export default function PlanningPage() {
 
               <div className="mt-4 space-y-3">
                 {lines.map((line, index) => (
-                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_180px_100px]">
+                  <div key={index} className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_180px_100px]">
                     <select
                       value={line.itemId}
                       onChange={(e) => updateLine(index, 'itemId', e.target.value)}
-                      className="rounded-xl border px-3 py-2"
+                      className="min-w-0 w-full rounded-xl border px-3 py-2"
                       required
                     >
                       <option value="">Select L1 item</option>
@@ -662,7 +662,7 @@ export default function PlanningPage() {
                       step="1"
                       value={line.qty}
                       onChange={(e) => updateLine(index, 'qty', e.target.value)}
-                      className="rounded-xl border px-3 py-2"
+                      className="min-w-0 w-full rounded-xl border px-3 py-2"
                       placeholder="Expected sales"
                       required
                     />
@@ -691,7 +691,7 @@ export default function PlanningPage() {
           </form>
         </section>
 
-        <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+        <section className="mt-8 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
           <h2 className="text-xl font-semibold text-slate-900">Generate Prep Plan</h2>
 
           <div className="mt-6 flex flex-col gap-3 md:flex-row">
@@ -701,7 +701,7 @@ export default function PlanningPage() {
                 setSelectedForecastId(e.target.value)
                 setPlan(null)
               }}
-              className="flex-1 rounded-xl border px-3 py-2"
+              className="min-w-0 flex-1 rounded-xl border px-3 py-2"
             >
               <option value="">Select forecast</option>
               {forecasts.map((forecast) => (
@@ -1069,7 +1069,7 @@ export default function PlanningPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
+            <table className="min-w-[900px] w-full text-left">
               <thead className="bg-slate-100 text-sm">
                 <tr>
                   <th className="px-4 py-3 text-slate-800">Name</th>

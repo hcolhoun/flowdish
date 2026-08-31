@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import CopyableError from '@/app/components/CopyableError'
+import VoiceDictationButton from '@/app/components/VoiceDictationButton'
 
 type UnitType = 'g' | 'ml' | 'each'
 
@@ -66,6 +67,19 @@ type EditingPrep = {
   qtyOutput: string
   expiryAt: string
   haccpRecord: HaccpForm
+}
+
+type VoiceDraft = {
+  transcript: string
+  itemId: string | null
+  itemName: string | null
+  itemSku: string | null
+  unitType: UnitType | null
+  quantity: number | null
+  date: string | null
+  confidence: number | null
+  notes: string | null
+  needsReview: boolean
 }
 
 function toDateInputValue(value: string | Date | null | undefined) {
@@ -361,6 +375,8 @@ export default function PrepPage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [saving, setSaving] = useState(false)
+  const [voiceProcessing, setVoiceProcessing] = useState(false)
+  const [voiceDraft, setVoiceDraft] = useState<VoiceDraft | null>(null)
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingPrep, setEditingPrep] = useState<EditingPrep | null>(null)
@@ -548,6 +564,35 @@ export default function PrepPage() {
     setEditingPrep(null)
   }
 
+  async function handleVoiceTranscript(transcript: string) {
+    try {
+      setVoiceProcessing(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/parse-voice-entry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'prep', transcript }),
+      })
+      const data = (await safeJson(res)) as VoiceDraft & { error?: string }
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to prepare the voice draft')
+      }
+
+      setItemId(data.itemId || '')
+      if (data.quantity != null) setQtyOutput(String(data.quantity))
+      if (data.date) setPreparedAt(data.date)
+      setVoiceDraft(data)
+      setMessage('Voice draft ready. Review every field before saving the prep batch.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown voice-entry error')
+    } finally {
+      setVoiceProcessing(false)
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
 
@@ -580,6 +625,7 @@ export default function PrepPage() {
       setQtyOutput('')
       setExpiryAt('')
       setHaccpRecord(emptyHaccpForm())
+      setVoiceDraft(null)
       setMessage('Prep batch saved.')
       await loadData()
     } catch (err) {
@@ -644,12 +690,38 @@ export default function PrepPage() {
           onSubmit={handleSubmit}
           className="mt-8 grid gap-4 rounded-2xl border bg-white p-6 shadow-sm md:grid-cols-2"
         >
-          <div className="md:col-span-2">
-            <h2 className="text-xl font-semibold text-slate-900">New Prep Batch</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              The expiry date defaults from the L2 shelf life, but can be changed before saving.
-            </p>
+          <div className="flex flex-col gap-3 md:col-span-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">New Prep Batch</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Say the L2 item and amount made, then review the draft before saving.
+              </p>
+            </div>
+            <VoiceDictationButton
+              onTranscript={handleVoiceTranscript}
+              processing={voiceProcessing}
+              disabled={saving}
+            />
           </div>
+
+          {voiceDraft ? (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-slate-700 md:col-span-2">
+              <div className="font-semibold text-blue-800">Voice draft for review</div>
+              <div className="mt-1">
+                <span className="font-medium">Heard:</span> {voiceDraft.transcript}
+              </div>
+              {voiceDraft.itemName ? (
+                <div className="mt-1">
+                  <span className="font-medium">Item:</span> {voiceDraft.itemName}
+                  {voiceDraft.itemSku
+                    ? ` [${voiceDraft.itemSku}]`
+                    : ' - choose the matching L2 item below'}
+                </div>
+              ) : null}
+              {voiceDraft.notes ? <div className="mt-1">{voiceDraft.notes}</div> : null}
+              <div className="mt-2 font-medium text-blue-800">Nothing has been saved yet.</div>
+            </div>
+          ) : null}
 
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-900">L2 Item</label>

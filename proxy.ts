@@ -15,7 +15,8 @@ function isPublicPath(path: string) {
     path.startsWith('/_next') ||
     path.startsWith('/favicon') ||
     path.startsWith('/prawn.png') ||
-    path.startsWith('/flowdish-banner-logo.png')
+    path.startsWith('/flowdish-banner-logo.png') ||
+    path.startsWith('/flowdish-banner-logo-dark.png')
   )
 }
 

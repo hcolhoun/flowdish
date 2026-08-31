@@ -1,6 +1,5 @@
 'use client'
 
-import Image from 'next/image'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
@@ -21,6 +20,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import ThemeToggle from '@/app/components/ThemeToggle'
+import BrandLogo from '@/app/components/BrandLogo'
 import { createClient } from '@/lib/supabase'
 
 type AccessProfile = {
@@ -145,14 +145,7 @@ export default function NavBar() {
       <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6">
         <div className="flex items-center justify-between gap-4">
           <Link href="/" className="flex shrink-0 items-center">
-            <Image
-              src="/flowdish-banner-logo.png"
-              alt="Flowdish"
-              width={210}
-              height={65}
-              priority
-              className="h-12 w-auto object-contain sm:h-14"
-            />
+            <BrandLogo className="h-12 w-[155px] sm:h-14 sm:w-[181px]" priority />
           </Link>
 
           <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">

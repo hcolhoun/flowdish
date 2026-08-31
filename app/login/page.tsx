@@ -1,14 +1,13 @@
 'use client'
 
-import Image from 'next/image'
 import Link from 'next/link'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import CopyableError from '@/app/components/CopyableError'
+import BrandLogo from '@/app/components/BrandLogo'
 import { TurnstileWidget } from '@/app/components/TurnstileWidget'
 import { verifyTurnstileBeforeSubmit } from '@/lib/turnstile-client'
 import { createClient } from '@/lib/supabase'
-import loginLogo from '../login.logo.png'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -86,12 +85,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm">
         <div className="text-center">
           <div className="flex justify-center">
-            <Image
-              src={loginLogo}
-              alt="Flowdish"
-              priority
-              className="h-auto w-56"
-            />
+            <BrandLogo className="h-[68px] w-56" priority />
           </div>
 
           <p className="mt-4 text-sm text-slate-600">Sign in to continue.</p>

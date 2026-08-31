@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import CopyableError from '@/app/components/CopyableError'
+import VoiceDictationButton from '@/app/components/VoiceDictationButton'
 
 type UnitType = 'g' | 'ml' | 'each'
 type ItemType = 'L1' | 'L2' | 'L3'
@@ -27,6 +28,20 @@ type WasteRecord = {
   enteredByName?: string | null
   enteredByType?: string | null
   item: Item
+}
+
+type VoiceDraft = {
+  transcript: string
+  itemId: string | null
+  itemName: string | null
+  itemSku: string | null
+  unitType: UnitType | null
+  quantity: number | null
+  date: string | null
+  reason: string | null
+  confidence: number | null
+  notes: string | null
+  needsReview: boolean
 }
 
 function todayInputValue() {
@@ -69,6 +84,8 @@ export default function WastePage() {
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [voiceProcessing, setVoiceProcessing] = useState(false)
+  const [voiceDraft, setVoiceDraft] = useState<VoiceDraft | null>(null)
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -150,6 +167,45 @@ export default function WastePage() {
     setItemSearch('')
   }
 
+  async function handleVoiceTranscript(transcript: string) {
+    try {
+      setVoiceProcessing(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/parse-voice-entry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'waste', transcript }),
+      })
+      const data = (await safeJson(res)) as VoiceDraft & { error?: string }
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to prepare the voice draft')
+      }
+
+      const matchedItem = l3Items.find((item) => item.id === data.itemId) ?? null
+
+      if (matchedItem) {
+        selectItem(matchedItem)
+      } else {
+        setSelectedItemId('')
+        setItemSearch(data.itemName || '')
+      }
+
+      if (data.quantity != null) setQty(String(data.quantity))
+      if (data.date) setDate(data.date)
+      if (data.reason) setReason(data.reason)
+
+      setVoiceDraft(data)
+      setMessage('Voice draft ready. Review every field before recording the waste.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown voice-entry error')
+    } finally {
+      setVoiceProcessing(false)
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
 
@@ -190,6 +246,7 @@ export default function WastePage() {
       setMessage('Waste recorded and inventory reduced.')
       setQty('')
       setReason('')
+      setVoiceDraft(null)
       clearSelectedItem()
 
       await loadWastes()
@@ -229,7 +286,38 @@ export default function WastePage() {
         ) : null}
 
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-900">Record Waste</h2>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Record Waste</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Say the item, amount, and reason, then review the draft before saving.
+              </p>
+            </div>
+            <VoiceDictationButton
+              onTranscript={handleVoiceTranscript}
+              processing={voiceProcessing}
+              disabled={loading || saving}
+            />
+          </div>
+
+          {voiceDraft ? (
+            <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-slate-700">
+              <div className="font-semibold text-blue-800">Voice draft for review</div>
+              <div className="mt-1">
+                <span className="font-medium">Heard:</span> {voiceDraft.transcript}
+              </div>
+              {voiceDraft.itemName ? (
+                <div className="mt-1">
+                  <span className="font-medium">Item:</span> {voiceDraft.itemName}
+                  {voiceDraft.itemSku
+                    ? ` [${voiceDraft.itemSku}]`
+                    : ' - choose the matching item below'}
+                </div>
+              ) : null}
+              {voiceDraft.notes ? <div className="mt-1">{voiceDraft.notes}</div> : null}
+              <div className="mt-2 font-medium text-blue-800">Nothing has been saved yet.</div>
+            </div>
+          ) : null}
 
           <form onSubmit={handleSubmit} className="mt-6 grid gap-5 md:grid-cols-2">
             <div className="relative md:col-span-2">

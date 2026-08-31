@@ -635,9 +635,9 @@ export default function ItemsPage() {
         </div>
 
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <div className="overflow-x-auto">
+          <div className="max-h-[70vh] overflow-auto">
             <table className="min-w-[1200px] w-full text-left">
-              <thead className="bg-slate-100 text-sm">
+              <thead className="sticky top-0 z-20 bg-slate-100 text-sm shadow-[0_1px_0_0_rgba(148,163,184,0.55)]">
                 <tr>
                   <th className="px-4 py-3 text-slate-800">SKU</th>
                   <th className="px-4 py-3 text-slate-800">Name</th>

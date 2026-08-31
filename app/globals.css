@@ -195,6 +195,18 @@ body .shadow-sm {
   color: #7ed4f2;
 }
 
+.fd-brand-logo-dark {
+  display: none;
+}
+
+:root.dark .fd-brand-logo-light {
+  display: none;
+}
+
+:root.dark .fd-brand-logo-dark {
+  display: block;
+}
+
 .fd-app-header {
   position: relative;
   z-index: 30;
