@@ -85,20 +85,15 @@ export default function InteractiveSopReader({
 
   function pauseReading() {
     if (statusRef.current !== 'speaking') return
-    window.speechSynthesis.pause()
+    // Some Safari speech voices cannot resume a paused utterance reliably.
+    // Cancelling lets Continue restart the current instruction consistently.
+    window.speechSynthesis.cancel()
     setReaderStatus('paused')
   }
 
   function continueReading() {
     if (statusRef.current !== 'paused') return
-
-    if (window.speechSynthesis.paused) {
-      window.speechSynthesis.resume()
-    } else if (!window.speechSynthesis.speaking) {
-      speakStep(stepIndexRef.current)
-    }
-
-    setReaderStatus('speaking')
+    speakStep(stepIndexRef.current)
   }
 
   function handleVoiceCommand(transcript: string) {
