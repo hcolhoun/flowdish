@@ -183,25 +183,27 @@ export default function NavBar() {
 
       {loaded && access ? (
         <div className="fd-app-nav">
-          <nav className="mx-auto flex max-w-7xl items-center gap-1 overflow-x-auto px-4 py-2 sm:px-6 xl:justify-center">
-            {links.map((link) => {
-              const Icon = link.icon
-              const active =
-                pathname === link.href ||
-                (link.href !== '/' && pathname.startsWith(`${link.href}/`))
+          <nav className="mx-auto max-w-7xl overflow-x-auto px-4 py-2 sm:px-6">
+            <div className="mx-auto flex w-max items-center gap-1">
+              {links.map((link) => {
+                const Icon = link.icon
+                const active =
+                  pathname === link.href ||
+                  (link.href !== '/' && pathname.startsWith(`${link.href}/`))
 
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className="fd-nav-link"
-                  data-active={active}
-                >
-                  <Icon aria-hidden="true" className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                  {link.label}
-                </Link>
-              )
-            })}
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className="fd-nav-link"
+                    data-active={active}
+                  >
+                    <Icon aria-hidden="true" className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                    {link.label}
+                  </Link>
+                )
+              })}
+            </div>
           </nav>
         </div>
       ) : null}

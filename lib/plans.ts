@@ -10,6 +10,7 @@ export const FLOWDISH_PLANS = [
       'Inventory records for high-risk foods',
       'Cold storage records and monitoring',
       'Admin and staff management',
+      'One free food temperature probe',
     ],
   },
   {
@@ -36,6 +37,8 @@ export const FLOWDISH_PLANS = [
       'AI POS and Z-read imports',
       'AI supplier price-list imports',
       'AI-assisted prep-time estimates',
+      'Voice-assisted waste and prep entry',
+      'Interactive spoken SOPs with pause and continue voice controls',
     ],
   },
 ] as const

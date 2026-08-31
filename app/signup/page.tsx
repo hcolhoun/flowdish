@@ -96,7 +96,7 @@ export default function SignupPage() {
     <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 sm:py-12">
       <div className="mx-auto w-full max-w-6xl">
         <div className="flex justify-center">
-          <BrandLogo className="h-16 w-[202px]" priority />
+          <BrandLogo className="h-16 w-[202px]" priority transparentLight />
         </div>
 
         <h1 className="mt-5 text-center text-3xl font-semibold text-slate-900">

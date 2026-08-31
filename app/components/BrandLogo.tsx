@@ -3,9 +3,14 @@ import Image from 'next/image'
 type BrandLogoProps = {
   className: string
   priority?: boolean
+  transparentLight?: boolean
 }
 
-export default function BrandLogo({ className, priority = false }: BrandLogoProps) {
+export default function BrandLogo({
+  className,
+  priority = false,
+  transparentLight = false,
+}: BrandLogoProps) {
   return (
     <span className={`fd-brand-logo inline-grid shrink-0 ${className}`}>
       <Image
@@ -14,7 +19,9 @@ export default function BrandLogo({ className, priority = false }: BrandLogoProp
         width={757}
         height={221}
         priority={priority}
-        className="fd-brand-logo-light col-start-1 row-start-1 h-full w-full object-contain"
+        className={`fd-brand-logo-light col-start-1 row-start-1 h-full w-full object-contain ${
+          transparentLight ? 'mix-blend-multiply' : ''
+        }`}
       />
       <Image
         src="/flowdish-banner-logo-dark.png"
