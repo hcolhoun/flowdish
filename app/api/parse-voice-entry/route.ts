@@ -71,11 +71,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'No usable speech was recognised.' }, { status: 400 })
     }
 
-    const itemType = mode === 'waste' ? 'L3' : 'L2'
+    const itemTypeLabel = mode === 'waste' ? 'L2 or L3' : 'L2'
     const items = await prisma.item.findMany({
       where: {
         restaurantId: access.restaurantId,
-        itemType,
+        itemType: mode === 'waste' ? { in: ['L2', 'L3'] } : 'L2',
       },
       select: {
         id: true,
@@ -97,7 +97,7 @@ export async function POST(req: Request) {
     const today = new Date().toISOString().slice(0, 10)
     const purpose =
       mode === 'waste'
-        ? 'a kitchen waste record for an L3 ingredient'
+        ? 'a kitchen waste record for an L2 prep batch or L3 ingredient'
         : 'a completed prep batch for an L2 item'
 
     const prompt = `
@@ -129,7 +129,7 @@ Return this exact shape:
   "notes": string | null
 }
 
-Allowed ${itemType} items:
+Allowed ${itemTypeLabel} items:
 ${JSON.stringify(candidates)}
 
 Chef transcript:

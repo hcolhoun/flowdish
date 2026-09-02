@@ -10,7 +10,7 @@ export const FLOWDISH_PLANS = [
       'Inventory records for high-risk foods',
       'Cold storage records and monitoring',
       'Admin and staff management',
-      'One free food temperature probe',
+      'One free refrigeration temperature probe',
     ],
   },
   {

@@ -135,27 +135,27 @@ export default function WastePage() {
     loadPage()
   }, [])
 
-  const l3Items = useMemo(() => {
+  const wasteItems = useMemo(() => {
     return items
-      .filter((item) => item.itemType === 'L3')
+      .filter((item) => item.itemType === 'L2' || item.itemType === 'L3')
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [items])
 
   const selectedItem = useMemo(() => {
-    return l3Items.find((item) => item.id === selectedItemId) ?? null
-  }, [l3Items, selectedItemId])
+    return wasteItems.find((item) => item.id === selectedItemId) ?? null
+  }, [wasteItems, selectedItemId])
 
-  const filteredL3Items = useMemo(() => {
+  const filteredWasteItems = useMemo(() => {
     const q = itemSearch.trim().toLowerCase()
 
-    if (!q) return l3Items.slice(0, 25)
+    if (!q) return wasteItems.slice(0, 25)
 
-    return l3Items
+    return wasteItems
       .filter((item) => {
         return item.name.toLowerCase().includes(q) || item.sku.toLowerCase().includes(q)
       })
       .slice(0, 25)
-  }, [l3Items, itemSearch])
+  }, [wasteItems, itemSearch])
 
   function selectItem(item: Item) {
     setSelectedItemId(item.id)
@@ -184,7 +184,7 @@ export default function WastePage() {
         throw new Error(data.error || 'Failed to prepare the voice draft')
       }
 
-      const matchedItem = l3Items.find((item) => item.id === data.itemId) ?? null
+      const matchedItem = wasteItems.find((item) => item.id === data.itemId) ?? null
 
       if (matchedItem) {
         selectItem(matchedItem)
@@ -215,7 +215,7 @@ export default function WastePage() {
       setSaving(true)
 
       if (!selectedItemId) {
-        setError('Choose an L3 item first.')
+        setError('Choose an L2 or L3 item first.')
         return
       }
 
@@ -264,7 +264,8 @@ export default function WastePage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Waste</h1>
             <p className="mt-2 text-slate-700">
-              Record wasted L3 ingredients. Waste entries reduce inventory using FIFO.
+              Record wasted L2 prep batches or L3 ingredients. Waste entries reduce inventory
+              using FIFO.
             </p>
           </div>
 
@@ -322,7 +323,7 @@ export default function WastePage() {
           <form onSubmit={handleSubmit} className="mt-6 grid gap-5 md:grid-cols-2">
             <div className="relative md:col-span-2">
               <label className="mb-1 block text-sm font-medium text-slate-900">
-                L3 Item
+                L2 / L3 Item
               </label>
 
               <input
@@ -337,12 +338,12 @@ export default function WastePage() {
 
               {itemSearch && !selectedItemId ? (
                 <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-xl border bg-white shadow-lg">
-                  {filteredL3Items.length === 0 ? (
+                  {filteredWasteItems.length === 0 ? (
                     <div className="px-4 py-3 text-sm text-slate-600">
-                      No L3 items found.
+                      No L2 or L3 items found.
                     </div>
                   ) : (
-                    filteredL3Items.map((item) => (
+                    filteredWasteItems.map((item) => (
                       <button
                         key={item.id}
                         type="button"
@@ -351,7 +352,7 @@ export default function WastePage() {
                       >
                         <div className="font-medium text-slate-900">{item.name}</div>
                         <div className="text-xs text-slate-600">
-                          {item.sku} · {item.unitType}
+                          {item.itemType} · {item.sku} · {item.unitType}
                         </div>
                       </button>
                     ))
@@ -363,7 +364,7 @@ export default function WastePage() {
                 <div className="mt-2 flex items-center justify-between rounded-xl border bg-slate-50 px-3 py-2 text-sm">
                   <div className="text-slate-700">
                     Selected: <span className="font-medium">{selectedItem.name}</span> ·{' '}
-                    {selectedItem.sku} · unit: {selectedItem.unitType}
+                    {selectedItem.itemType} · {selectedItem.sku} · unit: {selectedItem.unitType}
                   </div>
 
                   <button

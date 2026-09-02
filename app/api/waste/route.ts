@@ -149,6 +149,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 })
     }
 
+    if (item.itemType !== 'L2' && item.itemType !== 'L3') {
+      return NextResponse.json(
+        { error: 'Waste can only be recorded against an L2 or L3 item.' },
+        { status: 400 }
+      )
+    }
+
     if (Number.isNaN(date.getTime())) {
       return NextResponse.json({ error: 'Invalid waste date' }, { status: 400 })
     }
