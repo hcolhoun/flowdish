@@ -267,35 +267,47 @@ const ImageRedactionEditor = forwardRef<
         }
 
         const image = await loadImage(imageUrl)
-        const maxDimension = 2400
-        const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight))
-        const width = Math.max(1, Math.round(image.naturalWidth * scale))
-        const height = Math.max(1, Math.round(image.naturalHeight * scale))
         const canvas = document.createElement('canvas')
         const context = canvas.getContext('2d')
 
         if (!context) throw new Error('Could not create the redacted image.')
 
-        canvas.width = width
-        canvas.height = height
-        context.fillStyle = '#ffffff'
-        context.fillRect(0, 0, width, height)
-        context.drawImage(image, 0, 0, width, height)
-        context.fillStyle = '#000000'
+        let maxDimension = 2400
+        let quality = 0.88
+        let blob: Blob | null = null
 
-        for (const box of boxes) {
-          context.fillRect(
-            Math.floor(box.x * width),
-            Math.floor(box.y * height),
-            Math.ceil(box.width * width),
-            Math.ceil(box.height * height)
+        while (!blob || blob.size > MAX_OUTPUT_BYTES) {
+          const scale = Math.min(
+            1,
+            maxDimension / Math.max(image.naturalWidth, image.naturalHeight)
           )
+          const width = Math.max(1, Math.round(image.naturalWidth * scale))
+          const height = Math.max(1, Math.round(image.naturalHeight * scale))
+
+          canvas.width = width
+          canvas.height = height
+          context.fillStyle = '#ffffff'
+          context.fillRect(0, 0, width, height)
+          context.drawImage(image, 0, 0, width, height)
+          context.fillStyle = '#000000'
+
+          for (const box of boxes) {
+            context.fillRect(
+              Math.floor(box.x * width),
+              Math.floor(box.y * height),
+              Math.ceil(box.width * width),
+              Math.ceil(box.height * height)
+            )
+          }
+
+          blob = await canvasBlob(canvas, quality)
+          if (blob.size <= MAX_OUTPUT_BYTES || maxDimension <= 1200) break
+
+          maxDimension = Math.max(1200, Math.round(maxDimension * 0.8))
+          quality = 0.72
         }
 
-        let blob = await canvasBlob(canvas, 0.88)
-        if (blob.size > MAX_OUTPUT_BYTES) blob = await canvasBlob(canvas, 0.7)
-
-        if (blob.size > MAX_OUTPUT_BYTES) {
+        if (!blob || blob.size > MAX_OUTPUT_BYTES) {
           throw new Error('The redacted image is still too large. Take a lower-resolution photo.')
         }
 

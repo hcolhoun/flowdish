@@ -33,12 +33,6 @@ type ExtractedDocket = {
 
 function normaliseSupplier(value: string | null) {
   if (!value) return null
-
-  const lower = value.toLowerCase()
-
-  if (lower.includes('sysco')) return 'Sysco'
-  if (lower.includes('caterway')) return 'Caterway'
-
   return value.trim()
 }
 

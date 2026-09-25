@@ -174,7 +174,7 @@ export default function SuppliersPage() {
   const [products, setProducts] = useState<SupplierProduct[]>([])
 
   const [manualProduct, setManualProduct] = useState<ManualSupplierProduct>({
-    supplier: 'Caterway',
+    supplier: '',
     supplierSku: '',
     name: '',
     packSize: '',
@@ -376,18 +376,6 @@ export default function SuppliersPage() {
 
       let res: Response
       const directUploadLimit = 4 * 1024 * 1024
-      const supplierKey = supplier.trim().toLowerCase()
-      const selectedFileName = selectedFile?.name.toLowerCase() || ''
-      const useLocalSyscoParser =
-        Boolean(selectedFile) &&
-        !selectedFile?.type.startsWith('image/') &&
-        supplierKey.includes('sysco') &&
-        /\.(xlsx|xls)$/.test(selectedFileName)
-      const useLocalCaterwayParser =
-        Boolean(selectedFile) &&
-        !selectedFile?.type.startsWith('image/') &&
-        supplierKey.includes('caterway') &&
-        selectedFileName.endsWith('.pdf')
 
       if (pasteText.trim()) {
         const privacySafe = sanitiseDocumentForAi(pasteText, 'supplier_price')
@@ -403,19 +391,6 @@ export default function SuppliersPage() {
             pastedText: privacySafe.text,
             supplier,
           }),
-        })
-      } else if (useLocalSyscoParser || useLocalCaterwayParser) {
-        if (!selectedFile) throw new Error('Choose a supplier file first.')
-        if (selectedFile.size > directUploadLimit) {
-          throw new Error('This file is too large. Upload a supplier file smaller than 4 MB.')
-        }
-
-        setOcrProgress('Parsing inside Flowdish without sending the file to an AI provider...')
-        const formData = new FormData()
-        formData.append('file', selectedFile)
-        res = await fetch(useLocalSyscoParser ? '/api/parse-sysco' : '/api/parse-caterway', {
-          method: 'POST',
-          body: formData,
         })
       } else if (selectedFile?.type.startsWith('image/')) {
         setOcrProgress('Preparing the checked redacted image...')
@@ -919,8 +894,9 @@ async function handlePriceOnlySave() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Price List</h2>
           <p className="mt-2 text-sm text-slate-700">
-            For images, check the privacy masks before DeepSeek reads the redacted copy. Sysco
-            spreadsheets and Caterway PDFs are parsed without sending their contents to an AI provider.
+            For images, check the privacy masks before DeepSeek reads the redacted copy. PDF,
+            spreadsheet, CSV and text price lists use the same privacy-filtered AI import flow for
+            every supplier.
           </p>
 
           <div className="mt-4 grid gap-4 md:grid-cols-2">
