@@ -6,8 +6,8 @@ import { prisma } from '@/lib/prisma'
 import {
   aiErrorResponse,
   cleanText,
+  documentFromAiRequest,
   parseJsonWithDeepSeek,
-  textFromAiRequest,
 } from '@/lib/ai-import'
 import { sanitiseDocumentForAi } from '@/lib/document-privacy'
 import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
@@ -57,9 +57,14 @@ function toNullableNumber(value: unknown) {
 
 async function extractDocketWithDeepSeek(
   restaurantId: string,
-  text: string,
+  input: { text: string | null; imageDataUrl: string | null },
   supplierHint: string | null
 ) {
+  const sourceInstructions = input.imageDataUrl
+    ? `Read the attached delivery docket image directly. Black areas are deliberate privacy
+redactions. Ignore them and never try to infer the covered information.`
+    : `Read the privacy-filtered OCR text below:\n${input.text?.slice(0, 120000) || ''}`
+
   const prompt = `
 You are extracting structured delivery docket data for a restaurant inventory system.
 
@@ -83,7 +88,7 @@ For each line item return:
 Rules:
 - Do not invent rows.
 - If uncertain, still include the row but put uncertainty in notes.
-- Many dockets are OCR text from a table with columns like PRODUCT, DESCRIPTION, QTY, WEIGHT, PRICE PER, UNIT COST, TOTAL COST.
+- Dockets may be supplied as a redacted image or OCR text from a table with columns like PRODUCT, DESCRIPTION, QTY, WEIGHT, PRICE PER, UNIT COST, TOTAL COST.
 - For table OCR, treat the PRODUCT column as supplierSku and DESCRIPTION as productName.
 - Do not use the supplier name or random OCR fragments as supplierSku.
 - Supplier SKUs are usually short product codes near the start of each row, such as CODSP1, IC7801, ICP781, or MUSS02.
@@ -93,7 +98,7 @@ Rules:
 - If price is unclear, use null.
 - If supplier SKU is unclear, use null.
 - Keep product names clean and do not include headers/footers.
-- The text has already been privacy-filtered. Do not infer or recreate addresses, contact details, account numbers, or other removed information.
+- Do not infer or recreate addresses, contact details, account numbers, payment details, staff names, or any information hidden by black redaction boxes.
 - If the supplier is not visible in the filtered text, use ${JSON.stringify(supplierHint)}.
 
 Return this shape exactly:
@@ -114,13 +119,13 @@ Return this shape exactly:
   ]
 }
 
-Privacy-filtered delivery docket OCR text:
-${text.slice(0, 120000)}
+${sourceInstructions}
 `
   return parseJsonWithDeepSeek<ExtractedDocket>({
     restaurantId,
     feature: 'delivery_docket',
     prompt,
+    imageDataUrl: input.imageDataUrl || undefined,
     qualityCheck: (value) =>
       Array.isArray(value.rows) &&
       value.rows.length > 0 &&
@@ -129,8 +134,20 @@ ${text.slice(0, 120000)}
 }
 
 async function deliveryDocketInput(req: Request) {
-  const { text, body } = await textFromAiRequest(req)
-  const sanitised = sanitiseDocumentForAi(text, 'delivery')
+  const { text, imageDataUrl, body } = await documentFromAiRequest(req)
+
+  if (imageDataUrl) {
+    return {
+      text: null,
+      imageDataUrl,
+      supplierHint: cleanText(body?.supplierHint),
+      removedLineCount: 0,
+      tableBoundaryFound: false,
+      mode: 'redacted-image',
+    } as const
+  }
+
+  const sanitised = sanitiseDocumentForAi(text || '', 'delivery')
 
   if (sanitised.text.length < 30) {
     throw new Error('OCR_TEXT_TOO_SHORT')
@@ -138,10 +155,12 @@ async function deliveryDocketInput(req: Request) {
 
   return {
     text: sanitised.text,
+    imageDataUrl: null,
     supplierHint: cleanText(body?.supplierHint),
     removedLineCount: sanitised.removedLineCount,
     tableBoundaryFound: sanitised.tableBoundaryFound,
-  }
+    mode: 'privacy-filtered-text',
+  } as const
 }
 
 async function matchSupplierProduct(
@@ -270,7 +289,10 @@ export async function POST(req: Request) {
 
     const extracted = await extractDocketWithDeepSeek(
       tenant.restaurantId,
-      docketInput.text,
+      {
+        text: docketInput.text,
+        imageDataUrl: docketInput.imageDataUrl,
+      },
       docketInput.supplierHint
     )
 
@@ -323,7 +345,7 @@ export async function POST(req: Request) {
       rawExtracted: extracted,
       parser: {
         provider: 'deepseek',
-        mode: 'privacy-filtered-ocr',
+        mode: docketInput.mode,
         model: 'flash-first',
         removedLineCount: docketInput.removedLineCount,
         tableBoundaryFound: docketInput.tableBoundaryFound,

@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import CopyableError from '@/app/components/CopyableError'
-import { readImageTextWithTesseract } from '@/lib/browser-ocr'
+import ImageRedactionEditor, {
+  type ImageRedactionEditorHandle,
+} from '@/app/components/ImageRedactionEditor'
 import { sanitiseDocumentForAi } from '@/lib/document-privacy'
 
 type UnitType = 'g' | 'ml' | 'each'
@@ -202,6 +204,7 @@ export default function SuppliersPage() {
   const [loadingImpact, setLoadingImpact] = useState(false)
   const photoInputRef = useRef<HTMLInputElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const priceRedactionRef = useRef<ImageRedactionEditorHandle | null>(null)
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -415,21 +418,17 @@ export default function SuppliersPage() {
           body: formData,
         })
       } else if (selectedFile?.type.startsWith('image/')) {
-        const ocrText = await readImageTextWithTesseract(selectedFile, setOcrProgress)
-        const privacySafe = sanitiseDocumentForAi(ocrText, 'supplier_price')
+        setOcrProgress('Preparing the checked redacted image...')
+        const redacted = await priceRedactionRef.current?.exportRedactedImage()
 
-        if (privacySafe.text.length < 30) {
-          throw new Error(
-            'No privacy-safe product table could be read. Try a clearer image or paste the product rows.'
-          )
-        }
+        if (!redacted) throw new Error('Review the image redactions before parsing.')
 
-        setOcrProgress('Removing private details and structuring product rows...')
+        setOcrProgress('DeepSeek is reading the redacted price-list image...')
         res = await fetch('/api/parse-supplier-price-list', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            ocrText: privacySafe.text,
+            redactedImageDataUrl: redacted.dataUrl,
             supplier,
             sourceFileName: selectedFile.name,
           }),
@@ -920,10 +919,8 @@ async function handlePriceOnlySave() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Price List</h2>
           <p className="mt-2 text-sm text-slate-700">
-            Images are read on this device. Addresses, contact details, account references and
-            payment information are removed before product text is sent for AI parsing. Sysco
-            spreadsheets and Caterway PDFs are parsed without sending their contents to an AI
-            provider.
+            For images, check the privacy masks before DeepSeek reads the redacted copy. Sysco
+            spreadsheets and Caterway PDFs are parsed without sending their contents to an AI provider.
           </p>
 
           <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -1022,6 +1019,15 @@ async function handlePriceOnlySave() {
               {saving ? 'Saving…' : 'Full Save + Create/Update L3s'}
             </button>
           </div>
+
+          {selectedFile?.type.startsWith('image/') ? (
+            <ImageRedactionEditor
+              ref={priceRedactionRef}
+              file={selectedFile}
+              kind="supplier_price"
+              disabled={parsing || saving}
+            />
+          ) : null}
 
           <div className="mt-5">
             <label className="mb-1 block text-sm font-medium text-slate-900">Paste Text</label>

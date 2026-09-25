@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import CopyableError from '@/app/components/CopyableError'
-import { readImageTextWithTesseract } from '@/lib/browser-ocr'
-import { matchKnownSupplier, sanitiseDocumentForAi } from '@/lib/document-privacy'
+import ImageRedactionEditor, {
+  type ImageRedactionEditorHandle,
+} from '@/app/components/ImageRedactionEditor'
 
 type UnitType = 'g' | 'ml' | 'each'
 type VatReclaimStatus = 'NOT_APPLICABLE' | 'ELIGIBLE' | 'CLAIMED' | 'NOT_CLAIMED'
@@ -168,6 +169,7 @@ export default function DeliveriesPage() {
   const itemPickerRef = useRef<HTMLDivElement | null>(null)
   const docketPhotoInputRef = useRef<HTMLInputElement | null>(null)
   const docketFileInputRef = useRef<HTMLInputElement | null>(null)
+  const docketRedactionRef = useRef<ImageRedactionEditorHandle | null>(null)
 
   const selectedItem = items.find((item) => item.id === itemId)
 
@@ -746,27 +748,18 @@ export default function DeliveriesPage() {
       let data: ParsedDocketResponse & { error?: string }
 
       if (isImage) {
-        const ocrText = await readImageTextWithTesseract(docketFile, setDocketOcrProgress)
-        const privacySafe = sanitiseDocumentForAi(ocrText, 'delivery')
-        const supplierHint = matchKnownSupplier(
-          ocrText,
-          supplierProducts.map((product) => product.supplier)
-        )
+        setDocketOcrProgress('Preparing the checked redacted image...')
+        const redacted = await docketRedactionRef.current?.exportRedactedImage()
 
-        if (privacySafe.text.length < 30) {
-          throw new Error(
-            'No privacy-safe product table could be read. Try a clearer photo or enter the delivery manually.'
-          )
-        }
+        if (!redacted) throw new Error('Review the image redactions before parsing.')
 
-        setDocketOcrProgress('Removing private details and structuring product rows...')
+        setDocketOcrProgress('DeepSeek is reading the redacted docket image...')
 
         res = await fetch('/api/parse-delivery-docket', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            ocrText: privacySafe.text,
-            supplierHint,
+            redactedImageDataUrl: redacted.dataUrl,
             sourceFileName: docketFile.name,
           }),
         })
@@ -980,9 +973,8 @@ export default function DeliveriesPage() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Delivery Docket</h2>
           <p className="mt-2 text-sm text-slate-700">
-            Take a photo or upload a PDF, Excel, TXT, or CSV docket. Photos are read on this
-            device, and addresses and account details are removed before product text is sent
-            for AI parsing. Review every row before saving.
+            Take a photo or upload a PDF, Excel, TXT, or CSV docket. For photos, check the privacy
+            masks before DeepSeek reads the redacted copy. Review every row before saving.
           </p>
 
           <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto_auto_auto] md:items-end">
@@ -1068,6 +1060,15 @@ export default function DeliveriesPage() {
               Clear
             </button>
           </div>
+
+          {docketFile?.type.startsWith('image/') ? (
+            <ImageRedactionEditor
+              ref={docketRedactionRef}
+              file={docketFile}
+              kind="delivery"
+              disabled={docketParsing || docketSaving}
+            />
+          ) : null}
         </section>
 
         {parsedDocket ? (

@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import CopyableError from '@/app/components/CopyableError'
-import { readImageTextWithTesseract } from '@/lib/browser-ocr'
+import ImageRedactionEditor, {
+  type ImageRedactionEditorHandle,
+} from '@/app/components/ImageRedactionEditor'
 import { sanitiseDocumentForAi } from '@/lib/document-privacy'
 
 type Item = {
@@ -133,6 +135,7 @@ export default function SalesPage() {
   const [loading, setLoading] = useState(false)
   const photoInputRef = useRef<HTMLInputElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const salesRedactionRef = useRef<ImageRedactionEditorHandle | null>(null)
 
   const summary = useMemo(() => {
     const totalSalesRows = sales.length
@@ -357,20 +360,19 @@ export default function SalesPage() {
           body: JSON.stringify({ pastedText: privacySafe.text }),
         })
       } else if (importFile?.type.startsWith('image/')) {
-        const ocrText = await readImageTextWithTesseract(importFile, setOcrProgress)
-        const privacySafe = sanitiseDocumentForAi(ocrText, 'sales')
+        setOcrProgress('Preparing the checked redacted image...')
+        const redacted = await salesRedactionRef.current?.exportRedactedImage()
 
-        if (privacySafe.text.length < 30) {
-          throw new Error(
-            'No privacy-safe sales table could be read. Try a clearer image or paste the sales rows.'
-          )
-        }
+        if (!redacted) throw new Error('Review the image redactions before parsing.')
 
-        setOcrProgress('Removing private details and structuring sales rows...')
+        setOcrProgress('DeepSeek is reading the redacted POS image...')
         res = await fetch('/api/parse-sales-zread', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ocrText: privacySafe.text, sourceFileName: importFile.name }),
+          body: JSON.stringify({
+            redactedImageDataUrl: redacted.dataUrl,
+            sourceFileName: importFile.name,
+          }),
         })
       } else if (importFile) {
         if (importFile.size > directUploadLimit) {
@@ -555,9 +557,9 @@ export default function SalesPage() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Import Z-Read / POS Report</h2>
           <p className="mt-2 text-sm text-slate-700">
-            Take a photo, upload a text-style file, or paste text. Customer, staff, address,
-            payment and account details are removed before sales rows are sent for AI parsing.
-            Review matched L1 sales before stock is consumed.
+            Take a photo, upload a text-style file, or paste text. For photos, check the privacy
+            masks before DeepSeek reads the redacted copy. Logos can remain visible. Review matched
+            L1 sales before stock is consumed.
           </p>
 
           <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto_auto_auto] lg:items-end">
@@ -627,6 +629,15 @@ export default function SalesPage() {
               {parsingImport ? 'Parsing...' : 'Parse Sales'}
             </button>
           </div>
+
+          {importFile?.type.startsWith('image/') ? (
+            <ImageRedactionEditor
+              ref={salesRedactionRef}
+              file={importFile}
+              kind="sales"
+              disabled={parsingImport || savingImport}
+            />
+          ) : null}
 
           <div className="mt-4">
             <label className="mb-1 block text-sm font-medium text-slate-900">Paste Text</label>

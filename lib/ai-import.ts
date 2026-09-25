@@ -2,9 +2,11 @@ import { createRequire } from 'module'
 import * as XLSX from 'xlsx'
 import { prisma } from '@/lib/prisma'
 import {
+  assertRedactedImageDataUrl,
   assertDocumentTextSize,
   assertDocumentUploadSize,
   MAX_DOCUMENT_UPLOAD_BYTES,
+  MAX_REDACTED_IMAGE_BYTES,
 } from '@/lib/upload-security'
 
 const require = createRequire(import.meta.url)
@@ -330,6 +332,44 @@ export async function textFromAiRequest(req: Request, textKeys = ['ocrText', 'pa
   }
 }
 
+export async function documentFromAiRequest(
+  req: Request,
+  textKeys = ['ocrText', 'pastedText', 'text']
+) {
+  const contentType = req.headers.get('content-type') || ''
+
+  if (contentType.includes('application/json')) {
+    const body = await req.json()
+    const redactedImageDataUrl = cleanText(body?.redactedImageDataUrl)
+
+    if (redactedImageDataUrl) {
+      return {
+        text: null,
+        imageDataUrl: assertRedactedImageDataUrl(redactedImageDataUrl),
+        body,
+      }
+    }
+
+    const text = textKeys.map((key) => cleanText(body?.[key])).find(Boolean) || ''
+
+    if (text.length < 30) throw new Error('OCR_TEXT_TOO_SHORT')
+    assertDocumentTextSize(text)
+
+    return {
+      text,
+      imageDataUrl: null,
+      body,
+    }
+  }
+
+  const result = await textFromAiRequest(req, textKeys)
+
+  return {
+    ...result,
+    imageDataUrl: null,
+  }
+}
+
 export function aiErrorResponse(error: unknown) {
   if (error instanceof Error && error.message === 'DEEPSEEK_API_KEY_MISSING') {
     return Response.json({ error: 'DEEPSEEK_API_KEY is not configured.' }, { status: 500 })
@@ -357,6 +397,24 @@ export function aiErrorResponse(error: unknown) {
 
   if (error instanceof Error && error.message === 'OCR_TEXT_TOO_SHORT') {
     return Response.json({ error: 'OCR/text input did not contain enough readable text.' }, { status: 400 })
+  }
+
+  if (error instanceof Error && error.message === 'INVALID_REDACTED_IMAGE') {
+    return Response.json(
+      { error: 'The redacted image could not be verified. Review the image and try again.' },
+      { status: 400 }
+    )
+  }
+
+  if (error instanceof Error && error.message === 'REDACTED_IMAGE_TOO_LARGE') {
+    return Response.json(
+      {
+        error: `The redacted image is too large. Keep it below ${Math.round(
+          MAX_REDACTED_IMAGE_BYTES / 1024 / 1024
+        )} MB.`,
+      },
+      { status: 413 }
+    )
   }
 
   if (error instanceof Error && error.message === 'NO_FILE_UPLOADED') {

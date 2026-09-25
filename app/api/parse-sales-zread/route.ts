@@ -6,8 +6,8 @@ import { prisma } from '@/lib/prisma'
 import {
   aiErrorResponse,
   cleanText,
+  documentFromAiRequest,
   parseJsonWithDeepSeek,
-  textFromAiRequest,
 } from '@/lib/ai-import'
 import { sanitiseDocumentForAi } from '@/lib/document-privacy'
 import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
@@ -220,10 +220,10 @@ export async function POST(req: Request) {
       )
     }
 
-    const { text: rawText } = await textFromAiRequest(req)
-    const sanitised = sanitiseDocumentForAi(rawText, 'sales')
+    const { text: rawText, imageDataUrl } = await documentFromAiRequest(req)
+    const sanitised = imageDataUrl ? null : sanitiseDocumentForAi(rawText || '', 'sales')
 
-    if (sanitised.text.length < 30) {
+    if (sanitised && sanitised.text.length < 30) {
       return NextResponse.json(
         { error: 'No privacy-safe sales rows were found in the report.' },
         { status: 400 }
@@ -270,6 +270,11 @@ export async function POST(req: Request) {
       .slice(0, 800)
       .map((item) => `${item.sku}\t${item.name}\t${item.itemType}\t${item.unitType}`)
       .join('\n')
+    const sourceInstructions = imageDataUrl
+      ? `Read the attached Z-read/POS image directly. Black areas are deliberate privacy
+redactions. Ignore them and never try to infer the covered information. Printed logos are not
+sale rows.`
+      : `Read the privacy-filtered Z-read/POS text below:\n${sanitised?.text.slice(0, 120000) || ''}`
 
     const prompt = `
 You are extracting end-of-night restaurant POS Z-read sales into Flowdish.
@@ -307,7 +312,7 @@ Rules:
 - Use quantity sold, not price, net sales, gross sales, VAT, or total cost.
 - Do not invent rows.
 - If unsure whether a line is a sold menu item, omit it.
-- The text has already been privacy-filtered. Do not infer or recreate customer, staff, address, payment, account, or contact details that were removed.
+- Do not infer or recreate customer, staff, address, payment, account, or contact details, including anything hidden by black redaction boxes.
 
 Known Flowdish L1 dishes for matching context:
 ${itemContext}
@@ -337,14 +342,14 @@ Return this shape exactly:
   ]
 }
 
-Z-read/POS text:
-${sanitised.text.slice(0, 120000)}
+${sourceInstructions}
 `
 
     const parsed = await parseJsonWithDeepSeek<ParsedSalesReport>({
       restaurantId: tenant.restaurantId,
       feature: 'sales_zread',
       prompt,
+      imageDataUrl: imageDataUrl || undefined,
     })
 
     const rows = Array.isArray(parsed.rows) ? parsed.rows : []

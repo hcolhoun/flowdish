@@ -5,8 +5,8 @@ import { NextResponse } from 'next/server'
 import {
   aiErrorResponse,
   cleanText,
+  documentFromAiRequest,
   parseJsonWithDeepSeek,
-  textFromAiRequest,
 } from '@/lib/ai-import'
 import { sanitiseDocumentForAi } from '@/lib/document-privacy'
 import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
@@ -45,10 +45,12 @@ export async function POST(req: Request) {
       )
     }
 
-    const { text: rawText, body } = await textFromAiRequest(req)
-    const sanitised = sanitiseDocumentForAi(rawText, 'supplier_price')
+    const { text: rawText, imageDataUrl, body } = await documentFromAiRequest(req)
+    const sanitised = imageDataUrl
+      ? null
+      : sanitiseDocumentForAi(rawText || '', 'supplier_price')
 
-    if (sanitised.text.length < 30) {
+    if (sanitised && sanitised.text.length < 30) {
       return NextResponse.json(
         { error: 'No privacy-safe product rows were found in the price list.' },
         { status: 400 }
@@ -56,6 +58,10 @@ export async function POST(req: Request) {
     }
 
     const requestedSupplier = cleanText(body?.supplier)
+    const sourceInstructions = imageDataUrl
+      ? `Read the attached supplier price-list image directly. Black areas are deliberate privacy
+redactions. Ignore them and never try to infer the covered information.`
+      : `Read the privacy-filtered supplier price-list text below:\n${sanitised?.text.slice(0, 120000) || ''}`
 
     const prompt = `
 You are extracting supplier product price-list rows for Flowdish, a restaurant stock and costing system.
@@ -80,7 +86,7 @@ Rules:
 - If only one price is shown, use it as packPrice unless the document clearly labels it as unit/kg price.
 - Use null for unclear prices rather than guessing.
 - If supplier is not visible, use ${JSON.stringify(requestedSupplier)}.
-- The text has already been privacy-filtered. Do not infer or recreate addresses, contact details, account numbers, or other removed information.
+- Do not infer or recreate addresses, contact details, account numbers, payment details, staff names, or any information hidden by black redaction boxes.
 
 Return this shape exactly:
 {
@@ -99,14 +105,14 @@ Return this shape exactly:
   ]
 }
 
-Privacy-filtered supplier price-list text:
-${sanitised.text.slice(0, 120000)}
+${sourceInstructions}
 `
 
     const parsed = await parseJsonWithDeepSeek<ParsedSupplierPriceList>({
       restaurantId: tenant.restaurantId,
       feature: 'supplier_price_import',
       prompt,
+      imageDataUrl: imageDataUrl || undefined,
     })
 
     const fallbackSupplier = cleanText(parsed.supplier) || requestedSupplier || ''
@@ -150,8 +156,9 @@ ${sanitised.text.slice(0, 120000)}
       rejected: [],
       debug: {
         parsedCount: ready.length + needsReview.length,
-        privacyRemovedLineCount: sanitised.removedLineCount,
-        tableBoundaryFound: sanitised.tableBoundaryFound,
+        inputMode: imageDataUrl ? 'redacted-image' : 'privacy-filtered-text',
+        privacyRemovedLineCount: sanitised?.removedLineCount ?? 0,
+        tableBoundaryFound: sanitised?.tableBoundaryFound ?? false,
       },
     })
   } catch (error) {

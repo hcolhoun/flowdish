@@ -37,11 +37,11 @@ const sections = [
     title: 'AI, OCR, and Imported Files',
     body: [
       'Flowdish may use OCR and AI parsing to convert delivery dockets, supplier price lists, sales Z-reads, or similar documents into reviewable rows.',
-      'For photographed delivery dockets and supplier price lists, OCR runs on the user device. Flowdish removes document headers, addresses, contact details, account references, payment details, and footer sections before sending the remaining product-table text to the AI parsing provider. The original image is not sent to that provider.',
+      'For photographed delivery dockets, supplier price lists, and sales Z-reads, Flowdish displays a privacy preview on the user device. Suggested masks can be moved, resized, deleted, or supplemented by the user. After the user confirms the preview, the browser permanently applies the black masks to a new image. Only that flattened, redacted copy is sent to the AI parsing provider; the original image is not sent.',
       'Supported structured supplier formats, including Sysco spreadsheets and Caterway PDFs, are parsed inside Flowdish without sending their contents to an AI provider.',
       'For PDF, spreadsheet, CSV, and text imports, Flowdish extracts text on its application server and applies the same privacy filter before AI parsing. Raw files, OCR text, and raw AI JSON are not intentionally stored after processing. Reviewed operational records, supplier changes, import summaries, and AI usage metadata may be stored.',
-      'Sales Z-read and POS imports are reduced to sales-table rows before AI parsing, with customer, staff, address, payment, account, and contact details removed where detected.',
-      'Automated filtering reduces unnecessary disclosure but cannot guarantee that every unusual document layout or OCR error will be identified. Users should still avoid uploading documents containing unnecessary personal, banking, payment-card, or other sensitive information.',
+      'For pasted or text-based imports, sales Z-read and POS content is reduced to sales-table rows before AI parsing, with customer, staff, address, payment, account, and contact details removed where detected.',
+      'Suggested image masks and automated text filtering reduce unnecessary disclosure but cannot guarantee that every unusual document layout or sensitive detail will be identified. Users must check image masks before confirming and should avoid uploading unnecessary personal, banking, payment-card, or other sensitive information.',
     ],
   },
   {
