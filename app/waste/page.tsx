@@ -98,7 +98,7 @@ export default function WastePage() {
   }
 
   async function loadItems() {
-    const res = await fetch('/api/items', { cache: 'no-store' })
+    const res = await fetch('/api/recording-items', { cache: 'no-store' })
     const data = await safeJson(res)
 
     if (!res.ok) {

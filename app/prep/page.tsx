@@ -510,7 +510,7 @@ export default function PrepPage() {
       setError('')
 
       const [itemsRes, prepRes] = await Promise.all([
-        fetch('/api/items', { cache: 'no-store' }),
+        fetch('/api/recording-items', { cache: 'no-store' }),
         fetch('/api/prep', { cache: 'no-store' }),
       ])
 

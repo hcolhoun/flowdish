@@ -7,7 +7,9 @@ import {
   aiErrorResponse,
   cleanText,
   parseJsonWithDeepSeek,
+  supportedImageMimeType,
   textFromAiRequest,
+  textFromUploadFile,
 } from '@/lib/ai-import'
 import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
@@ -54,7 +56,13 @@ function toNullableNumber(value: unknown) {
   return Number.isFinite(number) ? number : null
 }
 
-async function extractDocketWithDeepSeek(restaurantId: string, text: string) {
+async function extractDocketWithDeepSeek(
+  restaurantId: string,
+  options: { text?: string; imageDataUrl?: string }
+) {
+  const inputInstruction = options.imageDataUrl
+    ? 'Read the attached delivery docket image directly. Pay close attention to table columns, decimal places, pack quantities, supplier SKUs, and line totals.'
+    : `Delivery docket text:\n${String(options.text || '').slice(0, 120000)}`
   const prompt = `
 You are extracting structured delivery docket data for a restaurant inventory system.
 
@@ -107,14 +115,54 @@ Return this shape exactly:
   ]
 }
 
-Delivery docket text:
-${text.slice(0, 120000)}
+${inputInstruction}
 `
   return parseJsonWithDeepSeek<ExtractedDocket>({
     restaurantId,
     feature: 'delivery_docket',
     prompt,
+    imageDataUrl: options.imageDataUrl,
+    qualityCheck: (value) =>
+      Array.isArray(value.rows) &&
+      value.rows.length > 0 &&
+      value.rows.some((row) => Boolean(cleanText(row.productName))),
   })
+}
+
+async function deliveryDocketInput(req: Request) {
+  const contentType = req.headers.get('content-type') || ''
+
+  if (contentType.includes('application/json')) {
+    const { text } = await textFromAiRequest(req)
+    return { text, imageDataUrl: undefined, inputMode: 'text' as const }
+  }
+
+  const formData = await req.formData()
+  const file = formData.get('file')
+
+  if (!(file instanceof File)) {
+    throw new Error('NO_FILE_UPLOADED')
+  }
+
+  const imageMimeType = supportedImageMimeType(file)
+  if (imageMimeType) {
+    if (file.size > 4 * 1024 * 1024) {
+      throw new Error('IMAGE_TOO_LARGE')
+    }
+
+    const buffer = Buffer.from(await file.arrayBuffer())
+    return {
+      text: undefined,
+      imageDataUrl: `data:${imageMimeType};base64,${buffer.toString('base64')}`,
+      inputMode: 'vision' as const,
+    }
+  }
+
+  return {
+    text: await textFromUploadFile(file),
+    imageDataUrl: undefined,
+    inputMode: 'text' as const,
+  }
 }
 
 async function matchSupplierProduct(
@@ -231,9 +279,9 @@ async function matchSupplierProduct(
 export async function POST(req: Request) {
   try {
     const tenant = await requireTenant()
-    const { text: docketText } = await textFromAiRequest(req)
+    const docketInput = await deliveryDocketInput(req)
 
-    const extracted = await extractDocketWithDeepSeek(tenant.restaurantId, docketText)
+    const extracted = await extractDocketWithDeepSeek(tenant.restaurantId, docketInput)
 
     const supplier = normaliseSupplier(cleanText(extracted.supplier))
     const deliveryDate = cleanText(extracted.deliveryDate)
@@ -284,7 +332,8 @@ export async function POST(req: Request) {
       rawExtracted: extracted,
       parser: {
         provider: 'deepseek',
-        model: 'deepseek-v4-pro',
+        mode: docketInput.inputMode,
+        model: docketInput.inputMode === 'vision' ? 'deepseek-flash' : 'flash-first',
       },
     })
   } catch (error) {
@@ -293,6 +342,20 @@ export async function POST(req: Request) {
 
     const aiError = aiErrorResponse(error)
     if (aiError) return aiError
+
+    if (error instanceof Error && error.message === 'UNSUPPORTED_IMAGE') {
+      return NextResponse.json(
+        { error: 'Use a JPEG, PNG, GIF, or WebP docket image.' },
+        { status: 400 }
+      )
+    }
+
+    if (error instanceof Error && error.message === 'IMAGE_TOO_LARGE') {
+      return NextResponse.json(
+        { error: 'The prepared docket image is too large. Try a smaller photo.' },
+        { status: 413 }
+      )
+    }
 
     console.error('POST /api/parse-delivery-docket failed:', error)
     return NextResponse.json(

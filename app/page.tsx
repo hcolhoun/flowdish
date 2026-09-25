@@ -1,7 +1,18 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
+
+type KitchenBriefing = {
+  summary: string
+  actions: Array<{
+    priority: 'urgent' | 'attention' | 'routine'
+    title: string
+    detail: string
+    href: string
+  }>
+}
 
 type DashboardData = {
   totals: {
@@ -80,6 +91,9 @@ type DashboardData = {
 export default function HomePage() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [error, setError] = useState('')
+  const [briefing, setBriefing] = useState<KitchenBriefing | null>(null)
+  const [briefingLoading, setBriefingLoading] = useState(false)
+  const [briefingError, setBriefingError] = useState('')
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -110,6 +124,28 @@ export default function HomePage() {
   useEffect(() => {
     loadDashboard()
   }, [])
+
+  async function prepareBriefing() {
+    try {
+      setBriefingLoading(true)
+      setBriefingError('')
+
+      const res = await fetch('/api/dashboard-briefing', {
+        method: 'POST',
+      })
+      const result = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(result?.error || 'Failed to prepare the kitchen briefing')
+      }
+
+      setBriefing(result.briefing)
+    } catch (err) {
+      setBriefingError(err instanceof Error ? err.message : 'Unknown briefing error')
+    } finally {
+      setBriefingLoading(false)
+    }
+  }
 
   function money(value: number) {
     return new Intl.NumberFormat('en-IE', {
@@ -142,6 +178,86 @@ export default function HomePage() {
           <div className="mt-8 text-sm text-slate-700">Loading dashboard…</div>
         ) : (
           <>
+            <section className="fd-panel mt-8 overflow-hidden">
+              <div className="fd-panel-heading flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+                    <Sparkles aria-hidden="true" className="h-5 w-5 text-cyan-700" />
+                    Today&apos;s Kitchen Briefing
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    A read-only summary of stock, expiry, forecasts, HACCP and refrigeration.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={prepareBriefing}
+                  disabled={briefingLoading}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <RefreshCw
+                    aria-hidden="true"
+                    className={`h-4 w-4 ${briefingLoading ? 'animate-spin' : ''}`}
+                  />
+                  {briefingLoading
+                    ? 'Preparing briefing...'
+                    : briefing
+                      ? 'Refresh briefing'
+                      : 'Prepare briefing'}
+                </button>
+              </div>
+
+              {briefingError ? (
+                <div className="px-5 py-4">
+                  <CopyableError message={briefingError} />
+                </div>
+              ) : briefing ? (
+                <div className="px-5 py-5">
+                  <p className="font-medium text-slate-900">{briefing.summary}</p>
+                  {briefing.actions.length ? (
+                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      {briefing.actions.map((action, index) => (
+                        <a
+                          key={`${action.title}-${index}`}
+                          href={action.href}
+                          className={`block border-l-4 px-4 py-3 hover:bg-slate-50 ${
+                            action.priority === 'urgent'
+                              ? 'border-red-600 bg-red-50/60'
+                              : action.priority === 'attention'
+                                ? 'border-amber-500 bg-amber-50/60'
+                                : 'border-cyan-600 bg-cyan-50/50'
+                          }`}
+                        >
+                          <div className="flex items-start gap-2">
+                            {action.priority !== 'routine' ? (
+                              <AlertTriangle
+                                aria-hidden="true"
+                                className={`mt-0.5 h-4 w-4 shrink-0 ${
+                                  action.priority === 'urgent'
+                                    ? 'text-red-700'
+                                    : 'text-amber-700'
+                                }`}
+                              />
+                            ) : null}
+                            <div>
+                              <div className="font-semibold text-slate-900">{action.title}</div>
+                              <p className="mt-1 text-sm leading-5 text-slate-700">{action.detail}</p>
+                            </div>
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-slate-600">No follow-up actions were found.</p>
+                  )}
+                </div>
+              ) : (
+                <div className="px-5 py-4 text-sm text-slate-600">
+                  Generate this when the chef starts a shift. Nothing is changed or saved by the briefing.
+                </div>
+              )}
+            </section>
+
             <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <Card title="Total Revenue" value={money(data.financials.totalRevenue)} />
               <Card title="COGS" value={money(data.financials.totalCogs)} />

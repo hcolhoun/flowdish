@@ -9,6 +9,34 @@ type ReaderStatus = 'idle' | 'speaking' | 'paused'
 type InteractiveSopReaderProps = {
   title: string
   instructions: string
+  language?: string
+}
+
+const VOICE_COMMANDS: Record<string, { pause: string[]; continue: string[] }> = {
+  'en-IE': {
+    pause: ['pause', 'pause reading'],
+    continue: ['continue', 'continue reading', 'resume', 'resume reading'],
+  },
+  'pl-PL': {
+    pause: ['pauza', 'wstrzymaj'],
+    continue: ['kontynuuj', 'wznów', 'dalej'],
+  },
+  'ro-RO': {
+    pause: ['pauză', 'oprește'],
+    continue: ['continuă', 'reia'],
+  },
+  'es-ES': {
+    pause: ['pausa', 'pausar'],
+    continue: ['continúa', 'continuar', 'reanudar'],
+  },
+  'pt-PT': {
+    pause: ['pausa', 'pausar'],
+    continue: ['continuar', 'continua', 'retomar'],
+  },
+  'fr-FR': {
+    pause: ['pause', 'arrête'],
+    continue: ['continue', 'continuer', 'reprendre'],
+  },
 }
 
 function splitInstructions(instructions: string) {
@@ -22,7 +50,7 @@ function splitInstructions(instructions: string) {
 function normaliseCommand(transcript: string) {
   return transcript
     .toLowerCase()
-    .replace(/[^a-z\s]/g, ' ')
+    .replace(/[^\p{L}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -30,6 +58,7 @@ function normaliseCommand(transcript: string) {
 export default function InteractiveSopReader({
   title,
   instructions,
+  language = 'en-IE',
 }: InteractiveSopReaderProps) {
   const steps = useMemo(() => splitInstructions(instructions), [instructions])
   const stepsRef = useRef(steps)
@@ -98,15 +127,11 @@ export default function InteractiveSopReader({
 
   function handleVoiceCommand(transcript: string) {
     const command = normaliseCommand(transcript)
+    const commands = VOICE_COMMANDS[language] || VOICE_COMMANDS['en-IE']
 
-    if (command === 'pause' || command === 'pause reading') {
+    if (commands.pause.some((phrase) => command === normaliseCommand(phrase))) {
       pauseReading()
-    } else if (
-      command === 'continue' ||
-      command === 'continue reading' ||
-      command === 'resume' ||
-      command === 'resume reading'
-    ) {
+    } else if (commands.continue.some((phrase) => command === normaliseCommand(phrase))) {
       continueReading()
     }
   }
@@ -123,7 +148,7 @@ export default function InteractiveSopReader({
       const recognition = new Recognition()
       recognition.continuous = true
       recognition.interimResults = false
-      recognition.lang = 'en-IE'
+      recognition.lang = language
 
       recognition.onresult = (event) => {
         for (let index = event.resultIndex; index < event.results.length; index += 1) {
@@ -184,7 +209,7 @@ export default function InteractiveSopReader({
     setReaderStatus('speaking')
 
     const utterance = new SpeechSynthesisUtterance(currentSteps[index])
-    utterance.lang = 'en-IE'
+    utterance.lang = language
     utterance.rate = 0.92
     utterance.onend = () => {
       if (statusRef.current === 'speaking') speakStep(index + 1)

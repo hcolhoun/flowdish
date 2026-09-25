@@ -10,6 +10,15 @@ type VoiceDictationButtonProps = {
   disabled?: boolean
 }
 
+const VOICE_LANGUAGES = [
+  { code: 'en-IE', label: 'English' },
+  { code: 'pl-PL', label: 'Polish' },
+  { code: 'ro-RO', label: 'Romanian' },
+  { code: 'es-ES', label: 'Spanish' },
+  { code: 'pt-PT', label: 'Portuguese' },
+  { code: 'fr-FR', label: 'French' },
+]
+
 function recognitionErrorMessage(code: string) {
   if (code === 'not-allowed' || code === 'service-not-allowed') {
     return 'Microphone access was blocked. Allow microphone access for Flowdish and try again.'
@@ -36,6 +45,7 @@ export default function VoiceDictationButton({
   const [listening, setListening] = useState(false)
   const [interimText, setInterimText] = useState('')
   const [error, setError] = useState('')
+  const [language, setLanguage] = useState('en-IE')
 
   useEffect(() => {
     setSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition))
@@ -84,7 +94,7 @@ export default function VoiceDictationButton({
 
     recognition.continuous = true
     recognition.interimResults = true
-    recognition.lang = 'en-IE'
+    recognition.lang = language
 
     recognition.onresult = (event) => {
       let interim = ''
@@ -141,26 +151,44 @@ export default function VoiceDictationButton({
 
   return (
     <div className="flex flex-col items-start gap-2">
-      <button
-        type="button"
-        onClick={listening ? stopListening : startListening}
-        disabled={disabled || processing}
-        aria-pressed={listening}
-        className={
-          listening
-            ? 'inline-flex min-h-11 items-center gap-2 rounded-lg bg-red-700 px-4 py-2 font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60'
-            : 'inline-flex min-h-11 items-center gap-2 rounded-lg border border-blue-300 bg-blue-50 px-4 py-2 font-medium text-blue-800 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60'
-        }
-      >
-        {processing ? (
-          <LoaderCircle aria-hidden="true" className="h-5 w-5 animate-spin" />
-        ) : listening ? (
-          <Square aria-hidden="true" className="h-4 w-4 fill-current" />
-        ) : (
-          <Mic aria-hidden="true" className="h-5 w-5" />
-        )}
-        {processing ? 'Preparing draft...' : listening ? 'Stop and review' : 'Voice entry'}
-      </button>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-xs font-medium text-slate-700">
+          Voice language
+          <select
+            value={language}
+            onChange={(event) => setLanguage(event.target.value)}
+            disabled={listening || processing}
+            className="mt-1 block min-h-11 rounded-lg border bg-white px-2 py-2 text-sm text-slate-900 disabled:opacity-60"
+          >
+            {VOICE_LANGUAGES.map((option) => (
+              <option key={option.code} value={option.code}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <button
+          type="button"
+          onClick={listening ? stopListening : startListening}
+          disabled={disabled || processing}
+          aria-pressed={listening}
+          className={
+            listening
+              ? 'inline-flex min-h-11 items-center gap-2 rounded-lg bg-red-700 px-4 py-2 font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60'
+              : 'inline-flex min-h-11 items-center gap-2 rounded-lg border border-blue-300 bg-blue-50 px-4 py-2 font-medium text-blue-800 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60'
+          }
+        >
+          {processing ? (
+            <LoaderCircle aria-hidden="true" className="h-5 w-5 animate-spin" />
+          ) : listening ? (
+            <Square aria-hidden="true" className="h-4 w-4 fill-current" />
+          ) : (
+            <Mic aria-hidden="true" className="h-5 w-5" />
+          )}
+          {processing ? 'Preparing draft...' : listening ? 'Stop and review' : 'Voice entry'}
+        </button>
+      </div>
 
       {listening && interimText ? (
         <p className="max-w-xl text-sm text-slate-600" aria-live="polite">

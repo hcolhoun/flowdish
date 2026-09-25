@@ -21,7 +21,7 @@ type ParsedVoiceEntry = {
 function normaliseText(value: string) {
   return value
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
 }
 
@@ -106,6 +106,7 @@ You are preparing ${purpose} from a chef's voice transcript.
 Return ONLY valid JSON. No markdown or explanation.
 
 Rules:
+- The transcript may be in English, Polish, Romanian, Spanish, Portuguese, or French. Interpret the language used by the chef.
 - Match only against the supplied item list.
 - itemId must be copied exactly from the list, or null when no credible match exists.
 - itemName is the product or prep name the chef appears to have said, even if no item matches.

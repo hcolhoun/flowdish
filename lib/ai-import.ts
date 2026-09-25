@@ -11,11 +11,32 @@ export type AiFeature =
   | 'l2_prep_time'
   | 'waste_voice'
   | 'prep_voice'
+  | 'dashboard_briefing'
+  | 'sop_draft'
+  | 'sop_translation'
 
-type DeepSeekOptions = {
+type DeepSeekOptions<T> = {
   restaurantId: string
   feature: AiFeature
   prompt: string
+  imageDataUrl?: string
+  qualityCheck?: (value: T) => boolean
+}
+
+type DeepSeekResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string
+    }
+  }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+  }
+  error?: {
+    message?: string
+  }
 }
 
 export function cleanText(value: unknown) {
@@ -23,6 +44,27 @@ export function cleanText(value: unknown) {
 
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : null
+}
+
+export function supportedImageMimeType(file: File) {
+  const declaredType = file.type.toLowerCase()
+  const extension = file.name.toLowerCase().split('.').pop()
+  const extensionTypes: Record<string, string> = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+    webp: 'image/webp',
+  }
+  const resolvedType = declaredType.startsWith('image/')
+    ? declaredType
+    : extension
+      ? extensionTypes[extension]
+      : undefined
+
+  return ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(resolvedType || '')
+    ? resolvedType
+    : null
 }
 
 export function extractJson(text: string) {
@@ -46,13 +88,36 @@ export function extractJson(text: string) {
   }
 }
 
-export async function parseJsonWithDeepSeek<T>({ restaurantId, feature, prompt }: DeepSeekOptions) {
-  const apiKey = process.env.DEEPSEEK_API_KEY
-  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro'
+function primaryDeepSeekModel() {
+  return process.env.DEEPSEEK_MODEL || 'deepseek-flash'
+}
 
-  if (!apiKey) {
-    throw new Error('DEEPSEEK_API_KEY_MISSING')
-  }
+function fallbackDeepSeekModel(primaryModel: string) {
+  const configured = process.env.DEEPSEEK_FALLBACK_MODEL
+
+  if (configured?.toLowerCase() === 'none') return null
+  if (configured) return configured === primaryModel ? null : configured
+  return primaryModel === 'deepseek-v4-pro' ? null : 'deepseek-v4-pro'
+}
+
+async function runDeepSeekJsonRequest<T>({
+  apiKey,
+  restaurantId,
+  feature,
+  prompt,
+  model,
+  imageDataUrl,
+  qualityCheck,
+}: DeepSeekOptions<T> & { apiKey: string; model: string }) {
+  const content = imageDataUrl
+    ? [
+        { type: 'text', text: prompt },
+        {
+          type: 'image_url',
+          image_url: { url: imageDataUrl, detail: 'original' },
+        },
+      ]
+    : prompt
 
   const response = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
@@ -62,33 +127,33 @@ export async function parseJsonWithDeepSeek<T>({ restaurantId, feature, prompt }
     },
     body: JSON.stringify({
       model,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'user', content }],
       response_format: { type: 'json_object' },
       thinking: { type: 'disabled' },
       stream: false,
     }),
   })
 
-  const json = await response.json()
+  const json = (await response.json()) as DeepSeekResponse
 
   await prisma.aiUsageLog.create({
     data: {
       restaurantId,
       feature,
       model,
-      promptTokens: Number.isInteger(json?.usage?.prompt_tokens)
-        ? json.usage.prompt_tokens
+      promptTokens: Number.isInteger(json.usage?.prompt_tokens)
+        ? json.usage?.prompt_tokens
         : null,
-      completionTokens: Number.isInteger(json?.usage?.completion_tokens)
-        ? json.usage.completion_tokens
+      completionTokens: Number.isInteger(json.usage?.completion_tokens)
+        ? json.usage?.completion_tokens
         : null,
-      totalTokens: Number.isInteger(json?.usage?.total_tokens) ? json.usage.total_tokens : null,
+      totalTokens: Number.isInteger(json.usage?.total_tokens) ? json.usage?.total_tokens : null,
     },
   })
 
   if (!response.ok) {
     console.error('DeepSeek parse failed:', json)
-    const message = String(json?.error?.message || '')
+    const message = String(json.error?.message || '')
 
     if (
       response.status === 401 ||
@@ -101,8 +166,54 @@ export async function parseJsonWithDeepSeek<T>({ restaurantId, feature, prompt }
     throw new Error('DEEPSEEK_REQUEST_FAILED')
   }
 
-  const outputText = json?.choices?.[0]?.message?.content || ''
-  return extractJson(outputText) as T
+  const outputText = json.choices?.[0]?.message?.content || ''
+  const parsed = extractJson(outputText) as T
+
+  if (qualityCheck && !qualityCheck(parsed)) {
+    throw new Error('DEEPSEEK_LOW_CONFIDENCE')
+  }
+
+  return parsed
+}
+
+export async function parseJsonWithDeepSeek<T>({
+  restaurantId,
+  feature,
+  prompt,
+  imageDataUrl,
+  qualityCheck,
+}: DeepSeekOptions<T>) {
+  const apiKey = process.env.DEEPSEEK_API_KEY
+
+  if (!apiKey) {
+    throw new Error('DEEPSEEK_API_KEY_MISSING')
+  }
+
+  const primaryModel = imageDataUrl ? 'deepseek-flash' : primaryDeepSeekModel()
+  const fallbackModel = imageDataUrl ? null : fallbackDeepSeekModel(primaryModel)
+  const options = { restaurantId, feature, prompt, imageDataUrl, qualityCheck }
+
+  try {
+    return await runDeepSeekJsonRequest({
+      ...options,
+      apiKey,
+      model: primaryModel,
+    })
+  } catch (error) {
+    if (
+      !fallbackModel ||
+      (error instanceof Error &&
+        ['DEEPSEEK_API_KEY_MISSING', 'DEEPSEEK_AUTH_FAILED'].includes(error.message))
+    ) {
+      throw error
+    }
+
+    return runDeepSeekJsonRequest({
+      ...options,
+      apiKey,
+      model: fallbackModel,
+    })
+  }
 }
 
 function textFromWorkbook(buffer: Buffer) {
@@ -254,6 +365,13 @@ export function aiErrorResponse(error: unknown) {
 
   if (error instanceof Error && error.message === 'DEEPSEEK_INVALID_JSON') {
     return Response.json({ error: 'DeepSeek returned unreadable JSON. Try again.' }, { status: 500 })
+  }
+
+  if (error instanceof Error && error.message === 'DEEPSEEK_LOW_CONFIDENCE') {
+    return Response.json(
+      { error: 'The AI could not read this reliably. Try a clearer file or enter it manually.' },
+      { status: 422 }
+    )
   }
 
   return null

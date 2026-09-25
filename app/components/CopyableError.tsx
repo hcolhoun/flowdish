@@ -1,6 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+
+export const LAST_FLOWDISH_ERROR_KEY = 'flowdish:last-visible-error'
 
 type CopyableErrorProps = {
   message: string
@@ -9,6 +11,21 @@ type CopyableErrorProps = {
 
 export default function CopyableError({ message, className = '' }: CopyableErrorProps) {
   const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(
+        LAST_FLOWDISH_ERROR_KEY,
+        JSON.stringify({
+          message,
+          pageUrl: window.location.href,
+          capturedAt: new Date().toISOString(),
+        })
+      )
+    } catch {
+      // Support diagnostics are optional when browser storage is unavailable.
+    }
+  }, [message])
 
   async function copyError() {
     try {

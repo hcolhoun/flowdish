@@ -398,7 +398,8 @@ export default function DeliveriesPage() {
     const difference = actualTotal - expectedTotal
     const tolerance = Math.max(0.1, expectedTotal * 0.02)
     const percent = (difference / expectedTotal) * 100
-    const hasWarning = Math.abs(difference) > tolerance
+    const hasIncrease = difference > tolerance
+    const hasDecrease = difference < -tolerance
 
     return {
       product,
@@ -406,7 +407,9 @@ export default function DeliveriesPage() {
       difference,
       percent,
       basis,
-      hasWarning,
+      hasWarning: hasIncrease,
+      hasIncrease,
+      hasDecrease,
     }
   }
 
@@ -837,6 +840,42 @@ export default function DeliveriesPage() {
     return canvas
   }
 
+  async function prepareImageForVision(file: File) {
+    setDocketOcrProgress('Preparing photo for direct AI reading...')
+
+    const image = await loadImage(file)
+    const maxDimension = 2200
+    const scale = Math.min(1, maxDimension / Math.max(image.width, image.height))
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      throw new Error('Could not prepare the docket image.')
+    }
+
+    canvas.width = Math.max(1, Math.round(image.width * scale))
+    canvas.height = Math.max(1, Math.round(image.height * scale))
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+    const toJpeg = (quality: number) =>
+      new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error('Could not prepare the docket image.'))),
+          'image/jpeg',
+          quality
+        )
+      })
+
+    let blob = await toJpeg(0.86)
+    if (blob.size > 3.8 * 1024 * 1024) blob = await toJpeg(0.68)
+
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'docket'}.jpg`, {
+      type: 'image/jpeg',
+    })
+  }
+
   async function readImageText(file: File) {
     setDocketOcrProgress('Loading OCR...')
     const tesseract = await loadTesseract()
@@ -883,20 +922,41 @@ export default function DeliveriesPage() {
       const isImage = docketFile.type.startsWith('image/')
       const directUploadLimit = 4 * 1024 * 1024
       let res: Response
+      let data: ParsedDocketResponse & { error?: string }
 
       if (isImage) {
-        const ocrText = await readImageText(docketFile)
+        const preparedImage = await prepareImageForVision(docketFile)
+        const formData = new FormData()
+        formData.append('file', preparedImage)
 
-        setDocketOcrProgress('Structuring docket...')
+        setDocketOcrProgress('Reading docket image with AI...')
 
         res = await fetch('/api/parse-delivery-docket', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ocrText,
-            sourceFileName: docketFile.name,
-          }),
+          body: formData,
         })
+
+        data = (await safeJson(res)) as ParsedDocketResponse & { error?: string }
+
+        const authenticationFailure =
+          data.error?.includes('API key') || data.error?.includes('rejected the API key')
+
+        if (!res.ok && !authenticationFailure) {
+          setDocketOcrProgress('Direct image reading was uncertain. Trying OCR fallback...')
+          const ocrText = await readImageText(docketFile)
+
+          setDocketOcrProgress('Structuring OCR text...')
+
+          res = await fetch('/api/parse-delivery-docket', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ocrText,
+              sourceFileName: docketFile.name,
+            }),
+          })
+          data = (await safeJson(res)) as ParsedDocketResponse & { error?: string }
+        }
       } else {
         if (docketFile.size > directUploadLimit) {
           throw new Error(
@@ -911,9 +971,8 @@ export default function DeliveriesPage() {
           method: 'POST',
           body: formData,
         })
+        data = (await safeJson(res)) as ParsedDocketResponse & { error?: string }
       }
-
-      const data = (await safeJson(res)) as ParsedDocketResponse & { error?: string }
 
       if (!res.ok) {
         throw new Error(data?.error || 'Failed to parse delivery docket')
@@ -1107,8 +1166,8 @@ export default function DeliveriesPage() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Delivery Docket</h2>
           <p className="mt-2 text-sm text-slate-700">
-            Upload a PDF, Excel, TXT, or CSV docket. The system will extract lines, suggest L3
-            matches, then you review before saving.
+            Take a photo or upload a PDF, Excel, TXT, or CSV docket. The system will extract
+            lines, suggest L3 matches, then you review before saving.
           </p>
 
           <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto_auto_auto] md:items-end">
@@ -1501,16 +1560,27 @@ export default function DeliveriesPage() {
                             <div className="w-44 text-xs text-slate-500">
                               No saved supplier price to compare
                             </div>
-                          ) : priceCheck.hasWarning ? (
-                            <div className="w-48 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                              <div className="font-semibold">Price differs</div>
+                          ) : priceCheck.hasIncrease ? (
+                            <div className="w-48 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900">
+                              <div className="font-semibold">Price higher than saved</div>
                               <div>Expected {money(priceCheck.expectedTotal, 2)}</div>
                               <div>Scanned {money(Number(row.totalCost), 2)}</div>
                               <div>
                                 Diff {money(priceCheck.difference, 2)} (
                                 {priceCheck.percent.toFixed(1)}%)
                               </div>
-                              <div className="mt-1 text-amber-800">{priceCheck.basis}</div>
+                              <div className="mt-1 text-red-800">{priceCheck.basis}</div>
+                            </div>
+                          ) : priceCheck.hasDecrease ? (
+                            <div className="w-48 rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+                              <div className="font-semibold">Price lower than saved</div>
+                              <div>Expected {money(priceCheck.expectedTotal, 2)}</div>
+                              <div>Scanned {money(Number(row.totalCost), 2)}</div>
+                              <div>
+                                Difference {money(priceCheck.difference, 2)} (
+                                {priceCheck.percent.toFixed(1)}%)
+                              </div>
+                              <div className="mt-1 text-blue-800">{priceCheck.basis}</div>
                             </div>
                           ) : (
                             <div className="w-44 rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-xs text-green-800">
@@ -1962,6 +2032,37 @@ export default function DeliveriesPage() {
                         </td>
 
                         <td className="px-4 py-3 text-slate-800">
+                          {isEditing ? (
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={editingDelivery.deliveryVehicleOk}
+                                onChange={(e) =>
+                                  setEditingDelivery({
+                                    ...editingDelivery,
+                                    deliveryVehicleOk: e.target.checked,
+                                  })
+                                }
+                                className="h-4 w-4"
+                              />
+                              OK
+                            </label>
+                          ) : (
+                            <input
+                              type="checkbox"
+                              checked={delivery.deliveryVehicleOk}
+                              disabled
+                              aria-label={
+                                delivery.deliveryVehicleOk
+                                  ? 'Delivery vehicle OK'
+                                  : 'Delivery vehicle not marked OK'
+                              }
+                              className="h-4 w-4 disabled:opacity-100"
+                            />
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-800">
                           {delivery.item.name} [{delivery.item.sku}]
                         </td>
 
@@ -2019,37 +2120,6 @@ export default function DeliveriesPage() {
                             />
                           ) : (
                             money(delivery.price)
-                          )}
-                        </td>
-
-                        <td className="px-4 py-3 text-slate-800">
-                          {isEditing ? (
-                            <label className="flex items-center gap-2 text-sm">
-                              <input
-                                type="checkbox"
-                                checked={editingDelivery.deliveryVehicleOk}
-                                onChange={(e) =>
-                                  setEditingDelivery({
-                                    ...editingDelivery,
-                                    deliveryVehicleOk: e.target.checked,
-                                  })
-                                }
-                                className="h-4 w-4"
-                              />
-                              OK
-                            </label>
-                          ) : (
-                            <input
-                              type="checkbox"
-                              checked={delivery.deliveryVehicleOk}
-                              disabled
-                              aria-label={
-                                delivery.deliveryVehicleOk
-                                  ? 'Delivery vehicle OK'
-                                  : 'Delivery vehicle not marked OK'
-                              }
-                              className="h-4 w-4 disabled:opacity-100"
-                            />
                           )}
                         </td>
 

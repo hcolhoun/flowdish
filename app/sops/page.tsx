@@ -1,8 +1,18 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { FileUp, Languages, LoaderCircle } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
 import InteractiveSopReader from '@/app/components/InteractiveSopReader'
+
+const SOP_LANGUAGES = [
+  { code: 'en-IE', label: 'English' },
+  { code: 'pl-PL', label: 'Polish' },
+  { code: 'ro-RO', label: 'Romanian' },
+  { code: 'es-ES', label: 'Spanish' },
+  { code: 'pt-PT', label: 'Portuguese' },
+  { code: 'fr-FR', label: 'French' },
+]
 
 type Item = {
   id: string
@@ -70,6 +80,57 @@ function escapeHtml(value: string) {
 function formatDate(value: string | null | undefined) {
   if (!value) return ''
   return new Date(value).toLocaleDateString('en-GB')
+}
+
+function loadUploadImage(file: File) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const image = new Image()
+
+    image.onload = () => {
+      URL.revokeObjectURL(url)
+      resolve(image)
+    }
+    image.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('Could not read the SOP image.'))
+    }
+    image.src = url
+  })
+}
+
+async function prepareSopUpload(file: File) {
+  if (!file.type.startsWith('image/')) return file
+
+  const image = await loadUploadImage(file)
+  const maxDimension = 2200
+  const scale = Math.min(1, maxDimension / Math.max(image.width, image.height))
+  const canvas = document.createElement('canvas')
+  const context = canvas.getContext('2d')
+
+  if (!context) throw new Error('Could not prepare the SOP image.')
+
+  canvas.width = Math.max(1, Math.round(image.width * scale))
+  canvas.height = Math.max(1, Math.round(image.height * scale))
+  context.imageSmoothingEnabled = true
+  context.imageSmoothingQuality = 'high'
+  context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+  const toJpeg = (quality: number) =>
+    new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error('Could not prepare the SOP image.'))),
+        'image/jpeg',
+        quality
+      )
+    })
+
+  let blob = await toJpeg(0.86)
+  if (blob.size > 3.8 * 1024 * 1024) blob = await toJpeg(0.68)
+
+  return new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'sop'}.jpg`, {
+    type: 'image/jpeg',
+  })
 }
 
 function buildPdfHtml(sop: SopResponse, instructions: string) {
@@ -210,6 +271,11 @@ export default function SopsPage() {
   const [instructions, setInstructions] = useState('')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [sopFile, setSopFile] = useState<File | null>(null)
+  const [convertingSop, setConvertingSop] = useState(false)
+  const [translatingSop, setTranslatingSop] = useState(false)
+  const [spokenLanguage, setSpokenLanguage] = useState('en-IE')
+  const [aiDraftNote, setAiDraftNote] = useState('')
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -263,6 +329,9 @@ export default function SopsPage() {
       setMessage('')
       setSop(null)
       setInstructions('')
+      setSopFile(null)
+      setAiDraftNote('')
+      setSpokenLanguage('en-IE')
 
       if (!selectedItemId) return
 
@@ -322,6 +391,75 @@ export default function SopsPage() {
       setMessage('SOP saved.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
+    }
+  }
+
+  async function convertSopDocument() {
+    try {
+      setError('')
+      setMessage('')
+      setAiDraftNote('')
+
+      if (!itemId || !sopFile) {
+        throw new Error('Select an SOP item and choose a document or image first.')
+      }
+
+      setConvertingSop(true)
+      const uploadFile = await prepareSopUpload(sopFile)
+      const formData = new FormData()
+      formData.append('itemId', itemId)
+      formData.append('file', uploadFile)
+
+      const res = await fetch('/api/sops/ai', {
+        method: 'POST',
+        body: formData,
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to convert the SOP document')
+
+      setInstructions(data.draft.instructions || '')
+      setAiDraftNote(data.draft.notes || '')
+      setSpokenLanguage('en-IE')
+      setMessage('SOP draft prepared. Review it before saving.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown SOP conversion error')
+    } finally {
+      setConvertingSop(false)
+    }
+  }
+
+  async function translateSopDraft() {
+    try {
+      setError('')
+      setMessage('')
+      setAiDraftNote('')
+
+      if (!itemId || !instructions.trim()) {
+        throw new Error('Open an SOP with instructions first.')
+      }
+
+      setTranslatingSop(true)
+      const res = await fetch('/api/sops/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemId,
+          instructions,
+          targetLanguage: spokenLanguage,
+        }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to translate the SOP')
+
+      setInstructions(data.draft.instructions || '')
+      setAiDraftNote(data.draft.notes || '')
+      setMessage(`${data.languageName} draft prepared. Review it before saving.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown SOP translation error')
+    } finally {
+      setTranslatingSop(false)
     }
   }
 
@@ -523,9 +661,74 @@ export default function SopsPage() {
 
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
               <h2 className="text-xl font-semibold text-slate-900">Instructions</h2>
+
+              <div className="mt-4 grid gap-4 border-y py-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <label className="min-w-0 flex-1 text-sm font-medium text-slate-900">
+                    Import existing SOP
+                    <input
+                      type="file"
+                      accept=".pdf,.txt,.csv,image/jpeg,image/png,image/gif,image/webp"
+                      onChange={(event) => setSopFile(event.target.files?.[0] || null)}
+                      className="mt-1 block w-full rounded-lg border px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={convertSopDocument}
+                    disabled={!sopFile || convertingSop || translatingSop}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-cyan-700 px-4 py-2 font-medium text-cyan-800 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {convertingSop ? (
+                      <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileUp aria-hidden="true" className="h-4 w-4" />
+                    )}
+                    {convertingSop ? 'Preparing draft...' : 'Convert to draft'}
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <label className="min-w-48 text-sm font-medium text-slate-900">
+                    Spoken language
+                    <select
+                      value={spokenLanguage}
+                      onChange={(event) => setSpokenLanguage(event.target.value)}
+                      className="mt-1 w-full rounded-lg border px-3 py-2"
+                    >
+                      {SOP_LANGUAGES.map((language) => (
+                        <option key={language.code} value={language.code}>
+                          {language.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={translateSopDraft}
+                    disabled={!instructions.trim() || convertingSop || translatingSop}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-4 py-2 font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {translatingSop ? (
+                      <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Languages aria-hidden="true" className="h-4 w-4" />
+                    )}
+                    {translatingSop ? 'Translating...' : 'Translate draft'}
+                  </button>
+                </div>
+              </div>
+
+              {aiDraftNote ? (
+                <div className="mt-4 border-l-4 border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  {aiDraftNote}
+                </div>
+              ) : null}
+
               <InteractiveSopReader
                 title={`${sop.item.name} SOP`}
                 instructions={instructions}
+                language={spokenLanguage}
               />
               <textarea
                 value={instructions}

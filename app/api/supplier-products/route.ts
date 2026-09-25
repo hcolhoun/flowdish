@@ -292,6 +292,7 @@ export async function POST(req: Request) {
     const products = body.products
     const fileName = body.fileName ? String(body.fileName) : null
     const supplierName = body.supplier ? String(body.supplier) : 'Mixed'
+    const createLinkedL3 = body.createLinkedL3 !== false
 
     if (!Array.isArray(products)) {
       return NextResponse.json({ error: 'Products must be an array' }, { status: 400 })
@@ -360,15 +361,20 @@ export async function POST(req: Request) {
         continue
       }
 
-      const linkedItem = await createOrLinkL3({
-        restaurantId: tenant.restaurantId,
-        product: cleanProduct,
-      })
-
       const existing = await findExistingSupplierProduct({
         restaurantId: tenant.restaurantId,
         cleanProduct,
       })
+      let linkedItemId = existing?.linkedItemId ?? null
+
+      if (!linkedItemId && createLinkedL3) {
+        const linkedItem = await createOrLinkL3({
+          restaurantId: tenant.restaurantId,
+          product: cleanProduct,
+        })
+
+        linkedItemId = linkedItem.id
+      }
 
       if (existing) {
         const changed = pricesChanged({
@@ -384,7 +390,7 @@ export async function POST(req: Request) {
           },
           data: {
             ...cleanProduct,
-            linkedItemId: existing.linkedItemId || linkedItem.id,
+            linkedItemId,
           },
         })
 
@@ -410,14 +416,14 @@ export async function POST(req: Request) {
           data: {
             restaurantId: tenant.restaurantId,
             ...cleanProduct,
-            linkedItemId: linkedItem.id,
+            linkedItemId,
           },
         })
 
         createdCount++
       }
 
-      linkedCount++
+      if (linkedItemId) linkedCount++
     }
 
     const updatedBatch = await prisma.supplierImportBatch.update({

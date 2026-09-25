@@ -7,6 +7,7 @@ const publicRoutes = [
   '/signup',
   '/reset-password',
   '/staff-login',
+  '/privacy',
 ]
 
 function isPublicPath(path: string) {

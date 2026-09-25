@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import CopyableError from '@/app/components/CopyableError'
+import CopyableError, { LAST_FLOWDISH_ERROR_KEY } from '@/app/components/CopyableError'
 
 type Membership = {
   id: string
@@ -271,6 +271,12 @@ type SupportTicketsResponse = {
   emailServiceConfigured?: boolean
 }
 
+type LastVisibleError = {
+  message: string
+  pageUrl: string
+  capturedAt: string
+}
+
 export default function AdminPage() {
   const [data, setData] = useState<AdminData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -336,6 +342,7 @@ export default function AdminPage() {
     message: '',
     errorText: '',
   })
+  const [lastVisibleError, setLastVisibleError] = useState<LastVisibleError | null>(null)
   const [savingColdStorageMonitor, setSavingColdStorageMonitor] = useState(false)
   const [newColdStorageMonitor, setNewColdStorageMonitor] = useState({
     restaurantId: '',
@@ -553,6 +560,18 @@ export default function AdminPage() {
   }, [])
 
   useEffect(() => {
+    try {
+      const saved = window.sessionStorage.getItem(LAST_FLOWDISH_ERROR_KEY)
+      if (!saved) return
+
+      const parsed = JSON.parse(saved) as LastVisibleError
+      if (parsed.message && parsed.pageUrl && parsed.capturedAt) setLastVisibleError(parsed)
+    } catch {
+      setLastVisibleError(null)
+    }
+  }, [])
+
+  useEffect(() => {
     if (data?.permissions.canCreateRestaurants) {
       loadFrontloadData()
       loadAiUsage()
@@ -578,12 +597,33 @@ export default function AdminPage() {
       setError('')
       setMessage('')
 
+      const diagnosticLines = [
+        supportTicketForm.errorText.trim() || null,
+        lastVisibleError?.message &&
+        !supportTicketForm.errorText.includes(lastVisibleError.message)
+          ? `Last visible Flowdish error: ${lastVisibleError.message}`
+          : null,
+        '',
+        'Automatic diagnostic context:',
+        `Problem page: ${lastVisibleError?.pageUrl || window.location.href}`,
+        lastVisibleError?.capturedAt
+          ? `Error captured: ${new Date(lastVisibleError.capturedAt).toISOString()}`
+          : null,
+        `Browser: ${navigator.userAgent}`,
+        `Language: ${navigator.language}`,
+        `Viewport: ${window.innerWidth} x ${window.innerHeight}`,
+        `Screen: ${window.screen.width} x ${window.screen.height}`,
+        `Online: ${navigator.onLine ? 'yes' : 'no'}`,
+        `Theme: ${window.localStorage.getItem('flowdish-theme') || 'default'}`,
+      ].filter((line): line is string => line !== null)
+
       const res = await fetch('/api/support-tickets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...supportTicketForm,
-          pageUrl: window.location.href,
+          errorText: diagnosticLines.join('\n').slice(0, 5000),
+          pageUrl: lastVisibleError?.pageUrl || window.location.href,
         }),
       })
       const json = await safeJson(res)
@@ -599,6 +639,8 @@ export default function AdminPage() {
         message: '',
         errorText: '',
       })
+      setLastVisibleError(null)
+      window.sessionStorage.removeItem(LAST_FLOWDISH_ERROR_KEY)
       setMessage(
         json.emailAlertSent
           ? 'Support ticket saved and Flowdish support was emailed.'
@@ -1227,6 +1269,15 @@ export default function AdminPage() {
                   <label className="mb-1 block text-sm font-medium text-slate-900">
                     Error text/code
                   </label>
+                  {lastVisibleError ? (
+                    <div className="mb-3 border-l-4 border-cyan-600 bg-cyan-50 px-4 py-3 text-sm text-slate-700">
+                      <div className="font-medium text-slate-900">Last Flowdish error detected</div>
+                      <div className="mt-1 break-words">{lastVisibleError.message}</div>
+                      <div className="mt-1 break-all text-xs text-slate-500">
+                        {lastVisibleError.pageUrl}
+                      </div>
+                    </div>
+                  ) : null}
                   <textarea
                     value={supportTicketForm.errorText}
                     onChange={(e) =>
@@ -1236,7 +1287,7 @@ export default function AdminPage() {
                       }))
                     }
                     className="min-h-20 w-full rounded-xl border px-3 py-2 font-mono text-sm"
-                    placeholder="Paste the red highlighted error message here, if there is one."
+                    placeholder="Add any extra error text here. Flowdish will include the most recent visible error automatically."
                   />
                 </div>
 
@@ -1249,7 +1300,7 @@ export default function AdminPage() {
                     {submittingSupportTicket ? 'Sending...' : 'Send Ticket'}
                   </button>
                   <span className="text-sm text-slate-500">
-                    Flowdish will include this page address automatically.
+                    Flowdish will include the problem page and basic device diagnostics automatically.
                   </span>
                 </div>
               </form>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import CopyableError from '@/app/components/CopyableError'
 
 type Item = {
@@ -842,8 +842,8 @@ export default function PlanningPage() {
                         )
 
                         return (
-                          <>
-                            <tr key={row.itemId} className="border-t align-top">
+                          <Fragment key={row.itemId}>
+                            <tr className="border-t align-top">
                               <td className="px-4 py-3 text-slate-800">{row.sku}</td>
                               <td className="px-4 py-3 text-slate-800">{row.name}</td>
                               <td className="px-4 py-3 text-slate-800">
@@ -991,7 +991,7 @@ export default function PlanningPage() {
                                 </td>
                               </tr>
                             ) : null}
-                          </>
+                          </Fragment>
                         )
                       })
                     )}
