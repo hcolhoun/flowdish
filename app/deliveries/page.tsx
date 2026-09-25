@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import CopyableError from '@/app/components/CopyableError'
+import { readImageTextWithTesseract } from '@/lib/browser-ocr'
+import { matchKnownSupplier, sanitiseDocumentForAi } from '@/lib/document-privacy'
 
 type UnitType = 'g' | 'ml' | 'each'
 type VatReclaimStatus = 'NOT_APPLICABLE' | 'ELIGIBLE' | 'CLAIMED' | 'NOT_CLAIMED'
@@ -117,29 +119,6 @@ type EditingDelivery = {
   vatRatePercent: string
   vatReclaimStatus: VatReclaimStatus
   deliveryVehicleOk: boolean
-}
-
-type TesseractLog = {
-  status?: string
-  progress?: number
-}
-
-type TesseractBrowser = {
-  recognize: (
-    image: File | Blob | HTMLCanvasElement,
-    language?: string,
-    options?: {
-      logger?: (message: TesseractLog) => void
-      tessedit_pageseg_mode?: string
-      preserve_interword_spaces?: string
-    }
-  ) => Promise<{ data: { text: string } }>
-}
-
-declare global {
-  interface Window {
-    Tesseract?: TesseractBrowser
-  }
 }
 
 function toDateInputValue(value: string | null | undefined) {
@@ -747,164 +726,6 @@ export default function DeliveriesPage() {
     })
   }
 
-  function loadTesseract() {
-    return new Promise<TesseractBrowser>((resolve, reject) => {
-      if (window.Tesseract) {
-        resolve(window.Tesseract)
-        return
-      }
-
-      const existingScript = document.querySelector<HTMLScriptElement>(
-        'script[data-tesseract-loader="true"]'
-      )
-
-      if (existingScript) {
-        existingScript.addEventListener('load', () => {
-          if (window.Tesseract) resolve(window.Tesseract)
-          else reject(new Error('OCR failed to load.'))
-        })
-        existingScript.addEventListener('error', () => reject(new Error('OCR failed to load.')))
-        return
-      }
-
-      const script = document.createElement('script')
-      script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'
-      script.async = true
-      script.dataset.tesseractLoader = 'true'
-      script.onload = () => {
-        if (window.Tesseract) resolve(window.Tesseract)
-        else reject(new Error('OCR failed to load.'))
-      }
-      script.onerror = () => reject(new Error('OCR failed to load.'))
-      document.body.appendChild(script)
-    })
-  }
-
-  function loadImage(file: File) {
-    return new Promise<HTMLImageElement>((resolve, reject) => {
-      const url = URL.createObjectURL(file)
-      const image = new Image()
-
-      image.onload = () => {
-        URL.revokeObjectURL(url)
-        resolve(image)
-      }
-
-      image.onerror = () => {
-        URL.revokeObjectURL(url)
-        reject(new Error('Could not read the docket image.'))
-      }
-
-      image.src = url
-    })
-  }
-
-  async function prepareImageForOcr(file: File) {
-    setDocketOcrProgress('Preparing image...')
-
-    const image = await loadImage(file)
-    const maxWidth = 2600
-    const scale = Math.max(1, Math.min(3, maxWidth / image.width))
-    const width = Math.round(image.width * scale)
-    const height = Math.round(image.height * scale)
-    const canvas = document.createElement('canvas')
-    const context = canvas.getContext('2d', { willReadFrequently: true })
-
-    if (!context) {
-      throw new Error('Could not prepare the docket image.')
-    }
-
-    canvas.width = width
-    canvas.height = height
-    context.imageSmoothingEnabled = true
-    context.imageSmoothingQuality = 'high'
-    context.drawImage(image, 0, 0, width, height)
-
-    const imageData = context.getImageData(0, 0, width, height)
-    const pixels = imageData.data
-
-    for (let index = 0; index < pixels.length; index += 4) {
-      const red = pixels[index]
-      const green = pixels[index + 1]
-      const blue = pixels[index + 2]
-      const grey = red * 0.299 + green * 0.587 + blue * 0.114
-      const contrasted = (grey - 128) * 1.8 + 128
-      const blackOrWhite = contrasted > 150 ? 255 : 0
-
-      pixels[index] = blackOrWhite
-      pixels[index + 1] = blackOrWhite
-      pixels[index + 2] = blackOrWhite
-    }
-
-    context.putImageData(imageData, 0, 0)
-    return canvas
-  }
-
-  async function prepareImageForVision(file: File) {
-    setDocketOcrProgress('Preparing photo for direct AI reading...')
-
-    const image = await loadImage(file)
-    const maxDimension = 2200
-    const scale = Math.min(1, maxDimension / Math.max(image.width, image.height))
-    const canvas = document.createElement('canvas')
-    const context = canvas.getContext('2d')
-
-    if (!context) {
-      throw new Error('Could not prepare the docket image.')
-    }
-
-    canvas.width = Math.max(1, Math.round(image.width * scale))
-    canvas.height = Math.max(1, Math.round(image.height * scale))
-    context.imageSmoothingEnabled = true
-    context.imageSmoothingQuality = 'high'
-    context.drawImage(image, 0, 0, canvas.width, canvas.height)
-
-    const toJpeg = (quality: number) =>
-      new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob(
-          (blob) => (blob ? resolve(blob) : reject(new Error('Could not prepare the docket image.'))),
-          'image/jpeg',
-          quality
-        )
-      })
-
-    let blob = await toJpeg(0.86)
-    if (blob.size > 3.8 * 1024 * 1024) blob = await toJpeg(0.68)
-
-    return new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'docket'}.jpg`, {
-      type: 'image/jpeg',
-    })
-  }
-
-  async function readImageText(file: File) {
-    setDocketOcrProgress('Loading OCR...')
-    const tesseract = await loadTesseract()
-    const preparedImage = await prepareImageForOcr(file)
-
-    const result = await tesseract.recognize(preparedImage, 'eng', {
-      tessedit_pageseg_mode: '6',
-      preserve_interword_spaces: '1',
-      logger: (message) => {
-        if (!message.status) return
-
-        const progress =
-          typeof message.progress === 'number'
-            ? ` ${Math.round(message.progress * 100)}%`
-            : ''
-
-        setDocketOcrProgress(`${message.status}${progress}`)
-      },
-    })
-
-    const text = result.data.text.trim()
-
-    if (text.length < 30) {
-      throw new Error('OCR did not find enough readable text. Try a clearer photo.')
-    }
-
-    return text
-  }
-
   async function parseDocket() {
     try {
       setError('')
@@ -925,38 +746,31 @@ export default function DeliveriesPage() {
       let data: ParsedDocketResponse & { error?: string }
 
       if (isImage) {
-        const preparedImage = await prepareImageForVision(docketFile)
-        const formData = new FormData()
-        formData.append('file', preparedImage)
+        const ocrText = await readImageTextWithTesseract(docketFile, setDocketOcrProgress)
+        const privacySafe = sanitiseDocumentForAi(ocrText, 'delivery')
+        const supplierHint = matchKnownSupplier(
+          ocrText,
+          supplierProducts.map((product) => product.supplier)
+        )
 
-        setDocketOcrProgress('Reading docket image with AI...')
+        if (privacySafe.text.length < 30) {
+          throw new Error(
+            'No privacy-safe product table could be read. Try a clearer photo or enter the delivery manually.'
+          )
+        }
+
+        setDocketOcrProgress('Removing private details and structuring product rows...')
 
         res = await fetch('/api/parse-delivery-docket', {
           method: 'POST',
-          body: formData,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ocrText: privacySafe.text,
+            supplierHint,
+            sourceFileName: docketFile.name,
+          }),
         })
-
         data = (await safeJson(res)) as ParsedDocketResponse & { error?: string }
-
-        const authenticationFailure =
-          data.error?.includes('API key') || data.error?.includes('rejected the API key')
-
-        if (!res.ok && !authenticationFailure) {
-          setDocketOcrProgress('Direct image reading was uncertain. Trying OCR fallback...')
-          const ocrText = await readImageText(docketFile)
-
-          setDocketOcrProgress('Structuring OCR text...')
-
-          res = await fetch('/api/parse-delivery-docket', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ocrText,
-              sourceFileName: docketFile.name,
-            }),
-          })
-          data = (await safeJson(res)) as ParsedDocketResponse & { error?: string }
-        }
       } else {
         if (docketFile.size > directUploadLimit) {
           throw new Error(
@@ -1166,8 +980,9 @@ export default function DeliveriesPage() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Delivery Docket</h2>
           <p className="mt-2 text-sm text-slate-700">
-            Take a photo or upload a PDF, Excel, TXT, or CSV docket. The system will extract
-            lines, suggest L3 matches, then you review before saving.
+            Take a photo or upload a PDF, Excel, TXT, or CSV docket. Photos are read on this
+            device, and addresses and account details are removed before product text is sent
+            for AI parsing. Review every row before saving.
           </p>
 
           <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto_auto_auto] md:items-end">

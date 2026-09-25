@@ -7,11 +7,10 @@ import {
   aiErrorResponse,
   cleanText,
   parseJsonWithDeepSeek,
-  supportedImageMimeType,
   textFromAiRequest,
-  textFromUploadFile,
 } from '@/lib/ai-import'
-import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { sanitiseDocumentForAi } from '@/lib/document-privacy'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 type UnitType = 'g' | 'ml' | 'each'
 
@@ -58,11 +57,9 @@ function toNullableNumber(value: unknown) {
 
 async function extractDocketWithDeepSeek(
   restaurantId: string,
-  options: { text?: string; imageDataUrl?: string }
+  text: string,
+  supplierHint: string | null
 ) {
-  const inputInstruction = options.imageDataUrl
-    ? 'Read the attached delivery docket image directly. Pay close attention to table columns, decimal places, pack quantities, supplier SKUs, and line totals.'
-    : `Delivery docket text:\n${String(options.text || '').slice(0, 120000)}`
   const prompt = `
 You are extracting structured delivery docket data for a restaurant inventory system.
 
@@ -96,6 +93,8 @@ Rules:
 - If price is unclear, use null.
 - If supplier SKU is unclear, use null.
 - Keep product names clean and do not include headers/footers.
+- The text has already been privacy-filtered. Do not infer or recreate addresses, contact details, account numbers, or other removed information.
+- If the supplier is not visible in the filtered text, use ${JSON.stringify(supplierHint)}.
 
 Return this shape exactly:
 {
@@ -115,13 +114,13 @@ Return this shape exactly:
   ]
 }
 
-${inputInstruction}
+Privacy-filtered delivery docket OCR text:
+${text.slice(0, 120000)}
 `
   return parseJsonWithDeepSeek<ExtractedDocket>({
     restaurantId,
     feature: 'delivery_docket',
     prompt,
-    imageDataUrl: options.imageDataUrl,
     qualityCheck: (value) =>
       Array.isArray(value.rows) &&
       value.rows.length > 0 &&
@@ -130,38 +129,18 @@ ${inputInstruction}
 }
 
 async function deliveryDocketInput(req: Request) {
-  const contentType = req.headers.get('content-type') || ''
+  const { text, body } = await textFromAiRequest(req)
+  const sanitised = sanitiseDocumentForAi(text, 'delivery')
 
-  if (contentType.includes('application/json')) {
-    const { text } = await textFromAiRequest(req)
-    return { text, imageDataUrl: undefined, inputMode: 'text' as const }
-  }
-
-  const formData = await req.formData()
-  const file = formData.get('file')
-
-  if (!(file instanceof File)) {
-    throw new Error('NO_FILE_UPLOADED')
-  }
-
-  const imageMimeType = supportedImageMimeType(file)
-  if (imageMimeType) {
-    if (file.size > 4 * 1024 * 1024) {
-      throw new Error('IMAGE_TOO_LARGE')
-    }
-
-    const buffer = Buffer.from(await file.arrayBuffer())
-    return {
-      text: undefined,
-      imageDataUrl: `data:${imageMimeType};base64,${buffer.toString('base64')}`,
-      inputMode: 'vision' as const,
-    }
+  if (sanitised.text.length < 30) {
+    throw new Error('OCR_TEXT_TOO_SHORT')
   }
 
   return {
-    text: await textFromUploadFile(file),
-    imageDataUrl: undefined,
-    inputMode: 'text' as const,
+    text: sanitised.text,
+    supplierHint: cleanText(body?.supplierHint),
+    removedLineCount: sanitised.removedLineCount,
+    tableBoundaryFound: sanitised.tableBoundaryFound,
   }
 }
 
@@ -279,11 +258,23 @@ async function matchSupplierProduct(
 export async function POST(req: Request) {
   try {
     const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to import delivery dockets.' },
+        { status: 403 }
+      )
+    }
+
     const docketInput = await deliveryDocketInput(req)
 
-    const extracted = await extractDocketWithDeepSeek(tenant.restaurantId, docketInput)
+    const extracted = await extractDocketWithDeepSeek(
+      tenant.restaurantId,
+      docketInput.text,
+      docketInput.supplierHint
+    )
 
-    const supplier = normaliseSupplier(cleanText(extracted.supplier))
+    const supplier = normaliseSupplier(cleanText(extracted.supplier) || docketInput.supplierHint)
     const deliveryDate = cleanText(extracted.deliveryDate)
     const docketNumber = cleanText(extracted.docketNumber)
     const rows = Array.isArray(extracted.rows) ? extracted.rows : []
@@ -332,8 +323,10 @@ export async function POST(req: Request) {
       rawExtracted: extracted,
       parser: {
         provider: 'deepseek',
-        mode: docketInput.inputMode,
-        model: docketInput.inputMode === 'vision' ? 'deepseek-flash' : 'flash-first',
+        mode: 'privacy-filtered-ocr',
+        model: 'flash-first',
+        removedLineCount: docketInput.removedLineCount,
+        tableBoundaryFound: docketInput.tableBoundaryFound,
       },
     })
   } catch (error) {
@@ -342,20 +335,6 @@ export async function POST(req: Request) {
 
     const aiError = aiErrorResponse(error)
     if (aiError) return aiError
-
-    if (error instanceof Error && error.message === 'UNSUPPORTED_IMAGE') {
-      return NextResponse.json(
-        { error: 'Use a JPEG, PNG, GIF, or WebP docket image.' },
-        { status: 400 }
-      )
-    }
-
-    if (error instanceof Error && error.message === 'IMAGE_TOO_LARGE') {
-      return NextResponse.json(
-        { error: 'The prepared docket image is too large. Try a smaller photo.' },
-        { status: 413 }
-      )
-    }
 
     console.error('POST /api/parse-delivery-docket failed:', error)
     return NextResponse.json(

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import CopyableError from '@/app/components/CopyableError'
 import { readImageTextWithTesseract } from '@/lib/browser-ocr'
+import { sanitiseDocumentForAi } from '@/lib/document-privacy'
 
 type Item = {
   id: string
@@ -344,18 +345,32 @@ export default function SalesPage() {
       const directUploadLimit = 4 * 1024 * 1024
 
       if (pasteText.trim()) {
+        const privacySafe = sanitiseDocumentForAi(pasteText, 'sales')
+
+        if (privacySafe.text.length < 30) {
+          throw new Error('No privacy-safe sales rows were found in the pasted text.')
+        }
+
         res = await fetch('/api/parse-sales-zread', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pastedText: pasteText }),
+          body: JSON.stringify({ pastedText: privacySafe.text }),
         })
       } else if (importFile?.type.startsWith('image/')) {
         const ocrText = await readImageTextWithTesseract(importFile, setOcrProgress)
-        setOcrProgress('Structuring sales...')
+        const privacySafe = sanitiseDocumentForAi(ocrText, 'sales')
+
+        if (privacySafe.text.length < 30) {
+          throw new Error(
+            'No privacy-safe sales table could be read. Try a clearer image or paste the sales rows.'
+          )
+        }
+
+        setOcrProgress('Removing private details and structuring sales rows...')
         res = await fetch('/api/parse-sales-zread', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ocrText, sourceFileName: importFile.name }),
+          body: JSON.stringify({ ocrText: privacySafe.text, sourceFileName: importFile.name }),
         })
       } else if (importFile) {
         if (importFile.size > directUploadLimit) {
@@ -540,8 +555,9 @@ export default function SalesPage() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Import Z-Read / POS Report</h2>
           <p className="mt-2 text-sm text-slate-700">
-            Take a photo, upload a text-style file, or paste text. Review matched L1 sales before
-            stock is consumed.
+            Take a photo, upload a text-style file, or paste text. Customer, staff, address,
+            payment and account details are removed before sales rows are sent for AI parsing.
+            Review matched L1 sales before stock is consumed.
           </p>
 
           <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto_auto_auto] lg:items-end">

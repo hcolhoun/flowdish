@@ -9,7 +9,8 @@ import {
   parseJsonWithDeepSeek,
   textFromAiRequest,
 } from '@/lib/ai-import'
-import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { sanitiseDocumentForAi } from '@/lib/document-privacy'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 type ParsedSalesRow = {
   sourceCode: string | null
@@ -211,7 +212,23 @@ async function matchModifierItem({
 export async function POST(req: Request) {
   try {
     const tenant = await requireTenant()
-    const { text } = await textFromAiRequest(req)
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to import sales.' },
+        { status: 403 }
+      )
+    }
+
+    const { text: rawText } = await textFromAiRequest(req)
+    const sanitised = sanitiseDocumentForAi(rawText, 'sales')
+
+    if (sanitised.text.length < 30) {
+      return NextResponse.json(
+        { error: 'No privacy-safe sales rows were found in the report.' },
+        { status: 400 }
+      )
+    }
     const [l1Items, modifierItems] = await Promise.all([
       prisma.item.findMany({
         where: {
@@ -290,6 +307,7 @@ Rules:
 - Use quantity sold, not price, net sales, gross sales, VAT, or total cost.
 - Do not invent rows.
 - If unsure whether a line is a sold menu item, omit it.
+- The text has already been privacy-filtered. Do not infer or recreate customer, staff, address, payment, account, or contact details that were removed.
 
 Known Flowdish L1 dishes for matching context:
 ${itemContext}
@@ -320,7 +338,7 @@ Return this shape exactly:
 }
 
 Z-read/POS text:
-${text.slice(0, 120000)}
+${sanitised.text.slice(0, 120000)}
 `
 
     const parsed = await parseJsonWithDeepSeek<ParsedSalesReport>({

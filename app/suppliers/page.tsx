@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import CopyableError from '@/app/components/CopyableError'
 import { readImageTextWithTesseract } from '@/lib/browser-ocr'
+import { sanitiseDocumentForAi } from '@/lib/document-privacy'
 
 type UnitType = 'g' | 'ml' | 'each'
 
@@ -372,24 +373,63 @@ export default function SuppliersPage() {
 
       let res: Response
       const directUploadLimit = 4 * 1024 * 1024
+      const supplierKey = supplier.trim().toLowerCase()
+      const selectedFileName = selectedFile?.name.toLowerCase() || ''
+      const useLocalSyscoParser =
+        Boolean(selectedFile) &&
+        !selectedFile?.type.startsWith('image/') &&
+        supplierKey.includes('sysco') &&
+        /\.(xlsx|xls)$/.test(selectedFileName)
+      const useLocalCaterwayParser =
+        Boolean(selectedFile) &&
+        !selectedFile?.type.startsWith('image/') &&
+        supplierKey.includes('caterway') &&
+        selectedFileName.endsWith('.pdf')
 
       if (pasteText.trim()) {
+        const privacySafe = sanitiseDocumentForAi(pasteText, 'supplier_price')
+
+        if (privacySafe.text.length < 30) {
+          throw new Error('No privacy-safe product rows were found in the pasted text.')
+        }
+
         res = await fetch('/api/parse-supplier-price-list', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            pastedText: pasteText,
+            pastedText: privacySafe.text,
             supplier,
           }),
         })
+      } else if (useLocalSyscoParser || useLocalCaterwayParser) {
+        if (!selectedFile) throw new Error('Choose a supplier file first.')
+        if (selectedFile.size > directUploadLimit) {
+          throw new Error('This file is too large. Upload a supplier file smaller than 4 MB.')
+        }
+
+        setOcrProgress('Parsing inside Flowdish without sending the file to an AI provider...')
+        const formData = new FormData()
+        formData.append('file', selectedFile)
+        res = await fetch(useLocalSyscoParser ? '/api/parse-sysco' : '/api/parse-caterway', {
+          method: 'POST',
+          body: formData,
+        })
       } else if (selectedFile?.type.startsWith('image/')) {
         const ocrText = await readImageTextWithTesseract(selectedFile, setOcrProgress)
-        setOcrProgress('Structuring price list...')
+        const privacySafe = sanitiseDocumentForAi(ocrText, 'supplier_price')
+
+        if (privacySafe.text.length < 30) {
+          throw new Error(
+            'No privacy-safe product table could be read. Try a clearer image or paste the product rows.'
+          )
+        }
+
+        setOcrProgress('Removing private details and structuring product rows...')
         res = await fetch('/api/parse-supplier-price-list', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            ocrText,
+            ocrText: privacySafe.text,
             supplier,
             sourceFileName: selectedFile.name,
           }),
@@ -879,6 +919,12 @@ async function handlePriceOnlySave() {
 
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Price List</h2>
+          <p className="mt-2 text-sm text-slate-700">
+            Images are read on this device. Addresses, contact details, account references and
+            payment information are removed before product text is sent for AI parsing. Sysco
+            spreadsheets and Caterway PDFs are parsed without sending their contents to an AI
+            provider.
+          </p>
 
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <div>

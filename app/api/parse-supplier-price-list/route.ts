@@ -8,7 +8,8 @@ import {
   parseJsonWithDeepSeek,
   textFromAiRequest,
 } from '@/lib/ai-import'
-import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { sanitiseDocumentForAi } from '@/lib/document-privacy'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
 type ParsedSupplierRow = {
   supplier: string | null
@@ -36,7 +37,24 @@ function toMoney(value: unknown) {
 export async function POST(req: Request) {
   try {
     const tenant = await requireTenant()
-    const { text, body } = await textFromAiRequest(req)
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to import supplier prices.' },
+        { status: 403 }
+      )
+    }
+
+    const { text: rawText, body } = await textFromAiRequest(req)
+    const sanitised = sanitiseDocumentForAi(rawText, 'supplier_price')
+
+    if (sanitised.text.length < 30) {
+      return NextResponse.json(
+        { error: 'No privacy-safe product rows were found in the price list.' },
+        { status: 400 }
+      )
+    }
+
     const requestedSupplier = cleanText(body?.supplier)
 
     const prompt = `
@@ -62,6 +80,7 @@ Rules:
 - If only one price is shown, use it as packPrice unless the document clearly labels it as unit/kg price.
 - Use null for unclear prices rather than guessing.
 - If supplier is not visible, use ${JSON.stringify(requestedSupplier)}.
+- The text has already been privacy-filtered. Do not infer or recreate addresses, contact details, account numbers, or other removed information.
 
 Return this shape exactly:
 {
@@ -80,8 +99,8 @@ Return this shape exactly:
   ]
 }
 
-Supplier price-list text:
-${text.slice(0, 120000)}
+Privacy-filtered supplier price-list text:
+${sanitised.text.slice(0, 120000)}
 `
 
     const parsed = await parseJsonWithDeepSeek<ParsedSupplierPriceList>({
@@ -131,6 +150,8 @@ ${text.slice(0, 120000)}
       rejected: [],
       debug: {
         parsedCount: ready.length + needsReview.length,
+        privacyRemovedLineCount: sanitised.removedLineCount,
+        tableBoundaryFound: sanitised.tableBoundaryFound,
       },
     })
   } catch (error) {

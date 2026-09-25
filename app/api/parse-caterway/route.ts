@@ -3,6 +3,8 @@ export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import { createRequire } from 'module'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { assertDocumentUploadSize } from '@/lib/upload-security'
 
 const require = createRequire(import.meta.url)
 
@@ -426,6 +428,15 @@ function needsReview(row: ParsedRow) {
 
 export async function POST(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to import supplier prices.' },
+        { status: 403 }
+      )
+    }
+
     const pdf = require('pdf-parse/lib/pdf-parse.js')
 
     const formData = await req.formData()
@@ -434,6 +445,8 @@ export async function POST(req: Request) {
     if (!(file instanceof File)) {
       return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
     }
+
+    assertDocumentUploadSize(file)
 
     const buffer = Buffer.from(await file.arrayBuffer())
     const parsed = await pdf(buffer)
@@ -495,6 +508,13 @@ export async function POST(req: Request) {
       },
     })
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
+    if (error instanceof Error && error.message === 'UPLOAD_TOO_LARGE') {
+      return NextResponse.json({ error: 'Upload a supplier file smaller than 5 MB.' }, { status: 413 })
+    }
+
     console.error('POST /api/parse-caterway failed:', error)
 
     return NextResponse.json(

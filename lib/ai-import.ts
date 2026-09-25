@@ -1,6 +1,11 @@
 import { createRequire } from 'module'
 import * as XLSX from 'xlsx'
 import { prisma } from '@/lib/prisma'
+import {
+  assertDocumentTextSize,
+  assertDocumentUploadSize,
+  MAX_DOCUMENT_UPLOAD_BYTES,
+} from '@/lib/upload-security'
 
 const require = createRequire(import.meta.url)
 
@@ -247,6 +252,8 @@ function textFromWorkbook(buffer: Buffer) {
 }
 
 export async function textFromUploadFile(file: File) {
+  assertDocumentUploadSize(file)
+
   const mimeType = file.type || 'application/octet-stream'
   const fileName = file.name || 'upload'
   const lowerName = fileName.toLowerCase()
@@ -297,6 +304,7 @@ export async function textFromAiRequest(req: Request, textKeys = ['ocrText', 'pa
     const text = textKeys.map((key) => cleanText(body?.[key])).find(Boolean) || ''
 
     if (text.length < 30) throw new Error('OCR_TEXT_TOO_SHORT')
+    assertDocumentTextSize(text)
     return { text, body }
   }
 
@@ -361,6 +369,24 @@ export function aiErrorResponse(error: unknown) {
 
   if (error instanceof Error && error.message === 'EMPTY_SPREADSHEET') {
     return Response.json({ error: 'No readable rows were found in this Excel file.' }, { status: 400 })
+  }
+
+  if (error instanceof Error && error.message === 'UPLOAD_TOO_LARGE') {
+    return Response.json(
+      {
+        error: `The file is too large. Upload a file smaller than ${Math.round(
+          MAX_DOCUMENT_UPLOAD_BYTES / 1024 / 1024
+        )} MB.`,
+      },
+      { status: 413 }
+    )
+  }
+
+  if (error instanceof Error && error.message === 'TEXT_TOO_LARGE') {
+    return Response.json(
+      { error: 'The document contains too much text. Split it into smaller files.' },
+      { status: 413 }
+    )
   }
 
   if (error instanceof Error && error.message === 'DEEPSEEK_INVALID_JSON') {

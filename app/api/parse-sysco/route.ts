@@ -3,6 +3,8 @@ export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
+import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { assertDocumentUploadSize } from '@/lib/upload-security'
 
 type RawSyscoRow = {
   'Account selection'?: string
@@ -238,12 +240,23 @@ function needsReview(row: ParsedRow) {
 
 export async function POST(req: Request) {
   try {
+    const tenant = await requireTenant()
+
+    if (!canWrite(tenant.role)) {
+      return NextResponse.json(
+        { error: 'You do not have permission to import supplier prices.' },
+        { status: 403 }
+      )
+    }
+
     const formData = await req.formData()
     const file = formData.get('file')
 
     if (!(file instanceof File)) {
       return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
     }
+
+    assertDocumentUploadSize(file)
 
     const buffer = Buffer.from(await file.arrayBuffer())
 
@@ -362,6 +375,13 @@ export async function POST(req: Request) {
       },
     })
   } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
+    if (error instanceof Error && error.message === 'UPLOAD_TOO_LARGE') {
+      return NextResponse.json({ error: 'Upload a supplier file smaller than 5 MB.' }, { status: 413 })
+    }
+
     console.error('POST /api/parse-sysco failed:', error)
 
     return NextResponse.json(

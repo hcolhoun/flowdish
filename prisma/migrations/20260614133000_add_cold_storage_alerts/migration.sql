@@ -1,0 +1,3 @@
+-- This migration was originally applied directly to production before Prisma
+-- migration history was adopted for this feature. The alert table and columns
+-- are intentionally left as a production-compatible legacy extension.
