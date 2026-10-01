@@ -23,6 +23,8 @@ type ExtractedDocketRow = {
   unitType: UnitType | null
   packPrice: number | null
   lineTotal: number | null
+  vatCode: string | null
+  vatRatePercent: number | null
   notes: string | null
 }
 
@@ -30,6 +32,10 @@ type ExtractedDocket = {
   supplier: string | null
   deliveryDate: string | null
   docketNumber: string | null
+  vatLegend: Array<{
+    code: string
+    ratePercent: number
+  }>
   rows: ExtractedDocketRow[]
 }
 
@@ -49,6 +55,19 @@ function toNullableNumber(value: unknown) {
   const number = Number(value)
 
   return Number.isFinite(number) ? number : null
+}
+
+function comparableVatCode(value: unknown) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^VAT\s*CODE\s*/i, '')
+    .replace(/[^A-Z0-9]/g, '')
+}
+
+function validVatRate(value: unknown) {
+  const rate = toNullableNumber(value)
+  return rate !== null && rate >= 0 && rate <= 100 ? rate : null
 }
 
 type SupplierProductMatchCandidate = {
@@ -201,7 +220,14 @@ For each line item return:
 - unitType: "g", "ml", or "each"
 - packPrice: price per pack/unit if visible, else null
 - lineTotal: total line price if visible, else null
+- vatCode: the VAT code printed on that line, if visible, else null
+- vatRatePercent: a VAT percentage printed directly on that line, if visible, else null
 - notes: anything uncertain or relevant
+
+Also extract the invoice VAT legend or VAT summary, where each VAT code is mapped to
+its VAT rate. For example, a footer may have VAT CODE, VAT RATE, TAXABLE GOODS, and VAT
+columns. Return the code and rate only; do not confuse taxable-goods or VAT-charge totals
+with the rate.
 
 Rules:
 - Do not invent rows.
@@ -217,6 +243,9 @@ Rules:
 - If a row shows litres/ml, convert qty to ml where possible and unitType "ml".
 - If price is unclear, use null.
 - If supplier SKU is unclear, use null.
+- Copy each line's VAT code exactly from the VAT CODE column.
+- Do not guess what a VAT code means. Only return a legend mapping when both its code and
+  rate are visible in the document.
 - Keep product names clean and do not include headers/footers.
 - Do not infer or recreate addresses, contact details, account numbers, payment details, staff names, or any information hidden by black redaction boxes.
 - If the supplier is not visible in the filtered text, use ${JSON.stringify(supplierHint)}.
@@ -226,6 +255,12 @@ Return this shape exactly:
   "supplier": string | null,
   "deliveryDate": string | null,
   "docketNumber": string | null,
+  "vatLegend": [
+    {
+      "code": string,
+      "ratePercent": number
+    }
+  ],
   "rows": [
     {
       "supplierSku": string | null,
@@ -236,6 +271,8 @@ Return this shape exactly:
       "unitType": "g" | "ml" | "each" | null,
       "packPrice": number | null,
       "lineTotal": number | null,
+      "vatCode": string | null,
+      "vatRatePercent": number | null,
       "notes": string | null
     }
   ]
@@ -391,6 +428,14 @@ export async function POST(req: Request) {
     const deliveryDate = cleanText(extracted.deliveryDate)
     const docketNumber = cleanText(extracted.docketNumber)
     const rows = Array.isArray(extracted.rows) ? extracted.rows : []
+    const vatRatesByCode = new Map<string, number>()
+
+    for (const entry of Array.isArray(extracted.vatLegend) ? extracted.vatLegend : []) {
+      const code = comparableVatCode(entry?.code)
+      const rate = validVatRate(entry?.ratePercent)
+      if (code && rate !== null) vatRatesByCode.set(code, rate)
+    }
+
     const supplierProducts = (await prisma.supplierProduct.findMany({
       where: { restaurantId: tenant.restaurantId },
       include: { linkedItem: true },
@@ -408,6 +453,8 @@ export async function POST(req: Request) {
         unitType: normaliseUnitType(row.unitType),
         packPrice: toNullableNumber(row.packPrice),
         lineTotal: toNullableNumber(row.lineTotal),
+        vatCode: cleanText(row.vatCode),
+        vatRatePercent: validVatRate(row.vatRatePercent),
         notes: cleanText(row.notes),
       }
 
@@ -418,9 +465,19 @@ export async function POST(req: Request) {
         cleanRow,
         match.supplierProduct
       )
+      const legendVatRate = cleanRow.vatCode
+        ? vatRatesByCode.get(comparableVatCode(cleanRow.vatCode))
+        : undefined
+      const vatRatePercent = cleanRow.vatRatePercent ?? legendVatRate ?? null
+      const unresolvedVatCode = Boolean(cleanRow.vatCode && vatRatePercent === null)
+      const vatNotes = unresolvedVatCode
+        ? `VAT code ${cleanRow.vatCode} was not found in the selected VAT legend.`
+        : null
 
       matchedRows.push({
         ...normalisedRow,
+        vatRatePercent,
+        notes: [normalisedRow.notes, vatNotes].filter(Boolean).join(' ') || null,
         supplier,
         matchedSupplierProductId: match.supplierProduct?.id ?? null,
         matchedSupplierProductName: match.supplierProduct?.name ?? null,
@@ -434,7 +491,8 @@ export async function POST(req: Request) {
           !match.supplierProduct ||
           !match.supplierProduct.linkedItemId ||
           !normalisedRow.qty ||
-          !normalisedRow.unitType,
+          !normalisedRow.unitType ||
+          unresolvedVatCode,
       })
     }
 

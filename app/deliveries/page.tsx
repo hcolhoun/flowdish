@@ -67,6 +67,8 @@ type ParsedDocketRow = {
   unitType: UnitType | null
   packPrice: number | null
   lineTotal: number | null
+  vatCode: string | null
+  vatRatePercent: number | null
   notes: string | null
   matchedSupplierProductId: string | null
   matchedSupplierProductName: string | null
@@ -98,6 +100,7 @@ type ReviewRow = {
   qty: string
   unitType: UnitType | ''
   totalCost: string
+  vatCode: string
   vatRatePercent: string
   vatReclaimStatus: VatReclaimStatus
   deliveryVehicleOk: boolean
@@ -893,8 +896,10 @@ export default function DeliveriesPage() {
           qty: toInputValue(row.qty),
           unitType: row.matchedItemUnitType || row.unitType || matchedItem?.unitType || '',
           totalCost: toInputValue(row.lineTotal ?? row.packPrice),
-          vatRatePercent: '0',
-          vatReclaimStatus: 'NOT_APPLICABLE',
+          vatCode: row.vatCode || '',
+          vatRatePercent: toInputValue(row.vatRatePercent ?? 0),
+          vatReclaimStatus:
+            Number(row.vatRatePercent) > 0 ? 'ELIGIBLE' : 'NOT_APPLICABLE',
           deliveryVehicleOk: false,
           selectedItemId: row.matchedItemId || '',
           itemSearch:
@@ -1217,7 +1222,7 @@ export default function DeliveriesPage() {
             </div>
 
             <div className="max-h-[75vh] overflow-auto">
-              <table className="min-w-[2260px] w-full text-left">
+              <table className="min-w-[2340px] w-full text-left">
                 <thead className="bg-slate-100 text-sm">
                   <tr>
                     <th className="px-4 py-3 text-slate-800">Save</th>
@@ -1230,6 +1235,7 @@ export default function DeliveriesPage() {
                     <th className="px-4 py-3 text-slate-800">Unit</th>
                     <th className="px-4 py-3 text-slate-800">Total Cost</th>
                     <th className="px-4 py-3 text-slate-800">Price Check</th>
+                    <th className="px-4 py-3 text-slate-800">VAT Code</th>
                     <th className="px-4 py-3 text-slate-800">VAT %</th>
                     <th className="px-4 py-3 text-slate-800">VAT Treatment</th>
                     <th className="px-4 py-3 text-slate-800">Confidence</th>
@@ -1501,6 +1507,10 @@ export default function DeliveriesPage() {
                               <div>{priceCheck.basis}</div>
                             </div>
                           )}
+                        </td>
+
+                        <td className="px-4 py-3 text-sm text-slate-700">
+                          {row.vatCode || '—'}
                         </td>
 
                         <td className="px-4 py-3">

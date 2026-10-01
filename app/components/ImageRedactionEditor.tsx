@@ -388,7 +388,7 @@ const ImageRedactionEditor = forwardRef<
         <div>
           <div className="text-sm font-semibold text-slate-900">Privacy preview</div>
           <div className="text-xs text-slate-600">
-            Only the selected area will be sent for AI reading. Do not include sensitive data.
+            Include the product table and any VAT legend. Do not include sensitive data.
           </div>
         </div>
 
@@ -529,7 +529,8 @@ const ImageRedactionEditor = forwardRef<
             className="mt-0.5 h-4 w-4"
           />
           <span>
-            I checked the selection. It contains the product table and no sensitive data.
+            I checked the selection. It contains the product table, any required VAT legend,
+            and no sensitive data.
           </span>
         </label>
         {onProcess ? (
@@ -537,7 +538,7 @@ const ImageRedactionEditor = forwardRef<
             type="button"
             onClick={onProcess}
             disabled={disabled || processing || !confirmed || boxes.length === 0}
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             <span>{processing ? 'Processing...' : 'Process'}</span>
             <ArrowRight size={18} aria-hidden="true" />
