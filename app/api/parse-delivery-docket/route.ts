@@ -356,7 +356,11 @@ async function matchSupplierProduct(
 }
 
 export async function POST(req: Request) {
+  const requestId =
+    cleanText(req.headers.get('X-Flowdish-Request-Id')) || crypto.randomUUID()
+
   try {
+    console.info(`[delivery-parser:${requestId}] Request received.`)
     const tenant = await requireTenant()
 
     if (!canWrite(tenant.role)) {
@@ -367,6 +371,9 @@ export async function POST(req: Request) {
     }
 
     const docketInput = await deliveryDocketInput(req)
+    console.info(
+      `[delivery-parser:${requestId}] Input prepared (${docketInput.mode}); starting DeepSeek.`
+    )
 
     const extracted = await extractDocketWithDeepSeek(
       tenant.restaurantId,
@@ -375,6 +382,9 @@ export async function POST(req: Request) {
         imageDataUrl: docketInput.imageDataUrl,
       },
       docketInput.supplierHint
+    )
+    console.info(
+      `[delivery-parser:${requestId}] DeepSeek returned ${Array.isArray(extracted.rows) ? extracted.rows.length : 0} row(s).`
     )
 
     const supplier = normaliseSupplier(cleanText(extracted.supplier) || docketInput.supplierHint)
@@ -428,31 +438,41 @@ export async function POST(req: Request) {
       })
     }
 
-    return NextResponse.json({
-      supplier,
-      deliveryDate,
-      docketNumber,
-      rows: matchedRows,
-      rawExtracted: extracted,
-      parser: {
-        provider: 'deepseek',
-        mode: docketInput.mode,
-        model: 'flash-first',
-        removedLineCount: docketInput.removedLineCount,
-        tableBoundaryFound: docketInput.tableBoundaryFound,
+    return NextResponse.json(
+      {
+        supplier,
+        deliveryDate,
+        docketNumber,
+        rows: matchedRows,
+        rawExtracted: extracted,
+        parser: {
+          provider: 'deepseek',
+          mode: docketInput.mode,
+          model: 'flash-first',
+          removedLineCount: docketInput.removedLineCount,
+          tableBoundaryFound: docketInput.tableBoundaryFound,
+        },
       },
-    })
+      { headers: { 'X-Flowdish-Request-Id': requestId } }
+    )
   } catch (error) {
     const tenantError = tenantErrorResponse(error)
-    if (tenantError) return tenantError
+    if (tenantError) {
+      tenantError.headers.set('X-Flowdish-Request-Id', requestId)
+      return tenantError
+    }
 
     const aiError = aiErrorResponse(error)
-    if (aiError) return aiError
+    if (aiError) {
+      console.error(`[delivery-parser:${requestId}] AI request failed:`, error)
+      aiError.headers.set('X-Flowdish-Request-Id', requestId)
+      return aiError
+    }
 
-    console.error('POST /api/parse-delivery-docket failed:', error)
+    console.error(`[delivery-parser:${requestId}] Request failed:`, error)
     return NextResponse.json(
       { error: 'Failed to parse delivery docket.' },
-      { status: 500 }
+      { status: 500, headers: { 'X-Flowdish-Request-Id': requestId } }
     )
   }
 }

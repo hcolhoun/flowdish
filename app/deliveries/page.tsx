@@ -779,24 +779,59 @@ export default function DeliveriesPage() {
       const directUploadLimit = 4 * 1024 * 1024
       let res: Response
       let data: ParsedDocketResponse & { error?: string }
+      const parserRequestId = crypto.randomUUID()
+
+      const processOnce = async (request: RequestInit) => {
+        const controller = new AbortController()
+        const timeout = window.setTimeout(() => controller.abort(), 90_000)
+
+        try {
+          return await fetch('/api/parse-delivery-docket', {
+            ...request,
+            headers: {
+              ...request.headers,
+              'X-Flowdish-Request-Id': parserRequestId,
+            },
+            signal: controller.signal,
+          })
+        } catch (error) {
+          if (controller.signal.aborted) {
+            throw new Error(
+              `Flowdish stopped this request after 90 seconds. Reference: ${parserRequestId}`
+            )
+          }
+
+          throw error
+        } finally {
+          window.clearTimeout(timeout)
+        }
+      }
 
       const processWithRetry = async (request: RequestInit) => {
         try {
-          const firstResponse = await fetch('/api/parse-delivery-docket', request)
-          if (![502, 503, 504].includes(firstResponse.status)) return firstResponse
-        } catch {
-          // One automatic retry makes mobile uploads more tolerant of a brief network drop.
-        }
+          return await processOnce(request)
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('after 90 seconds')) {
+            throw error
+          }
 
-        setDocketOcrProgress('Connection interrupted. Retrying once...')
-        await new Promise((resolve) => window.setTimeout(resolve, 900))
+          setDocketOcrProgress('Connection interrupted. Retrying once...')
+          await new Promise((resolve) => window.setTimeout(resolve, 900))
 
-        try {
-          return await fetch('/api/parse-delivery-docket', request)
-        } catch {
-          throw new Error(
-            'The connection was interrupted while processing the docket. Check the network and try again.'
-          )
+          try {
+            return await processOnce(request)
+          } catch (retryError) {
+            if (
+              retryError instanceof Error &&
+              retryError.message.includes('after 90 seconds')
+            ) {
+              throw retryError
+            }
+
+            throw new Error(
+              `The connection was interrupted while processing the docket. Reference: ${parserRequestId}`
+            )
+          }
         }
       }
 
@@ -836,7 +871,10 @@ export default function DeliveriesPage() {
       }
 
       if (!res.ok) {
-        throw new Error(data?.error || 'Failed to process delivery docket')
+        const responseRequestId = res.headers.get('X-Flowdish-Request-Id')
+        throw new Error(
+          `${data?.error || 'Failed to process delivery docket.'} Reference: ${responseRequestId || parserRequestId}`
+        )
       }
 
       const mappedRows: ReviewRow[] = (data.rows || []).map((row, index) => {
