@@ -300,6 +300,24 @@ const ImageRedactionEditor = forwardRef<
 
         if (!context) throw new Error('Could not create the redacted image.')
 
+        const selectionBounds = boxes.reduce(
+          (bounds, box) => ({
+            left: Math.min(bounds.left, box.x),
+            top: Math.min(bounds.top, box.y),
+            right: Math.max(bounds.right, box.x + box.width),
+            bottom: Math.max(bounds.bottom, box.y + box.height),
+          }),
+          { left: 1, top: 1, right: 0, bottom: 0 }
+        )
+        const selectedSourceWidth = Math.max(
+          1,
+          Math.ceil((selectionBounds.right - selectionBounds.left) * image.naturalWidth)
+        )
+        const selectedSourceHeight = Math.max(
+          1,
+          Math.ceil((selectionBounds.bottom - selectionBounds.top) * image.naturalHeight)
+        )
+
         let maxDimension = 2400
         let quality = 0.88
         let blob: Blob | null = null
@@ -307,10 +325,10 @@ const ImageRedactionEditor = forwardRef<
         while (!blob || blob.size > MAX_OUTPUT_BYTES) {
           const scale = Math.min(
             1,
-            maxDimension / Math.max(image.naturalWidth, image.naturalHeight)
+            maxDimension / Math.max(selectedSourceWidth, selectedSourceHeight)
           )
-          const width = Math.max(1, Math.round(image.naturalWidth * scale))
-          const height = Math.max(1, Math.round(image.naturalHeight * scale))
+          const width = Math.max(1, Math.round(selectedSourceWidth * scale))
+          const height = Math.max(1, Math.round(selectedSourceHeight * scale))
 
           canvas.width = width
           canvas.height = height
@@ -322,10 +340,14 @@ const ImageRedactionEditor = forwardRef<
             const sourceY = Math.floor(box.y * image.naturalHeight)
             const sourceWidth = Math.ceil(box.width * image.naturalWidth)
             const sourceHeight = Math.ceil(box.height * image.naturalHeight)
-            const outputX = Math.floor(box.x * width)
-            const outputY = Math.floor(box.y * height)
-            const outputWidth = Math.ceil(box.width * width)
-            const outputHeight = Math.ceil(box.height * height)
+            const outputX = Math.floor(
+              (box.x - selectionBounds.left) * image.naturalWidth * scale
+            )
+            const outputY = Math.floor(
+              (box.y - selectionBounds.top) * image.naturalHeight * scale
+            )
+            const outputWidth = Math.ceil(sourceWidth * scale)
+            const outputHeight = Math.ceil(sourceHeight * scale)
 
             context.drawImage(
               image,

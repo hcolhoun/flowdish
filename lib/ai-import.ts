@@ -131,6 +131,7 @@ async function runDeepSeekJsonRequest<T>({
   const abortController = new AbortController()
   const timeout = setTimeout(() => abortController.abort(), timeoutMs)
   let response: Response
+  let json: DeepSeekResponse
 
   try {
     response = await fetch('https://api.deepseek.com/chat/completions', {
@@ -148,6 +149,7 @@ async function runDeepSeekJsonRequest<T>({
       }),
       signal: abortController.signal,
     })
+    json = (await response.json()) as DeepSeekResponse
   } catch (error) {
     if (abortController.signal.aborted) {
       throw new Error('DEEPSEEK_TIMEOUT')
@@ -158,8 +160,6 @@ async function runDeepSeekJsonRequest<T>({
   } finally {
     clearTimeout(timeout)
   }
-
-  const json = (await response.json()) as DeepSeekResponse
 
   await prisma.aiUsageLog.create({
     data: {
