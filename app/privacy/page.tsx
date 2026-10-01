@@ -37,10 +37,10 @@ const sections = [
     title: 'AI, OCR, and Imported Files',
     body: [
       'Flowdish may use OCR and AI parsing to convert delivery dockets, supplier price lists, sales Z-reads, or similar documents into reviewable rows.',
-      'For photographed delivery dockets, supplier price lists, and sales Z-reads, Flowdish displays a privacy preview on the user device. Suggested masks can be moved, resized, deleted, or supplemented by the user. After the user confirms the preview, the browser permanently applies the black masks to a new image. Only that flattened, redacted copy is sent to the AI parsing provider; the original image is not sent.',
+      'For photographed delivery dockets, supplier price lists, and sales Z-reads, Flowdish displays a privacy preview on the user device. A suggested product or sales table selection can be moved, resized, deleted, or supplemented by the user. After the user confirms the preview, the browser creates a new image in which everything outside the selected area is permanently blacked out. Only that flattened copy is sent to the AI parsing provider; the original image is not sent.',
       'For PDF, spreadsheet, CSV, and text imports from any supplier, Flowdish extracts text on its application server and applies the same privacy filter before AI parsing. Raw files, extracted text, and raw AI JSON are not intentionally stored after processing. Reviewed operational records, supplier changes, import summaries, and AI usage metadata may be stored.',
       'For pasted or text-based imports, sales Z-read and POS content is reduced to sales-table rows before AI parsing, with customer, staff, address, payment, account, and contact details removed where detected.',
-      'Suggested image masks and automated text filtering reduce unnecessary disclosure but cannot guarantee that every unusual document layout or sensitive detail will be identified. Users must check image masks before confirming and should avoid uploading unnecessary personal, banking, payment-card, or other sensitive information.',
+      'Suggested image selections and automated text filtering reduce unnecessary disclosure but cannot guarantee that every unusual document layout or sensitive detail will be identified. Users must check the selected area before confirming and must not include unnecessary personal, banking, payment-card, or other sensitive information.',
     ],
   },
   {
@@ -83,7 +83,7 @@ export default function PrivacyPage() {
         <div className="rounded-2xl border bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-sm font-medium text-slate-500">Last updated: 25 September 2026</p>
+              <p className="text-sm font-medium text-slate-500">Last updated: 1 October 2026</p>
               <h1 className="mt-2 text-3xl font-semibold text-slate-900">
                 Flowdish Privacy Statement
               </h1>

@@ -17,6 +17,8 @@ type UnitType = 'g' | 'ml' | 'each'
 type ExtractedDocketRow = {
   supplierSku: string | null
   productName: string
+  packSize: string | null
+  packCount: number | null
   qty: number | null
   unitType: UnitType | null
   packPrice: number | null
@@ -49,6 +51,126 @@ function toNullableNumber(value: unknown) {
   return Number.isFinite(number) ? number : null
 }
 
+type SupplierProductMatchCandidate = {
+  id: string
+  supplier: string
+  supplierSku: string | null
+  name: string
+  packSize: string | null
+  weight: string | null
+  packPrice: number | null
+  unitPrice: number | null
+  linkedItemId: string | null
+  linkedItem: {
+    id: string
+    sku: string
+    name: string
+    unitType: UnitType
+  } | null
+}
+
+function comparable(value: string | null | undefined) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\b(?:case|unit|each|pack|box|bag|tray|tub|tin|bottle|loose|chilled|frozen)\b/g, ' ')
+    .replace(/\b\d+(?:[.,]\d+)?\s*(?:x\s*)?\d*(?:[.,]\d+)?\s*(?:kg|gm?|g|ltr?|litres?|ml)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function comparableSku(value: string | null | undefined) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function supplierMatches(left: string | null, right: string) {
+  const first = comparable(left)
+  const second = comparable(right)
+  return Boolean(first && second && (first === second || first.includes(second) || second.includes(first)))
+}
+
+function productNameScore(left: string, right: string) {
+  const first = comparable(left)
+  const second = comparable(right)
+
+  if (!first || !second) return 0
+  if (first === second) return 1
+  if (first.length >= 5 && second.length >= 5 && (first.includes(second) || second.includes(first))) {
+    return 0.9
+  }
+
+  const firstTokens = new Set(first.split(' ').filter((token) => token.length > 1))
+  const secondTokens = new Set(second.split(' ').filter((token) => token.length > 1))
+  const shared = [...firstTokens].filter((token) => secondTokens.has(token)).length
+
+  if (shared === 0) return 0
+  return (2 * shared) / (firstTokens.size + secondTokens.size)
+}
+
+function parsePackBaseAmount(...values: Array<string | null | undefined>) {
+  const text = values.filter(Boolean).join(' ').toLowerCase().replace(/,/g, '.')
+  const unitAmount = (amount: number, unit: string) => {
+    if (unit === 'kg') return { amount: amount * 1000, unitType: 'g' as const }
+    if (unit === 'g' || unit === 'gm') return { amount, unitType: 'g' as const }
+    if (unit === 'l' || unit === 'ltr' || unit === 'litre') {
+      return { amount: amount * 1000, unitType: 'ml' as const }
+    }
+    return { amount, unitType: 'ml' as const }
+  }
+
+  const multiPack = text.match(
+    /(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(kg|gm?|g|ltr?|litre|ml)\b/
+  )
+
+  if (multiPack) {
+    const count = Number(multiPack[1])
+    const size = unitAmount(Number(multiPack[2]), multiPack[3])
+    if (Number.isFinite(count) && count > 0 && Number.isFinite(size.amount)) {
+      return { amount: count * size.amount, unitType: size.unitType }
+    }
+  }
+
+  const single = text.match(/(\d+(?:\.\d+)?)\s*(kg|gm?|g|ltr?|litre|ml)\b/)
+  if (!single) return null
+
+  const parsed = unitAmount(Number(single[1]), single[2])
+  return Number.isFinite(parsed.amount) && parsed.amount > 0 ? parsed : null
+}
+
+function normaliseQuantityForMatchedProduct(
+  row: ExtractedDocketRow,
+  product: SupplierProductMatchCandidate | null
+) {
+  if (!product?.linkedItem || !row.qty || row.qty <= 0) return row
+
+  const itemUnit = product.linkedItem.unitType
+  if (itemUnit === 'each') return { ...row, unitType: 'each' as const }
+
+  const packAmount = parsePackBaseAmount(row.packSize, product.packSize, product.weight, product.name)
+  if (!packAmount || packAmount.unitType !== itemUnit) return { ...row, unitType: itemUnit }
+
+  if (row.unitType === itemUnit && row.qty >= packAmount.amount / 10) {
+    return { ...row, unitType: itemUnit }
+  }
+
+  const packCount = row.packCount && row.packCount > 0 ? row.packCount : null
+  const looksLikeUnconvertedPackCount =
+    row.unitType === 'each' || (row.qty < packAmount.amount / 10 && row.qty <= 100)
+
+  if (!packCount && !looksLikeUnconvertedPackCount) {
+    return { ...row, unitType: itemUnit }
+  }
+
+  const quantity = (packCount ?? row.qty) * packAmount.amount
+  const note = `Quantity converted from ${packCount ?? row.qty} pack(s) using ${row.packSize || product.packSize || product.weight}.`
+
+  return {
+    ...row,
+    qty: quantity,
+    unitType: itemUnit,
+    notes: [row.notes, note].filter(Boolean).join(' '),
+  }
+}
+
 async function extractDocketWithDeepSeek(
   restaurantId: string,
   input: { text: string | null; imageDataUrl: string | null },
@@ -73,7 +195,9 @@ Extract:
 For each line item return:
 - supplierSku: supplier product code/SKU if visible, else null
 - productName: product description
-- qty: delivered quantity as a number if visible
+- packSize: exact SIZE or PACK SIZE text if visible, such as "1 x 1 KG", else null
+- packCount: total number of cases/units/packs delivered if visible, else null
+- qty: total delivered quantity in the base unit, not merely the number of packs
 - unitType: "g", "ml", or "each"
 - packPrice: price per pack/unit if visible, else null
 - lineTotal: total line price if visible, else null
@@ -82,12 +206,14 @@ For each line item return:
 Rules:
 - Do not invent rows.
 - If uncertain, still include the row but put uncertainty in notes.
-- Dockets may be supplied as a redacted image or OCR text from a table with columns like PRODUCT, DESCRIPTION, QTY, WEIGHT, PRICE PER, UNIT COST, TOTAL COST.
-- For table OCR, treat the PRODUCT column as supplierSku and DESCRIPTION as productName.
+- Dockets may be supplied as a redacted image or OCR text from a table with columns like CODE, PRODUCT, DESCRIPTION, CASE, UNIT, PACK SIZE, SIZE, PRICE, WEIGHT, VALUE, or TOTAL COST.
+- CODE and PRODUCT CODE columns are supplierSku. Copy every visible code exactly; never omit a clear code merely because it is numeric or unfamiliar.
+- DESCRIPTION is productName. PACK SIZE or SIZE is packSize. VALUE or TOTAL COST is lineTotal. PRICE or WSP is normally packPrice, not a base-unit price.
 - Do not use the supplier name or random OCR fragments as supplierSku.
-- Supplier SKUs are usually short product codes near the start of each row, such as CODSP1, IC7801, ICP781, or MUSS02.
+- Supplier SKUs may be numeric, alphabetic, or mixed, and are usually short codes near each row, such as 430399, CMS64, CODSP1, IC7801, ICP781, or MUSS02.
 - If the docket uses cases, packs, boxes, trays, bags, bottles, tins, bunches, tubs, units, or eaches, use unitType "each" unless a clear gram/ml amount is the delivered quantity.
-- If a row shows weight like kg/g, convert qty to grams where possible and unitType "g".
+- Add CASE and UNIT quantities together when both columns exist to obtain packCount; ignore zeros.
+- If a row shows weight like kg/g, multiply the pack size by packCount, convert qty to grams, and use unitType "g". Example: packSize "1 x 1 KG" and one UNIT means packCount 1, qty 1000, unitType "g". Example: "6 x 1.25 KG" and two CASES means qty 15000 g.
 - If a row shows litres/ml, convert qty to ml where possible and unitType "ml".
 - If price is unclear, use null.
 - If supplier SKU is unclear, use null.
@@ -104,6 +230,8 @@ Return this shape exactly:
     {
       "supplierSku": string | null,
       "productName": string,
+      "packSize": string | null,
+      "packCount": number | null,
       "qty": number | null,
       "unitType": "g" | "ml" | "each" | null,
       "packPrice": number | null,
@@ -158,50 +286,38 @@ async function deliveryDocketInput(req: Request) {
 }
 
 async function matchSupplierProduct(
-  restaurantId: string,
   row: ExtractedDocketRow,
-  supplier: string | null
+  supplier: string | null,
+  products: SupplierProductMatchCandidate[]
 ) {
   const sku = cleanText(row.supplierSku)
   const name = cleanText(row.productName)
+  const comparableRowSku = comparableSku(sku)
+  const supplierProducts = supplier
+    ? products.filter((product) => supplierMatches(supplier, product.supplier))
+    : []
+  const preferredProducts = supplierProducts.length > 0 ? supplierProducts : products
 
-  if (supplier && sku) {
-    const exact = await prisma.supplierProduct.findFirst({
-      where: {
-        restaurantId,
-        supplier,
-        supplierSku: {
-          equals: sku,
-          mode: 'insensitive',
-        },
-      },
-      include: {
-        linkedItem: true,
-      },
-    })
+  if (comparableRowSku) {
+    const exact = preferredProducts.find(
+      (product) => comparableSku(product.supplierSku) === comparableRowSku
+    )
 
     if (exact) {
       return {
         supplierProduct: exact,
         confidence: 0.98,
-        matchReason: 'Exact supplier SKU match',
+        matchReason: supplierProducts.length > 0
+          ? 'Exact supplier SKU match'
+          : 'Exact SKU match without supplier confirmation',
       }
     }
   }
 
-  if (sku) {
-    const skuMatch = await prisma.supplierProduct.findFirst({
-      where: {
-        restaurantId,
-        supplierSku: {
-          equals: sku,
-          mode: 'insensitive',
-        },
-      },
-      include: {
-        linkedItem: true,
-      },
-    })
+  if (comparableRowSku) {
+    const skuMatch = products.find(
+      (product) => comparableSku(product.supplierSku) === comparableRowSku
+    )
 
     if (skuMatch) {
       return {
@@ -212,49 +328,20 @@ async function matchSupplierProduct(
     }
   }
 
-  if (supplier && name) {
-    const nameMatch = await prisma.supplierProduct.findFirst({
-      where: {
-        restaurantId,
-        supplier,
-        name: {
-          contains: name,
-          mode: 'insensitive',
-        },
-      },
-      include: {
-        linkedItem: true,
-      },
-    })
-
-    if (nameMatch) {
-      return {
-        supplierProduct: nameMatch,
-        confidence: 0.72,
-        matchReason: 'Supplier product name match',
-      }
-    }
-  }
-
   if (name) {
-    const looseNameMatch = await prisma.supplierProduct.findFirst({
-      where: {
-        restaurantId,
-        name: {
-          contains: name,
-          mode: 'insensitive',
-        },
-      },
-      include: {
-        linkedItem: true,
-      },
-    })
+    const scored = preferredProducts
+      .map((product) => ({ product, score: productNameScore(name, product.name) }))
+      .sort((left, right) => right.score - left.score)
+    const best = scored[0]
 
-    if (looseNameMatch) {
+    if (best && best.score >= 0.62) {
       return {
-        supplierProduct: looseNameMatch,
-        confidence: 0.6,
-        matchReason: 'Loose product name match',
+        supplierProduct: best.product,
+        confidence: supplierProducts.length > 0 ? Math.min(0.88, best.score) : 0.62,
+        matchReason:
+          supplierProducts.length > 0
+            ? 'Supplier product name match'
+            : 'Product name match without supplier confirmation',
       }
     }
   }
@@ -294,6 +381,10 @@ export async function POST(req: Request) {
     const deliveryDate = cleanText(extracted.deliveryDate)
     const docketNumber = cleanText(extracted.docketNumber)
     const rows = Array.isArray(extracted.rows) ? extracted.rows : []
+    const supplierProducts = (await prisma.supplierProduct.findMany({
+      where: { restaurantId: tenant.restaurantId },
+      include: { linkedItem: true },
+    })) as SupplierProductMatchCandidate[]
 
     const matchedRows = []
 
@@ -301,6 +392,8 @@ export async function POST(req: Request) {
       const cleanRow: ExtractedDocketRow = {
         supplierSku: cleanText(row.supplierSku),
         productName: cleanText(row.productName) || '',
+        packSize: cleanText(row.packSize),
+        packCount: toNullableNumber(row.packCount),
         qty: toNullableNumber(row.qty),
         unitType: normaliseUnitType(row.unitType),
         packPrice: toNullableNumber(row.packPrice),
@@ -310,10 +403,14 @@ export async function POST(req: Request) {
 
       if (!cleanRow.productName) continue
 
-      const match = await matchSupplierProduct(tenant.restaurantId, cleanRow, supplier)
+      const match = await matchSupplierProduct(cleanRow, supplier, supplierProducts)
+      const normalisedRow = normaliseQuantityForMatchedProduct(
+        cleanRow,
+        match.supplierProduct
+      )
 
       matchedRows.push({
-        ...cleanRow,
+        ...normalisedRow,
         supplier,
         matchedSupplierProductId: match.supplierProduct?.id ?? null,
         matchedSupplierProductName: match.supplierProduct?.name ?? null,
@@ -326,8 +423,8 @@ export async function POST(req: Request) {
         needsReview:
           !match.supplierProduct ||
           !match.supplierProduct.linkedItemId ||
-          !cleanRow.qty ||
-          !cleanRow.unitType,
+          !normalisedRow.qty ||
+          !normalisedRow.unitType,
       })
     }
 

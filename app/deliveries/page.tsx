@@ -294,6 +294,43 @@ export default function DeliveriesPage() {
     return `${money(value, 5)} / ${unitType || 'unit'}`
   }
 
+  function effectiveSupplierUnitPrice(product: SupplierProduct, unitType: UnitType | '') {
+    if (product.unitPrice !== null && Number.isFinite(product.unitPrice)) {
+      if ((unitType === 'g' || unitType === 'ml') && product.unitPrice > 1) {
+        return product.unitPrice / 1000
+      }
+
+      return product.unitPrice
+    }
+
+    if (product.packPrice === null || !Number.isFinite(product.packPrice)) return null
+
+    const packText = `${product.packSize || ''} ${product.weight || ''}`
+      .toLowerCase()
+      .replace(/,/g, '.')
+    const multiPack = packText.match(
+      /(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(kg|gm?|g|ltr?|litre|ml)\b/
+    )
+    const singlePack = packText.match(
+      /(\d+(?:\.\d+)?)\s*(kg|gm?|g|ltr?|litre|ml)\b/
+    )
+    const match = multiPack || singlePack
+
+    if (!match) return unitType === 'each' ? product.packPrice : null
+
+    const count = multiPack ? Number(match[1]) : 1
+    const size = Number(match[multiPack ? 2 : 1])
+    const measure = match[multiPack ? 3 : 2]
+    const baseSize = ['kg', 'l', 'lt', 'ltr', 'litre'].includes(measure)
+      ? size * 1000
+      : size
+    const measuredUnit = ['kg', 'g', 'gm'].includes(measure) ? 'g' : 'ml'
+
+    if (measuredUnit !== unitType || !Number.isFinite(baseSize) || baseSize <= 0) return null
+
+    return product.packPrice / (count * baseSize)
+  }
+
   function supplierProductForReviewRow(row: ReviewRow) {
     if (row.matchedSupplierProductId) {
       const exact = supplierProducts.find(
@@ -348,15 +385,11 @@ export default function DeliveriesPage() {
     let expectedTotal: number | null = null
     let basis = ''
 
-    if (
-      product.unitPrice !== null &&
-      product.unitPrice !== undefined &&
-      Number.isFinite(product.unitPrice) &&
-      Number.isFinite(qtyNumber) &&
-      qtyNumber > 0
-    ) {
-      expectedTotal = product.unitPrice * qtyNumber
-      basis = `${money(product.unitPrice, 5)} / ${row.unitType || 'unit'}`
+    const effectiveUnitPrice = effectiveSupplierUnitPrice(product, row.unitType)
+
+    if (effectiveUnitPrice !== null && Number.isFinite(qtyNumber) && qtyNumber > 0) {
+      expectedTotal = effectiveUnitPrice * qtyNumber
+      basis = `${money(effectiveUnitPrice, 5)} / ${row.unitType || 'unit'}`
     } else if (
       product.packPrice !== null &&
       product.packPrice !== undefined &&
@@ -747,19 +780,40 @@ export default function DeliveriesPage() {
       let res: Response
       let data: ParsedDocketResponse & { error?: string }
 
+      const processWithRetry = async (request: RequestInit) => {
+        try {
+          const firstResponse = await fetch('/api/parse-delivery-docket', request)
+          if (![502, 503, 504].includes(firstResponse.status)) return firstResponse
+        } catch {
+          // One automatic retry makes mobile uploads more tolerant of a brief network drop.
+        }
+
+        setDocketOcrProgress('Connection interrupted. Retrying once...')
+        await new Promise((resolve) => window.setTimeout(resolve, 900))
+
+        try {
+          return await fetch('/api/parse-delivery-docket', request)
+        } catch {
+          throw new Error(
+            'The connection was interrupted while processing the docket. Check the network and try again.'
+          )
+        }
+      }
+
       if (isImage) {
-        setDocketOcrProgress('Preparing the checked redacted image...')
+        setDocketOcrProgress('Preparing the selected product table...')
         const redacted = await docketRedactionRef.current?.exportRedactedImage()
 
-        if (!redacted) throw new Error('Review the image redactions before parsing.')
+        if (!redacted) throw new Error('Review the selected area before processing.')
 
-        setDocketOcrProgress('DeepSeek is reading the redacted docket image...')
+        setDocketOcrProgress('DeepSeek is reading the selected docket area...')
 
-        res = await fetch('/api/parse-delivery-docket', {
+        res = await processWithRetry({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             redactedImageDataUrl: redacted.dataUrl,
+            privacySelectionConfirmed: true,
             sourceFileName: docketFile.name,
           }),
         })
@@ -774,7 +828,7 @@ export default function DeliveriesPage() {
         const formData = new FormData()
         formData.append('file', docketFile)
 
-        res = await fetch('/api/parse-delivery-docket', {
+        res = await processWithRetry({
           method: 'POST',
           body: formData,
         })
@@ -782,7 +836,7 @@ export default function DeliveriesPage() {
       }
 
       if (!res.ok) {
-        throw new Error(data?.error || 'Failed to parse delivery docket')
+        throw new Error(data?.error || 'Failed to process delivery docket')
       }
 
       const mappedRows: ReviewRow[] = (data.rows || []).map((row, index) => {
@@ -827,7 +881,7 @@ export default function DeliveriesPage() {
       }
 
       setMessage(
-        `Docket parsed. ${mappedRows.length} row(s) found. Review before saving to inventory.`
+        `Docket processed. ${mappedRows.length} row(s) found. Review before saving to inventory.`
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -973,8 +1027,8 @@ export default function DeliveriesPage() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Delivery Docket</h2>
           <p className="mt-2 text-sm text-slate-700">
-            Take a photo or upload a PDF, Excel, TXT, or CSV docket. For photos, check the privacy
-            masks before DeepSeek reads the redacted copy. Review every row before saving.
+            Take a photo or upload a PDF, Excel, TXT, or CSV docket. For photos, select only the
+            product table before DeepSeek reads the image. Review every row before saving.
           </p>
 
           <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto_auto_auto] md:items-end">
@@ -1037,14 +1091,16 @@ export default function DeliveriesPage() {
               Upload File
             </button>
 
-            <button
-              type="button"
-              onClick={parseDocket}
-              disabled={docketParsing || docketSaving}
-              className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
-            >
-              {docketParsing ? 'Parsing…' : 'Parse Docket'}
-            </button>
+            {!docketFile?.type.startsWith('image/') ? (
+              <button
+                type="button"
+                onClick={parseDocket}
+                disabled={docketParsing || docketSaving}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+              >
+                {docketParsing ? 'Processing...' : 'Process Docket'}
+              </button>
+            ) : null}
 
             <button
               type="button"
@@ -1067,6 +1123,8 @@ export default function DeliveriesPage() {
               file={docketFile}
               kind="delivery"
               disabled={docketParsing || docketSaving}
+              onProcess={parseDocket}
+              processing={docketParsing}
             />
           ) : null}
         </section>
@@ -1176,7 +1234,7 @@ export default function DeliveriesPage() {
                               />
                               Save
                             </label>
-                            <label className="flex items-start gap-2 text-sm text-amber-900">
+                            <label className="flex items-start gap-2 text-sm text-slate-700">
                               <input
                                 type="checkbox"
                                 checked={row.chargedNotReceived || row.creditClaimRecorded}

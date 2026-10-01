@@ -3,12 +3,13 @@
 import {
   forwardRef,
   useEffect,
+  useId,
   useImperativeHandle,
   useMemo,
   useRef,
   useState,
 } from 'react'
-import { Check, MousePointer2, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { ArrowRight, MousePointer2, Plus, RotateCcw, Trash2 } from 'lucide-react'
 
 export type RedactionDocumentKind = 'delivery' | 'supplier_price' | 'sales'
 
@@ -39,6 +40,8 @@ type ImageRedactionEditorProps = {
   file: File
   kind: RedactionDocumentKind
   disabled?: boolean
+  onProcess?: () => void
+  processing?: boolean
 }
 
 const MAX_OUTPUT_BYTES = 3 * 1024 * 1024
@@ -47,17 +50,19 @@ function clamp(value: number, minimum = 0, maximum = 1) {
   return Math.min(maximum, Math.max(minimum, value))
 }
 
-function suggestedBoxes(kind: RedactionDocumentKind): RedactionBox[] {
+function suggestedBoxes(kind: RedactionDocumentKind, aspectRatio = 1): RedactionBox[] {
   if (kind === 'sales') {
     return [
-      { id: crypto.randomUUID(), x: 0.6, y: 0.08, width: 0.35, height: 0.13 },
-      { id: crypto.randomUUID(), x: 0.08, y: 0.91, width: 0.84, height: 0.06 },
+      { id: crypto.randomUUID(), x: 0.06, y: 0.16, width: 0.88, height: 0.7 },
     ]
   }
 
   return [
-    { id: crypto.randomUUID(), x: 0.52, y: 0.04, width: 0.44, height: 0.22 },
-    { id: crypto.randomUUID(), x: 0.06, y: 0.9, width: 0.88, height: 0.07 },
+    kind === 'delivery'
+      ? aspectRatio < 0.66
+        ? { id: crypto.randomUUID(), x: 0.03, y: 0.245, width: 0.94, height: 0.4 }
+        : { id: crypto.randomUUID(), x: 0.025, y: 0.27, width: 0.95, height: 0.53 }
+      : { id: crypto.randomUUID(), x: 0.04, y: 0.16, width: 0.92, height: 0.72 },
   ]
 }
 
@@ -95,9 +100,14 @@ function blobDataUrl(blob: Blob) {
 const ImageRedactionEditor = forwardRef<
   ImageRedactionEditorHandle,
   ImageRedactionEditorProps
->(function ImageRedactionEditor({ file, kind, disabled = false }, ref) {
+>(function ImageRedactionEditor(
+  { file, kind, disabled = false, onProcess, processing = false },
+  ref
+) {
   const stageRef = useRef<HTMLDivElement | null>(null)
   const pointerActionRef = useRef<PointerAction | null>(null)
+  const aspectRatioRef = useRef(1)
+  const maskId = `selection-mask-${useId().replace(/:/g, '')}`
   const [imageUrl, setImageUrl] = useState('')
   const [boxes, setBoxes] = useState<RedactionBox[]>([])
   const [selectedId, setSelectedId] = useState('')
@@ -106,13 +116,27 @@ const ImageRedactionEditor = forwardRef<
 
   useEffect(() => {
     const url = URL.createObjectURL(file)
+    let active = true
     setImageUrl(url)
-    setBoxes(suggestedBoxes(kind))
+    setBoxes([])
     setSelectedId('')
     setTool('select')
     setConfirmed(false)
 
-    return () => URL.revokeObjectURL(url)
+    loadImage(url)
+      .then((image) => {
+        if (!active) return
+        aspectRatioRef.current = image.naturalWidth / image.naturalHeight
+        setBoxes(suggestedBoxes(kind, aspectRatioRef.current))
+      })
+      .catch(() => {
+        if (active) setBoxes(suggestedBoxes(kind))
+      })
+
+    return () => {
+      active = false
+      URL.revokeObjectURL(url)
+    }
   }, [file, kind])
 
   const selectedBox = useMemo(
@@ -245,7 +269,7 @@ const ImageRedactionEditor = forwardRef<
   }
 
   function resetSuggestions() {
-    setBoxes(suggestedBoxes(kind))
+    setBoxes(suggestedBoxes(kind, aspectRatioRef.current))
     setSelectedId('')
     setTool('select')
     setConfirmed(false)
@@ -263,7 +287,11 @@ const ImageRedactionEditor = forwardRef<
     () => ({
       async exportRedactedImage() {
         if (!confirmed) {
-          throw new Error('Check the redacted image and confirm it before parsing.')
+          throw new Error('Check the selected area and confirm it before processing.')
+        }
+
+        if (boxes.length === 0) {
+          throw new Error('Select the product table before processing.')
         }
 
         const image = await loadImage(imageUrl)
@@ -286,17 +314,29 @@ const ImageRedactionEditor = forwardRef<
 
           canvas.width = width
           canvas.height = height
-          context.fillStyle = '#ffffff'
-          context.fillRect(0, 0, width, height)
-          context.drawImage(image, 0, 0, width, height)
           context.fillStyle = '#000000'
+          context.fillRect(0, 0, width, height)
 
           for (const box of boxes) {
-            context.fillRect(
-              Math.floor(box.x * width),
-              Math.floor(box.y * height),
-              Math.ceil(box.width * width),
-              Math.ceil(box.height * height)
+            const sourceX = Math.floor(box.x * image.naturalWidth)
+            const sourceY = Math.floor(box.y * image.naturalHeight)
+            const sourceWidth = Math.ceil(box.width * image.naturalWidth)
+            const sourceHeight = Math.ceil(box.height * image.naturalHeight)
+            const outputX = Math.floor(box.x * width)
+            const outputY = Math.floor(box.y * height)
+            const outputWidth = Math.ceil(box.width * width)
+            const outputHeight = Math.ceil(box.height * height)
+
+            context.drawImage(
+              image,
+              sourceX,
+              sourceY,
+              sourceWidth,
+              sourceHeight,
+              outputX,
+              outputY,
+              outputWidth,
+              outputHeight
             )
           }
 
@@ -326,15 +366,15 @@ const ImageRedactionEditor = forwardRef<
         <div>
           <div className="text-sm font-semibold text-slate-900">Privacy preview</div>
           <div className="text-xs text-slate-600">
-            Only this flattened, redacted copy will be sent for AI reading.
+            Only the selected area will be sent for AI reading. Do not include sensitive data.
           </div>
         </div>
 
-        <div className="flex items-center gap-1" role="toolbar" aria-label="Redaction tools">
+        <div className="flex items-center gap-1" role="toolbar" aria-label="Selection tools">
           <button
             type="button"
-            title="Select and move redactions"
-            aria-label="Select and move redactions"
+            title="Select and move included areas"
+            aria-label="Select and move included areas"
             aria-pressed={tool === 'select'}
             onClick={() => setTool('select')}
             disabled={disabled}
@@ -346,8 +386,8 @@ const ImageRedactionEditor = forwardRef<
           </button>
           <button
             type="button"
-            title="Draw a privacy redaction"
-            aria-label="Draw a privacy redaction"
+            title="Draw an area to include"
+            aria-label="Draw an area to include"
             aria-pressed={tool === 'add'}
             onClick={() => setTool('add')}
             disabled={disabled}
@@ -359,8 +399,8 @@ const ImageRedactionEditor = forwardRef<
           </button>
           <button
             type="button"
-            title="Delete selected redaction"
-            aria-label="Delete selected redaction"
+            title="Delete selected area"
+            aria-label="Delete selected area"
             onClick={removeSelected}
             disabled={disabled || !selectedBox}
             className="grid h-10 w-10 place-items-center rounded-md border bg-white text-red-700 disabled:opacity-40"
@@ -369,8 +409,8 @@ const ImageRedactionEditor = forwardRef<
           </button>
           <button
             type="button"
-            title="Reset suggested redactions"
-            aria-label="Reset suggested redactions"
+            title="Reset table selection"
+            aria-label="Reset table selection"
             onClick={resetSuggestions}
             disabled={disabled}
             className="grid h-10 w-10 place-items-center rounded-md border bg-white text-slate-800 disabled:opacity-50"
@@ -398,11 +438,42 @@ const ImageRedactionEditor = forwardRef<
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={imageUrl}
-                alt="Document awaiting privacy redaction"
+                alt="Document with product table selected for processing"
                 className="block max-h-[65vh] max-w-full"
                 draggable={false}
               />
             </>
+          ) : null}
+
+          {imageUrl ? (
+            <svg
+              className="pointer-events-none absolute inset-0 h-full w-full"
+              viewBox="0 0 1000 1000"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <defs>
+                <mask id={maskId}>
+                  <rect width="1000" height="1000" fill="white" />
+                  {boxes.map((box) => (
+                    <rect
+                      key={box.id}
+                      x={box.x * 1000}
+                      y={box.y * 1000}
+                      width={box.width * 1000}
+                      height={box.height * 1000}
+                      fill="black"
+                    />
+                  ))}
+                </mask>
+              </defs>
+              <rect
+                width="1000"
+                height="1000"
+                fill="rgba(15, 23, 42, 0.66)"
+                mask={`url(#${maskId})`}
+              />
+            </svg>
           ) : null}
 
           {boxes.map((box) => {
@@ -411,8 +482,10 @@ const ImageRedactionEditor = forwardRef<
               <div
                 key={box.id}
                 data-redaction-box={box.id}
-                className={`absolute bg-black ${
-                  selected ? 'outline-2 outline-offset-2 outline-amber-400' : ''
+                className={`absolute border-2 bg-transparent ${
+                  selected
+                    ? 'border-emerald-400 outline-2 outline-offset-1 outline-white'
+                    : 'border-white'
                 }`}
                 style={{
                   left: `${box.x * 100}%`,
@@ -437,19 +510,31 @@ const ImageRedactionEditor = forwardRef<
         </div>
       </div>
 
-      <label className="flex cursor-pointer items-start gap-3 bg-white px-4 py-3 text-sm text-slate-800">
-        <input
-          type="checkbox"
-          checked={confirmed}
-          onChange={(event) => setConfirmed(event.target.checked)}
-          disabled={disabled}
-          className="mt-0.5 h-4 w-4"
-        />
-        <span className="flex-1">
-          I checked the image. Names, addresses, contact, account and payment details are covered.
-        </span>
-        {confirmed ? <Check size={18} className="text-green-700" aria-hidden="true" /> : null}
-      </label>
+      <div className="flex flex-col gap-3 bg-white px-4 py-3 sm:flex-row sm:items-center">
+        <label className="flex flex-1 cursor-pointer items-start gap-3 text-sm text-slate-800">
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(event) => setConfirmed(event.target.checked)}
+            disabled={disabled || boxes.length === 0}
+            className="mt-0.5 h-4 w-4"
+          />
+          <span>
+            I checked the selection. It contains the product table and no sensitive data.
+          </span>
+        </label>
+        {onProcess ? (
+          <button
+            type="button"
+            onClick={onProcess}
+            disabled={disabled || processing || !confirmed || boxes.length === 0}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            <span>{processing ? 'Processing...' : 'Process'}</span>
+            <ArrowRight size={18} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
     </div>
   )
 })

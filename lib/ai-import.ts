@@ -343,6 +343,10 @@ export async function documentFromAiRequest(
     const redactedImageDataUrl = cleanText(body?.redactedImageDataUrl)
 
     if (redactedImageDataUrl) {
+      if (body?.privacySelectionConfirmed !== true) {
+        throw new Error('PRIVACY_SELECTION_NOT_CONFIRMED')
+      }
+
       return {
         text: null,
         imageDataUrl: assertRedactedImageDataUrl(redactedImageDataUrl),
@@ -401,7 +405,14 @@ export function aiErrorResponse(error: unknown) {
 
   if (error instanceof Error && error.message === 'INVALID_REDACTED_IMAGE') {
     return Response.json(
-      { error: 'The redacted image could not be verified. Review the image and try again.' },
+      { error: 'The selected image could not be verified. Review the image and try again.' },
+      { status: 400 }
+    )
+  }
+
+  if (error instanceof Error && error.message === 'PRIVACY_SELECTION_NOT_CONFIRMED') {
+    return Response.json(
+      { error: 'Confirm that the selected image area contains no sensitive data.' },
       { status: 400 }
     )
   }
@@ -409,7 +420,7 @@ export function aiErrorResponse(error: unknown) {
   if (error instanceof Error && error.message === 'REDACTED_IMAGE_TOO_LARGE') {
     return Response.json(
       {
-        error: `The redacted image is too large. Keep it below ${Math.round(
+        error: `The processed image is too large. Keep it below ${Math.round(
           MAX_REDACTED_IMAGE_BYTES / 1024 / 1024
         )} MB.`,
       },

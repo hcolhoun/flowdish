@@ -360,17 +360,18 @@ export default function SalesPage() {
           body: JSON.stringify({ pastedText: privacySafe.text }),
         })
       } else if (importFile?.type.startsWith('image/')) {
-        setOcrProgress('Preparing the checked redacted image...')
+        setOcrProgress('Preparing the selected sales table...')
         const redacted = await salesRedactionRef.current?.exportRedactedImage()
 
-        if (!redacted) throw new Error('Review the image redactions before parsing.')
+        if (!redacted) throw new Error('Review the selected area before processing.')
 
-        setOcrProgress('DeepSeek is reading the redacted POS image...')
+        setOcrProgress('DeepSeek is reading the selected POS area...')
         res = await fetch('/api/parse-sales-zread', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             redactedImageDataUrl: redacted.dataUrl,
+            privacySelectionConfirmed: true,
             sourceFileName: importFile.name,
           }),
         })
@@ -391,7 +392,7 @@ export default function SalesPage() {
 
       const data = (await safeJson(res)) as ParsedSalesResponse & { error?: string }
 
-      if (!res.ok) throw new Error(data?.error || 'Failed to parse sales import')
+      if (!res.ok) throw new Error(data?.error || 'Failed to process sales import')
 
       if (data.salesDate) setSoldAt(data.salesDate)
 
@@ -424,7 +425,7 @@ export default function SalesPage() {
       setSalesReviewRows(mappedRows)
       setModifierReviewRows(mappedModifierRows)
       setMessage(
-        `Sales import parsed. ${mappedRows.length} sales row(s) and ${mappedModifierRows.length} modifier row(s) found. Review before saving.`
+        `Sales import processed. ${mappedRows.length} sales row(s) and ${mappedModifierRows.length} modifier row(s) found. Review before saving.`
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -557,9 +558,8 @@ export default function SalesPage() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Import Z-Read / POS Report</h2>
           <p className="mt-2 text-sm text-slate-700">
-            Take a photo, upload a text-style file, or paste text. For photos, check the privacy
-            masks before DeepSeek reads the redacted copy. Logos can remain visible. Review matched
-            L1 sales before stock is consumed.
+            Take a photo, upload a text-style file, or paste text. For photos, select only the sales
+            table before DeepSeek reads the image. Review matched L1 sales before stock is consumed.
           </p>
 
           <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto_auto_auto] lg:items-end">
@@ -620,14 +620,16 @@ export default function SalesPage() {
               Upload File
             </button>
 
-            <button
-              type="button"
-              onClick={parseSalesImport}
-              disabled={parsingImport || savingImport}
-              className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
-            >
-              {parsingImport ? 'Parsing...' : 'Parse Sales'}
-            </button>
+            {!importFile?.type.startsWith('image/') ? (
+              <button
+                type="button"
+                onClick={parseSalesImport}
+                disabled={parsingImport || savingImport}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+              >
+                {parsingImport ? 'Processing...' : 'Process Sales'}
+              </button>
+            ) : null}
           </div>
 
           {importFile?.type.startsWith('image/') ? (
@@ -636,6 +638,8 @@ export default function SalesPage() {
               file={importFile}
               kind="sales"
               disabled={parsingImport || savingImport}
+              onProcess={parseSalesImport}
+              processing={parsingImport}
             />
           ) : null}
 

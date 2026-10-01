@@ -336,7 +336,7 @@ export default function SuppliersPage() {
 
     setSelectedFile(file)
     setFileName(file.name)
-    setMessage(`File selected: ${file.name}. Click "Parse Price File" next.`)
+    setMessage(`File selected: ${file.name}. Click "Process Price File" next.`)
   }
 
   function normaliseParseData(data: ParseResponse) {
@@ -393,17 +393,18 @@ export default function SuppliersPage() {
           }),
         })
       } else if (selectedFile?.type.startsWith('image/')) {
-        setOcrProgress('Preparing the checked redacted image...')
+        setOcrProgress('Preparing the selected product table...')
         const redacted = await priceRedactionRef.current?.exportRedactedImage()
 
-        if (!redacted) throw new Error('Review the image redactions before parsing.')
+        if (!redacted) throw new Error('Review the selected area before processing.')
 
-        setOcrProgress('DeepSeek is reading the redacted price-list image...')
+        setOcrProgress('DeepSeek is reading the selected price-list area...')
         res = await fetch('/api/parse-supplier-price-list', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             redactedImageDataUrl: redacted.dataUrl,
+            privacySelectionConfirmed: true,
             supplier,
             sourceFileName: selectedFile.name,
           }),
@@ -431,7 +432,7 @@ export default function SuppliersPage() {
         throw new Error(
           data?.error
             ? `${data.error}\n\n${data?.debug ? JSON.stringify(data.debug, null, 2) : ''}`
-            : 'Failed to parse file'
+            : 'Failed to process file'
         )
       }
 
@@ -441,14 +442,14 @@ export default function SuppliersPage() {
       setRejectedRows(normalised.rejected)
 
       if (normalised.ready.length === 0) {
-        setError('No rows were parsed from the file.')
+        setError('No rows were found in the file.')
         return
       }
 
       const reviewCount = normalised.ready.filter((row) => row.status === 'review').length
 
       setMessage(
-        `${normalised.ready.length} rows parsed. ${
+        `${normalised.ready.length} rows processed. ${
           reviewCount > 0 ? `${reviewCount} row(s) need review but can be edited and saved.` : ''
         }`
       )
@@ -894,7 +895,7 @@ async function handlePriceOnlySave() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Price List</h2>
           <p className="mt-2 text-sm text-slate-700">
-            For images, check the privacy masks before DeepSeek reads the redacted copy. PDF,
+            For images, select only the product table before DeepSeek reads the image. PDF,
             spreadsheet, CSV and text price lists use the same privacy-filtered AI import flow for
             every supplier.
           </p>
@@ -968,14 +969,16 @@ async function handlePriceOnlySave() {
               Upload File
             </button>
 
-            <button
-              type="button"
-              onClick={handleParse}
-              disabled={parsing || saving}
-              className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
-            >
-              {parsing ? 'Parsing…' : 'Parse Price File'}
-            </button>
+            {!selectedFile?.type.startsWith('image/') ? (
+              <button
+                type="button"
+                onClick={handleParse}
+                disabled={parsing || saving}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+              >
+                {parsing ? 'Processing...' : 'Process Price File'}
+              </button>
+            ) : null}
 
             <button
               type="button"
@@ -1002,6 +1005,8 @@ async function handlePriceOnlySave() {
               file={selectedFile}
               kind="supplier_price"
               disabled={parsing || saving}
+              onProcess={handleParse}
+              processing={parsing}
             />
           ) : null}
 
