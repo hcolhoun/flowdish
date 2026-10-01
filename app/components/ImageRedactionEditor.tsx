@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { ArrowRight, MousePointer2, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { ArrowRight, Plus, RotateCcw, Trash2 } from 'lucide-react'
 
 export type RedactionDocumentKind = 'delivery' | 'supplier_price' | 'sales'
 
@@ -393,19 +393,6 @@ const ImageRedactionEditor = forwardRef<
         </div>
 
         <div className="flex items-center gap-1" role="toolbar" aria-label="Selection tools">
-          <button
-            type="button"
-            title="Select and move included areas"
-            aria-label="Select and move included areas"
-            aria-pressed={tool === 'select'}
-            onClick={() => setTool('select')}
-            disabled={disabled}
-            className={`grid h-10 w-10 place-items-center rounded-md border disabled:opacity-50 ${
-              tool === 'select' ? 'bg-slate-900 text-white' : 'bg-white text-slate-800'
-            }`}
-          >
-            <MousePointer2 size={18} aria-hidden="true" />
-          </button>
           <button
             type="button"
             title="Draw an area to include"
