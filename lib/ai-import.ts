@@ -28,6 +28,7 @@ type DeepSeekOptions<T> = {
   prompt: string
   imageDataUrl?: string
   qualityCheck?: (value: T) => boolean
+  timeoutMs?: number
 }
 
 type DeepSeekResponse = {
@@ -115,6 +116,7 @@ async function runDeepSeekJsonRequest<T>({
   model,
   imageDataUrl,
   qualityCheck,
+  timeoutMs = imageDataUrl ? 75_000 : 60_000,
 }: DeepSeekOptions<T> & { apiKey: string; model: string }) {
   const content = imageDataUrl
     ? [
@@ -126,20 +128,36 @@ async function runDeepSeekJsonRequest<T>({
       ]
     : prompt
 
-  const response = await fetch('https://api.deepseek.com/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content }],
-      response_format: { type: 'json_object' },
-      thinking: { type: 'disabled' },
-      stream: false,
-    }),
-  })
+  const abortController = new AbortController()
+  const timeout = setTimeout(() => abortController.abort(), timeoutMs)
+  let response: Response
+
+  try {
+    response = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content }],
+        response_format: { type: 'json_object' },
+        thinking: { type: 'disabled' },
+        stream: false,
+      }),
+      signal: abortController.signal,
+    })
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      throw new Error('DEEPSEEK_TIMEOUT')
+    }
+
+    console.error('DeepSeek request could not be reached:', error)
+    throw new Error('DEEPSEEK_UNAVAILABLE')
+  } finally {
+    clearTimeout(timeout)
+  }
 
   const json = (await response.json()) as DeepSeekResponse
 
@@ -189,6 +207,7 @@ export async function parseJsonWithDeepSeek<T>({
   prompt,
   imageDataUrl,
   qualityCheck,
+  timeoutMs,
 }: DeepSeekOptions<T>) {
   const apiKey = process.env.DEEPSEEK_API_KEY
 
@@ -198,7 +217,7 @@ export async function parseJsonWithDeepSeek<T>({
 
   const primaryModel = imageDataUrl ? 'deepseek-flash' : primaryDeepSeekModel()
   const fallbackModel = imageDataUrl ? null : fallbackDeepSeekModel(primaryModel)
-  const options = { restaurantId, feature, prompt, imageDataUrl, qualityCheck }
+  const options = { restaurantId, feature, prompt, imageDataUrl, qualityCheck, timeoutMs }
 
   try {
     return await runDeepSeekJsonRequest({
@@ -386,6 +405,33 @@ export function aiErrorResponse(error: unknown) {
           'DeepSeek rejected the API key. Create a new key in the DeepSeek Platform, replace DEEPSEEK_API_KEY in Vercel Production, then redeploy.',
       },
       { status: 500 }
+    )
+  }
+
+  if (error instanceof Error && error.message === 'DEEPSEEK_TIMEOUT') {
+    return Response.json(
+      {
+        error:
+          'The AI reader took too long to respond. Flowdish stopped the request; try again in a moment.',
+      },
+      { status: 504 }
+    )
+  }
+
+  if (error instanceof Error && error.message === 'DEEPSEEK_UNAVAILABLE') {
+    return Response.json(
+      {
+        error:
+          'Flowdish could not reach the AI reader. Check the connection and try again in a moment.',
+      },
+      { status: 502 }
+    )
+  }
+
+  if (error instanceof Error && error.message === 'DEEPSEEK_REQUEST_FAILED') {
+    return Response.json(
+      { error: 'The AI reader rejected this request. Try the image again or use manual entry.' },
+      { status: 502 }
     )
   }
 
