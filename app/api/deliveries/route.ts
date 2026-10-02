@@ -48,7 +48,9 @@ function vatFields(body: any, totalCost: number) {
         : 'ELIGIBLE'
   const vatAmount =
     vatRatePercent > 0
-      ? Math.round((totalCost * vatRatePercent * 100) / (100 + vatRatePercent)) / 100
+      ? body.priceIncludesVat === false
+        ? Math.round(totalCost * vatRatePercent) / 100
+        : Math.round((totalCost * vatRatePercent * 100) / (100 + vatRatePercent)) / 100
       : 0
 
   return { vatRatePercent, vatAmount, vatReclaimStatus }

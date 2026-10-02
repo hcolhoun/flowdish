@@ -22,6 +22,7 @@ export async function GET() {
       sales,
       deliveries,
       waste,
+      openCreditClaims,
     ] = await Promise.all([
       prisma.item.count({
         where: { restaurantId },
@@ -87,6 +88,14 @@ export async function GET() {
       prisma.waste.findMany({
         where: { restaurantId },
       }),
+
+      prisma.supplierCreditClaim.findMany({
+        where: {
+          restaurantId,
+          status: 'OPEN',
+        },
+        select: { chargedAmount: true },
+      }),
     ])
 
     const totalRevenue = sales.reduce(
@@ -107,6 +116,11 @@ export async function GET() {
 
     const totalSpend = deliveries.reduce(
       (sum: number, d: any) => sum + (d.price ?? 0),
+      0
+    )
+
+    const openSupplierCredits = openCreditClaims.reduce(
+      (sum: number, claim: any) => sum + (claim.chargedAmount ?? 0),
       0
     )
 
@@ -222,6 +236,7 @@ export async function GET() {
         grossProfit,
         grossMarginPercent,
         totalSpend,
+        openSupplierCredits,
         stockValue,
         wasteCost,
         wastePercent,

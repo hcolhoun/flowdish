@@ -27,6 +27,7 @@ type DashboardData = {
     grossProfit: number
     grossMarginPercent: number
     totalSpend: number
+    openSupplierCredits: number
     stockValue: number
     wasteCost: number
     wastePercent: number
@@ -276,7 +277,16 @@ export default function HomePage() {
             </div>
 
             <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <Card title="Purchase Spend" value={money(data.financials.totalSpend)} />
+              <Card
+                title="Purchase Spend"
+                value={money(data.financials.totalSpend)}
+                subValue={
+                  data.financials.openSupplierCredits > 0
+                    ? `${money(data.financials.openSupplierCredits)} open supplier credits`
+                    : undefined
+                }
+                tone={data.financials.openSupplierCredits > 0 ? 'warning' : undefined}
+              />
               <Card title="Stock Value" value={money(data.financials.stockValue)} />
               <Card
                 title="Waste Cost"

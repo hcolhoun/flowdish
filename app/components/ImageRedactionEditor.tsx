@@ -30,7 +30,7 @@ type PointerAction = {
 }
 
 export type ImageRedactionEditorHandle = {
-  exportRedactedImage: () => Promise<{
+  exportRedactedImage: (maxOutputBytes?: number) => Promise<{
     dataUrl: string
     redactionCount: number
   }>
@@ -42,6 +42,7 @@ type ImageRedactionEditorProps = {
   disabled?: boolean
   onProcess?: () => void
   processing?: boolean
+  pageLabel?: string
 }
 
 const MAX_OUTPUT_BYTES = 3 * 1024 * 1024
@@ -101,7 +102,7 @@ const ImageRedactionEditor = forwardRef<
   ImageRedactionEditorHandle,
   ImageRedactionEditorProps
 >(function ImageRedactionEditor(
-  { file, kind, disabled = false, onProcess, processing = false },
+  { file, kind, disabled = false, onProcess, processing = false, pageLabel },
   ref
 ) {
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -285,7 +286,7 @@ const ImageRedactionEditor = forwardRef<
   useImperativeHandle(
     ref,
     () => ({
-      async exportRedactedImage() {
+      async exportRedactedImage(maxOutputBytes = MAX_OUTPUT_BYTES) {
         if (!confirmed) {
           throw new Error('Check the selected area and confirm it before processing.')
         }
@@ -322,7 +323,7 @@ const ImageRedactionEditor = forwardRef<
         let quality = 0.88
         let blob: Blob | null = null
 
-        while (!blob || blob.size > MAX_OUTPUT_BYTES) {
+        while (!blob || blob.size > maxOutputBytes) {
           const scale = Math.min(
             1,
             maxDimension / Math.max(selectedSourceWidth, selectedSourceHeight)
@@ -363,13 +364,13 @@ const ImageRedactionEditor = forwardRef<
           }
 
           blob = await canvasBlob(canvas, quality)
-          if (blob.size <= MAX_OUTPUT_BYTES || maxDimension <= 1200) break
+          if (blob.size <= maxOutputBytes || maxDimension <= 1200) break
 
           maxDimension = Math.max(1200, Math.round(maxDimension * 0.8))
           quality = 0.72
         }
 
-        if (!blob || blob.size > MAX_OUTPUT_BYTES) {
+        if (!blob || blob.size > maxOutputBytes) {
           throw new Error('The redacted image is still too large. Take a lower-resolution photo.')
         }
 
@@ -386,7 +387,9 @@ const ImageRedactionEditor = forwardRef<
     <div className="mt-5 overflow-hidden rounded-lg border bg-slate-50">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-white px-3 py-3">
         <div>
-          <div className="text-sm font-semibold text-slate-900">Privacy preview</div>
+          <div className="text-sm font-semibold text-slate-900">
+            Privacy preview{pageLabel ? ` - ${pageLabel}` : ''}
+          </div>
           <div className="text-xs text-slate-600">
             Include the product table and any VAT legend. Do not include sensitive data.
           </div>

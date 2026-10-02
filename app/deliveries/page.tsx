@@ -9,6 +9,15 @@ import ImageRedactionEditor, {
 
 type UnitType = 'g' | 'ml' | 'each'
 type VatReclaimStatus = 'NOT_APPLICABLE' | 'ELIGIBLE' | 'CLAIMED' | 'NOT_CLAIMED'
+type DocketLineType =
+  | 'product'
+  | 'unavailable'
+  | 'charged_not_received'
+  | 'deposit'
+  | 'delivery_fee'
+  | 'discount'
+  | 'credit'
+  | 'other_charge'
 
 type Item = {
   id: string
@@ -64,13 +73,19 @@ type ParsedDocketRow = {
   supplier: string | null
   supplierSku: string | null
   productName: string
+  lineType: DocketLineType
   packSize: string | null
   qty: number | null
   unitType: UnitType | null
   packPrice: number | null
   lineTotal: number | null
+  lineTotalIncludesVat: boolean | null
+  batchCode: string | null
+  expiryDate: string | null
   vatCode: string | null
   vatRatePercent: number | null
+  skuConfidence: number | null
+  skuReason: string | null
   quantityConfidence: number | null
   quantityReason: string | null
   supplierInferredFromSku: boolean
@@ -90,6 +105,16 @@ type ParsedDocketResponse = {
   supplier: string | null
   deliveryDate: string | null
   docketNumber: string | null
+  totals: {
+    goodsTotal: number | null
+    vatTotal: number | null
+    grandTotal: number | null
+    extractedLineTotal: number
+    difference: number | null
+    matches: boolean | null
+    pricedRowCount: number
+    rowCount: number
+  }
   rows: ParsedDocketRow[]
   rawExtracted?: unknown
 }
@@ -102,11 +127,15 @@ type ReviewRow = {
   supplier: string
   supplierSku: string
   productName: string
+  lineType: DocketLineType
   packSize: string
   packPrice: string
   qty: string
   unitType: UnitType | ''
   totalCost: string
+  priceIncludesVat: boolean
+  batchCode: string
+  expiryDate: string
   vatCode: string
   vatRatePercent: string
   vatReclaimStatus: VatReclaimStatus
@@ -116,6 +145,8 @@ type ReviewRow = {
   dropdownOpen: boolean
   quantityConfidence: number
   quantityReason: string
+  skuConfidence: number
+  skuReason: string
   supplierInferredFromSku: boolean
   notes: string
   needsReview: boolean
@@ -152,6 +183,33 @@ function supplierNamesMatch(left: string | null | undefined, right: string | nul
   return Boolean(first && second && (first === second || first.includes(second) || second.includes(first)))
 }
 
+function docketFileKey(file: File, index: number) {
+  return `${file.name}-${file.size}-${file.lastModified}-${index}`
+}
+
+function lineTypeLabel(lineType: DocketLineType) {
+  const labels: Record<DocketLineType, string> = {
+    product: 'Stock item',
+    unavailable: 'Unavailable - not charged',
+    charged_not_received: 'May need credit claim',
+    deposit: 'Deposit - not stock',
+    delivery_fee: 'Delivery fee - not stock',
+    discount: 'Discount - not stock',
+    credit: 'Credit - not stock',
+    other_charge: 'Other charge - not stock',
+  }
+
+  return labels[lineType]
+}
+
+function chargedAmountForCredit(row: ReviewRow) {
+  const total = Number(row.totalCost)
+  const vatRate = Number(row.vatRatePercent)
+  if (!Number.isFinite(total)) return null
+  if (row.priceIncludesVat || !Number.isFinite(vatRate) || vatRate <= 0) return total
+  return Math.round(total * (1 + vatRate / 100) * 100) / 100
+}
+
 export default function DeliveriesPage() {
   const [items, setItems] = useState<Item[]>([])
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
@@ -178,7 +236,7 @@ export default function DeliveriesPage() {
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null)
   const [editingDelivery, setEditingDelivery] = useState<EditingDelivery | null>(null)
 
-  const [docketFile, setDocketFile] = useState<File | null>(null)
+  const [docketFiles, setDocketFiles] = useState<File[]>([])
   const [docketParsing, setDocketParsing] = useState(false)
   const [docketOcrProgress, setDocketOcrProgress] = useState('')
   const [docketSaving, setDocketSaving] = useState(false)
@@ -195,7 +253,7 @@ export default function DeliveriesPage() {
   const itemPickerRef = useRef<HTMLDivElement | null>(null)
   const docketPhotoInputRef = useRef<HTMLInputElement | null>(null)
   const docketFileInputRef = useRef<HTMLInputElement | null>(null)
-  const docketRedactionRef = useRef<ImageRedactionEditorHandle | null>(null)
+  const docketRedactionRefs = useRef<Record<string, ImageRedactionEditorHandle | null>>({})
 
   const selectedItem = items.find((item) => item.id === itemId)
 
@@ -841,6 +899,36 @@ export default function DeliveriesPage() {
     )
   }
 
+  function chooseDocketFiles(fileList: FileList | null, appendPhotos = false) {
+    const incoming = Array.from(fileList || [])
+    if (incoming.length === 0) return
+
+    const allIncomingImages = incoming.every((file) => file.type.startsWith('image/'))
+    const canAppend =
+      appendPhotos &&
+      allIncomingImages &&
+      docketFiles.every((file) => file.type.startsWith('image/'))
+    const nextFiles = canAppend ? [...docketFiles, ...incoming] : incoming
+
+    if (nextFiles.length > 3) {
+      setError('Use up to 3 photos for one docket, or combine additional pages into a PDF.')
+      return
+    }
+
+    if (nextFiles.length > 1 && !nextFiles.every((file) => file.type.startsWith('image/'))) {
+      setError('Choose one document file or up to 3 photos of the same docket.')
+      return
+    }
+
+    docketRedactionRefs.current = {}
+    setDocketFiles(nextFiles)
+    setParsedDocket(null)
+    setReviewRows([])
+    setReviewSupplier('')
+    setError('')
+    setMessage('')
+  }
+
   function selectReviewItem(rowId: string, item: Item) {
     updateReviewRow(rowId, {
       selectedItemId: item.id,
@@ -877,6 +965,10 @@ export default function DeliveriesPage() {
         throw new Error('Choose the product unit before adding a new L3 item.')
       }
 
+      if (row.supplierSku.trim() && row.skuConfidence < 0.75) {
+        throw new Error('Correct the cropped supplier SKU, or clear it before adding a new L3 item.')
+      }
+
       setAddingReviewItemRowId(row.rowId)
       const qty = Number(row.qty)
       const totalCost = Number(row.totalCost)
@@ -889,7 +981,7 @@ export default function DeliveriesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           supplier: row.supplier.trim(),
-          fileName: docketFile?.name || 'Delivery docket review',
+          fileName: docketFiles.map((file) => file.name).join(', ') || 'Delivery docket review',
           createLinkedL3: true,
           returnSavedProducts: true,
           products: [
@@ -949,13 +1041,16 @@ export default function DeliveriesPage() {
       setReviewRows([])
       setReviewSupplier('')
 
-      if (!docketFile) {
+      if (docketFiles.length === 0) {
         throw new Error('Choose a delivery docket file first.')
       }
 
       setDocketParsing(true)
 
-      const isImage = docketFile.type.startsWith('image/')
+      const isImage = docketFiles.every((file) => file.type.startsWith('image/'))
+      if (docketFiles.length > 1 && !isImage) {
+        throw new Error('Upload one document file or up to 3 photos of the same docket.')
+      }
       const directUploadLimit = 4 * 1024 * 1024
       let res: Response
       let data: ParsedDocketResponse & { error?: string }
@@ -963,7 +1058,7 @@ export default function DeliveriesPage() {
 
       const processOnce = async (request: RequestInit) => {
         const controller = new AbortController()
-        const timeout = window.setTimeout(() => controller.abort(), 90_000)
+        const timeout = window.setTimeout(() => controller.abort(), 100_000)
 
         try {
           return await fetch('/api/parse-delivery-docket', {
@@ -977,7 +1072,7 @@ export default function DeliveriesPage() {
         } catch (error) {
           if (controller.signal.aborted) {
             throw new Error(
-              `Flowdish stopped this request after 90 seconds. Reference: ${parserRequestId}`
+              `Flowdish stopped this request after 100 seconds. Reference: ${parserRequestId}`
             )
           }
 
@@ -991,7 +1086,7 @@ export default function DeliveriesPage() {
         try {
           return await processOnce(request)
         } catch (error) {
-          if (error instanceof Error && error.message.includes('after 90 seconds')) {
+          if (error instanceof Error && error.message.includes('after 100 seconds')) {
             throw error
           }
 
@@ -1003,7 +1098,7 @@ export default function DeliveriesPage() {
           } catch (retryError) {
             if (
               retryError instanceof Error &&
-              retryError.message.includes('after 90 seconds')
+              retryError.message.includes('after 100 seconds')
             ) {
               throw retryError
             }
@@ -1016,24 +1111,33 @@ export default function DeliveriesPage() {
       }
 
       if (isImage) {
-        setDocketOcrProgress('Preparing the selected product table...')
-        const redacted = await docketRedactionRef.current?.exportRedactedImage()
+        setDocketOcrProgress(
+          `Preparing ${docketFiles.length === 1 ? 'the selected docket area' : `${docketFiles.length} selected pages`}...`
+        )
+        const maxImageBytes = docketFiles.length > 1 ? 900 * 1024 : undefined
+        const redactedImages = await Promise.all(
+          docketFiles.map(async (file, index) => {
+            const editor = docketRedactionRefs.current[docketFileKey(file, index)]
+            const redacted = await editor?.exportRedactedImage(maxImageBytes)
+            if (!redacted) throw new Error(`Review the selected area for page ${index + 1}.`)
+            return redacted.dataUrl
+          })
+        )
 
-        if (!redacted) throw new Error('Review the selected area before processing.')
-
-        setDocketOcrProgress('DeepSeek is reading the selected docket area...')
+        setDocketOcrProgress('AI is reading the selected docket area...')
 
         res = await processWithRetry({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            redactedImageDataUrl: redacted.dataUrl,
+            redactedImageDataUrls: redactedImages,
             privacySelectionConfirmed: true,
-            sourceFileName: docketFile.name,
+            sourceFileNames: docketFiles.map((file) => file.name),
           }),
         })
         data = (await safeJson(res)) as ParsedDocketResponse & { error?: string }
       } else {
+        const docketFile = docketFiles[0]
         if (docketFile.size > directUploadLimit) {
           throw new Error(
             'This file is too large to upload directly. Use a smaller text-based file or take a photo so OCR can run before upload.'
@@ -1064,17 +1168,21 @@ export default function DeliveriesPage() {
 
         return {
           rowId: `${Date.now()}-${index}`,
-          include: true,
+          include: row.lineType === 'product',
           chargedNotReceived: false,
           creditClaimRecorded: false,
           supplier: row.supplier || data.supplier || '',
           supplierSku: row.supplierSku || '',
           productName: row.productName || '',
+          lineType: row.lineType || 'product',
           packSize: row.packSize || '',
           packPrice: toInputValue(row.packPrice),
           qty: toInputValue(row.qty),
           unitType: row.matchedItemUnitType || row.unitType || matchedItem?.unitType || '',
           totalCost: toInputValue(row.lineTotal ?? row.packPrice),
+          priceIncludesVat: row.lineTotalIncludesVat === true,
+          batchCode: row.batchCode || '',
+          expiryDate: row.expiryDate || '',
           vatCode: row.vatCode || '',
           vatRatePercent: toInputValue(row.vatRatePercent ?? 0),
           vatReclaimStatus:
@@ -1091,6 +1199,10 @@ export default function DeliveriesPage() {
           quantityReason:
             row.quantityReason ||
             (row.qty && row.unitType ? 'Quantity and unit were extracted.' : 'Review quantity.'),
+          skuConfidence: row.skuConfidence ?? (row.supplierSku ? 0.8 : 0),
+          skuReason:
+            row.skuReason ||
+            (row.supplierSku ? 'SKU was extracted from the docket.' : 'No SKU was visible.'),
           supplierInferredFromSku: Boolean(row.supplierInferredFromSku),
           notes: row.notes || '',
           needsReview: Boolean(row.needsReview),
@@ -1163,7 +1275,10 @@ export default function DeliveriesPage() {
             totalCost: Number(row.totalCost),
             vatRatePercent: Number(row.vatRatePercent),
             vatReclaimStatus: row.vatReclaimStatus,
+            priceIncludesVat: row.priceIncludesVat,
             deliveryVehicleOk: row.deliveryVehicleOk,
+            batchCode: row.batchCode,
+            expiryAt: row.expiryDate || null,
           }),
         })
 
@@ -1194,7 +1309,8 @@ export default function DeliveriesPage() {
       setParsedDocket(null)
       setReviewRows([])
       setReviewSupplier('')
-      setDocketFile(null)
+      setDocketFiles([])
+      docketRedactionRefs.current = {}
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -1216,7 +1332,7 @@ export default function DeliveriesPage() {
         productName: row.productName || row.itemSearch || row.supplierSku,
         qty: row.qty,
         unitType: row.unitType || null,
-        chargedAmount: row.totalCost,
+        chargedAmount: chargedAmountForCredit(row),
         docketNumber: parsedDocket?.docketNumber,
         chargedAt: deliveredAt || parsedDocket?.deliveryDate,
         notes: row.notes,
@@ -1253,9 +1369,17 @@ export default function DeliveriesPage() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Delivery Docket</h2>
           <p className="mt-2 text-sm text-slate-700">
-            Take a photo or upload a PDF, Excel, TXT, or CSV docket. For photos, select only the
-            product table before AI reads the image. Review every row before saving.
+            Take up to 3 photos or upload a PDF, Excel, TXT, or CSV docket. Review every row
+            before saving.
           </p>
+          <details className="mt-2 text-sm text-slate-600">
+            <summary className="cursor-pointer font-medium text-teal-800">What to include</summary>
+            <p className="mt-2 max-w-3xl">
+              Select the product table, VAT legend, docket date and docket number. Use separate
+              selection boxes for the supplier name if needed, and leave addresses or account
+              details unselected.
+            </p>
+          </details>
 
           <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto_auto_auto] md:items-end">
             <div>
@@ -1267,13 +1391,10 @@ export default function DeliveriesPage() {
                 type="file"
                 accept="image/*"
                 capture="environment"
+                multiple
                 onChange={(e) => {
-                  setDocketFile(e.target.files?.[0] ?? null)
-                  setParsedDocket(null)
-                  setReviewRows([])
-                  setReviewSupplier('')
-                  setError('')
-                  setMessage('')
+                  chooseDocketFiles(e.target.files, true)
+                  e.target.value = ''
                 }}
                 className="hidden"
               />
@@ -1281,18 +1402,17 @@ export default function DeliveriesPage() {
                 ref={docketFileInputRef}
                 type="file"
                 accept="image/*,.pdf,.txt,.csv,.xlsx,.xls"
+                multiple
                 onChange={(e) => {
-                  setDocketFile(e.target.files?.[0] ?? null)
-                  setParsedDocket(null)
-                  setReviewRows([])
-                  setReviewSupplier('')
-                  setError('')
-                  setMessage('')
+                  chooseDocketFiles(e.target.files)
+                  e.target.value = ''
                 }}
                 className="hidden"
               />
               <div className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                {docketFile ? docketFile.name : 'No docket selected'}
+                {docketFiles.length
+                  ? docketFiles.map((file) => file.name).join(', ')
+                  : 'No docket selected'}
               </div>
               {docketOcrProgress ? (
                 <div className="mt-2 text-sm text-slate-600">{docketOcrProgress}</div>
@@ -1305,7 +1425,9 @@ export default function DeliveriesPage() {
               disabled={docketParsing || docketSaving}
               className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
             >
-              Take Photo
+              {docketFiles.length > 0 && docketFiles.every((file) => file.type.startsWith('image/'))
+                ? 'Add Photo'
+                : 'Take Photo'}
             </button>
 
             <button
@@ -1314,10 +1436,10 @@ export default function DeliveriesPage() {
               disabled={docketParsing || docketSaving}
               className="rounded-xl border px-5 py-3 text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
             >
-              Upload File
+              Upload File / Photos
             </button>
 
-            {!docketFile?.type.startsWith('image/') ? (
+            {docketFiles.length > 0 && !docketFiles.every((file) => file.type.startsWith('image/')) ? (
               <button
                 type="button"
                 onClick={parseDocket}
@@ -1331,7 +1453,8 @@ export default function DeliveriesPage() {
             <button
               type="button"
               onClick={() => {
-                setDocketFile(null)
+                setDocketFiles([])
+                docketRedactionRefs.current = {}
                 setParsedDocket(null)
                 setReviewRows([])
                 setReviewSupplier('')
@@ -1343,16 +1466,25 @@ export default function DeliveriesPage() {
             </button>
           </div>
 
-          {docketFile?.type.startsWith('image/') ? (
-            <ImageRedactionEditor
-              ref={docketRedactionRef}
-              file={docketFile}
-              kind="delivery"
-              disabled={docketParsing || docketSaving}
-              onProcess={parseDocket}
-              processing={docketParsing}
-            />
-          ) : null}
+          {docketFiles.every((file) => file.type.startsWith('image/'))
+            ? docketFiles.map((file, index) => {
+                const key = docketFileKey(file, index)
+                return (
+                  <ImageRedactionEditor
+                    key={key}
+                    ref={(handle) => {
+                      docketRedactionRefs.current[key] = handle
+                    }}
+                    file={file}
+                    kind="delivery"
+                    pageLabel={docketFiles.length > 1 ? `Page ${index + 1}` : undefined}
+                    disabled={docketParsing || docketSaving}
+                    onProcess={index === docketFiles.length - 1 ? parseDocket : undefined}
+                    processing={docketParsing}
+                  />
+                )
+              })
+            : null}
         </section>
 
         {parsedDocket ? (
@@ -1363,6 +1495,56 @@ export default function DeliveriesPage() {
                 Supplier: {parsedDocket.supplier || 'Unknown'} · Date:{' '}
                 {parsedDocket.deliveryDate || deliveredAt || 'Unknown'} · Docket:{' '}
                 {parsedDocket.docketNumber || 'N/A'} · Rows: {reviewRows.length}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+                <div
+                  className={`rounded-md border px-3 py-2 font-medium ${
+                    parsedDocket.totals.matches === false
+                      ? 'border-amber-300 bg-amber-50 text-amber-900'
+                      : parsedDocket.totals.matches === true
+                        ? 'border-green-300 bg-green-50 text-green-800'
+                        : 'border-slate-200 bg-slate-50 text-slate-700'
+                  }`}
+                >
+                  {parsedDocket.totals.matches === false
+                    ? 'Totals need review'
+                    : parsedDocket.totals.matches === true
+                      ? 'Docket total checked'
+                      : 'Docket total not visible'}
+                </div>
+                <details className="text-slate-600">
+                  <summary className="cursor-pointer font-medium text-teal-800">
+                    View totals
+                  </summary>
+                  <div className="mt-2 grid grid-cols-2 gap-x-5 gap-y-1 rounded-md border bg-slate-50 p-3 text-xs">
+                    <span>Extracted lines</span>
+                    <span>{money(parsedDocket.totals.extractedLineTotal, 2)}</span>
+                    <span>Goods total</span>
+                    <span>
+                      {parsedDocket.totals.goodsTotal === null
+                        ? 'Not visible'
+                        : money(parsedDocket.totals.goodsTotal, 2)}
+                    </span>
+                    <span>VAT total</span>
+                    <span>
+                      {parsedDocket.totals.vatTotal === null
+                        ? 'Not visible'
+                        : money(parsedDocket.totals.vatTotal, 2)}
+                    </span>
+                    <span>Amount payable</span>
+                    <span>
+                      {parsedDocket.totals.grandTotal === null
+                        ? 'Not visible'
+                        : money(parsedDocket.totals.grandTotal, 2)}
+                    </span>
+                    {parsedDocket.totals.difference !== null ? (
+                      <>
+                        <span>Difference</span>
+                        <span>{money(parsedDocket.totals.difference, 2)}</span>
+                      </>
+                    ) : null}
+                  </div>
+                </details>
               </div>
               <div className="mt-3 grid gap-4 md:grid-cols-[minmax(0,240px)_minmax(0,420px)]">
                 <div>
@@ -1405,7 +1587,7 @@ export default function DeliveriesPage() {
             </div>
 
             <div className="max-h-[75vh] overflow-auto">
-              <table className="min-w-[2140px] w-full text-left">
+              <table className="min-w-[2320px] w-full text-left">
                 <thead className="bg-slate-100 text-sm">
                   <tr>
                     <th className="px-4 py-3 text-slate-800">Save</th>
@@ -1434,6 +1616,7 @@ export default function DeliveriesPage() {
                     <th className="px-4 py-3 text-slate-800">Supplier SKU</th>
                     <th className="px-4 py-3 text-slate-800">Docket Product</th>
                     <th className="px-4 py-3 text-slate-800">Matched L3</th>
+                    <th className="px-4 py-3 text-slate-800">Traceability</th>
                     <th className="px-4 py-3 text-slate-800">Qty</th>
                     <th className="px-4 py-3 text-slate-800">Unit</th>
                     <th className="px-4 py-3 text-slate-800">Total Cost</th>
@@ -1453,18 +1636,23 @@ export default function DeliveriesPage() {
                     const priceCheck = priceCheckForReviewRow(row)
                     const identityMatch = identityConfidenceForReviewRow(row)
                     const rowNeedsReview =
-                      !selectedReviewItem ||
-                      !row.qty ||
-                      !row.unitType ||
-                      identityMatch.confidence < 1 ||
-                      row.quantityConfidence < 0.75 ||
-                      Boolean(priceCheck?.hasWarning)
+                      row.lineType === 'product' &&
+                      (!selectedReviewItem ||
+                        !row.qty ||
+                        !row.unitType ||
+                        identityMatch.confidence < 1 ||
+                        row.quantityConfidence < 0.75 ||
+                        Boolean(priceCheck?.hasWarning))
 
                     return (
                       <tr
                         key={row.rowId}
                         className={`border-t align-top ${
-                          rowNeedsReview ? 'bg-amber-50' : ''
+                          rowNeedsReview
+                            ? 'bg-amber-50'
+                            : row.lineType !== 'product'
+                              ? 'bg-slate-50'
+                              : ''
                         }`}
                       >
                         <td className="px-4 py-3">
@@ -1508,6 +1696,11 @@ export default function DeliveriesPage() {
                                     : 'Charged, not received'}
                               </span>
                             </label>
+                            {row.lineType !== 'product' ? (
+                              <div className="max-w-40 text-xs font-medium text-slate-600">
+                                {lineTypeLabel(row.lineType)}
+                              </div>
+                            ) : null}
                           </div>
                         </td>
 
@@ -1550,11 +1743,17 @@ export default function DeliveriesPage() {
                               setReviewRows((rows) =>
                                 rows.map((current) =>
                                   current.rowId === row.rowId
-                                    ? reconcileReviewRowIdentity(
-                                        current,
-                                        current.supplier,
-                                        e.target.value
-                                      )
+                                    ? {
+                                        ...reconcileReviewRowIdentity(
+                                          current,
+                                          current.supplier,
+                                          e.target.value
+                                        ),
+                                        skuConfidence: e.target.value.trim() ? 1 : 0,
+                                        skuReason: e.target.value.trim()
+                                          ? 'SKU reviewed by user.'
+                                          : 'No SKU entered.',
+                                      }
                                     : current
                                 )
                               )
@@ -1564,6 +1763,11 @@ export default function DeliveriesPage() {
                           {identityMatch.confidence < 1 ? (
                             <div className="mt-1 text-xs font-medium text-amber-800">
                               {identityMatch.reason}
+                            </div>
+                          ) : null}
+                          {row.supplierSku && row.skuConfidence < 0.75 ? (
+                            <div className="mt-1 w-36 text-xs font-medium text-amber-800">
+                              {row.skuReason || 'SKU may be cropped or incomplete.'}
                             </div>
                           ) : null}
                         </td>
@@ -1634,7 +1838,15 @@ export default function DeliveriesPage() {
                                   <button
                                     type="button"
                                     onClick={() => addReviewRowAsNewItem(row)}
-                                    disabled={addingReviewItemRowId === row.rowId}
+                                    disabled={
+                                      addingReviewItemRowId === row.rowId ||
+                                      Boolean(row.supplierSku && row.skuConfidence < 0.75)
+                                    }
+                                    title={
+                                      row.supplierSku && row.skuConfidence < 0.75
+                                        ? 'Correct or clear the cropped SKU first'
+                                        : undefined
+                                    }
                                     className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-teal-800 hover:bg-teal-50 disabled:cursor-not-allowed disabled:text-slate-400"
                                   >
                                     <Plus size={16} aria-hidden="true" />
@@ -1652,9 +1864,37 @@ export default function DeliveriesPage() {
                               <div className="mt-1 text-xs text-green-700">
                                 Selected: {selectedReviewItem.name} [{selectedReviewItem.sku}]
                               </div>
-                            ) : (
+                            ) : row.lineType === 'product' ? (
                               <div className="mt-1 text-xs text-red-700">Needs L3 match</div>
+                            ) : (
+                              <div className="mt-1 text-xs text-slate-500">
+                                Not added to inventory
+                              </div>
                             )}
+                          </div>
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <div className="w-40 space-y-2">
+                            <input
+                              value={row.batchCode}
+                              onChange={(e) =>
+                                updateReviewRow(row.rowId, { batchCode: e.target.value })
+                              }
+                              placeholder="Batch / lot"
+                              aria-label="Batch or lot number"
+                              className="w-full rounded-lg border px-2 py-1 text-sm"
+                            />
+                            <div className="text-xs text-slate-500">Best before / expiry</div>
+                            <input
+                              type="date"
+                              value={row.expiryDate}
+                              onChange={(e) =>
+                                updateReviewRow(row.rowId, { expiryDate: e.target.value })
+                              }
+                              aria-label="Best before or expiry date"
+                              className="w-full rounded-lg border px-2 py-1 text-sm"
+                            />
                           </div>
                         </td>
 
@@ -1715,6 +1955,9 @@ export default function DeliveriesPage() {
                               {money(Number(row.totalCost) / Number(row.qty), 5)} / {row.unitType}
                             </div>
                           ) : null}
+                          <div className="mt-1 text-xs text-slate-500">
+                            {row.priceIncludesVat ? 'VAT included' : 'Before VAT'}
+                          </div>
                         </td>
 
                         <td className="px-4 py-3">
@@ -1798,6 +2041,21 @@ export default function DeliveriesPage() {
                             <div className="mt-1 text-xs text-slate-500">
                               VAT Code: {row.vatCode || 'N/A'}
                             </div>
+                            <details className="mt-1 text-xs text-slate-600">
+                              <summary className="cursor-pointer text-teal-800">VAT basis</summary>
+                              <label className="mt-2 flex items-start gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={row.priceIncludesVat}
+                                  onChange={(e) =>
+                                    updateReviewRow(row.rowId, {
+                                      priceIncludesVat: e.target.checked,
+                                    })
+                                  }
+                                />
+                                <span>Line price includes VAT</span>
+                              </label>
+                            </details>
                           </div>
                         </td>
 

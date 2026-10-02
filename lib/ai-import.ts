@@ -27,6 +27,7 @@ type DeepSeekOptions<T> = {
   feature: AiFeature
   prompt: string
   imageDataUrl?: string
+  imageDataUrls?: string[]
   qualityCheck?: (value: T) => boolean
   timeoutMs?: number
 }
@@ -115,16 +116,18 @@ async function runDeepSeekJsonRequest<T>({
   prompt,
   model,
   imageDataUrl,
+  imageDataUrls,
   qualityCheck,
-  timeoutMs = imageDataUrl ? 75_000 : 60_000,
+  timeoutMs = imageDataUrl || imageDataUrls?.length ? 90_000 : 60_000,
 }: DeepSeekOptions<T> & { apiKey: string; model: string }) {
-  const content = imageDataUrl
+  const images = imageDataUrls?.length ? imageDataUrls : imageDataUrl ? [imageDataUrl] : []
+  const content = images.length
     ? [
         { type: 'text', text: prompt },
-        {
+        ...images.map((url) => ({
           type: 'image_url',
-          image_url: { url: imageDataUrl, detail: 'original' },
-        },
+          image_url: { url, detail: 'original' },
+        })),
       ]
     : prompt
 
@@ -206,6 +209,7 @@ export async function parseJsonWithDeepSeek<T>({
   feature,
   prompt,
   imageDataUrl,
+  imageDataUrls,
   qualityCheck,
   timeoutMs,
 }: DeepSeekOptions<T>) {
@@ -215,9 +219,18 @@ export async function parseJsonWithDeepSeek<T>({
     throw new Error('DEEPSEEK_API_KEY_MISSING')
   }
 
-  const primaryModel = imageDataUrl ? 'deepseek-flash' : primaryDeepSeekModel()
-  const fallbackModel = imageDataUrl ? null : fallbackDeepSeekModel(primaryModel)
-  const options = { restaurantId, feature, prompt, imageDataUrl, qualityCheck, timeoutMs }
+  const hasImages = Boolean(imageDataUrl || imageDataUrls?.length)
+  const primaryModel = hasImages ? 'deepseek-flash' : primaryDeepSeekModel()
+  const fallbackModel = hasImages ? null : fallbackDeepSeekModel(primaryModel)
+  const options = {
+    restaurantId,
+    feature,
+    prompt,
+    imageDataUrl,
+    imageDataUrls,
+    qualityCheck,
+    timeoutMs,
+  }
 
   try {
     return await runDeepSeekJsonRequest({
@@ -360,6 +373,28 @@ export async function documentFromAiRequest(
   if (contentType.includes('application/json')) {
     const body = await req.json()
     const redactedImageDataUrl = cleanText(body?.redactedImageDataUrl)
+    const redactedImageDataUrls = Array.isArray(body?.redactedImageDataUrls)
+      ? body.redactedImageDataUrls
+          .map((value: unknown) => cleanText(value))
+          .filter((value: string | null): value is string => Boolean(value))
+      : []
+
+    if (redactedImageDataUrls.length > 3) {
+      throw new Error('TOO_MANY_IMAGES')
+    }
+
+    if (redactedImageDataUrls.length > 0) {
+      if (body?.privacySelectionConfirmed !== true) {
+        throw new Error('PRIVACY_SELECTION_NOT_CONFIRMED')
+      }
+
+      return {
+        text: null,
+        imageDataUrl: null,
+        imageDataUrls: redactedImageDataUrls.map(assertRedactedImageDataUrl),
+        body,
+      }
+    }
 
     if (redactedImageDataUrl) {
       if (body?.privacySelectionConfirmed !== true) {
@@ -369,6 +404,7 @@ export async function documentFromAiRequest(
       return {
         text: null,
         imageDataUrl: assertRedactedImageDataUrl(redactedImageDataUrl),
+        imageDataUrls: null,
         body,
       }
     }
@@ -381,6 +417,7 @@ export async function documentFromAiRequest(
     return {
       text,
       imageDataUrl: null,
+      imageDataUrls: null,
       body,
     }
   }
@@ -390,6 +427,7 @@ export async function documentFromAiRequest(
   return {
     ...result,
     imageDataUrl: null,
+    imageDataUrls: null,
   }
 }
 
@@ -471,6 +509,13 @@ export function aiErrorResponse(error: unknown) {
         )} MB.`,
       },
       { status: 413 }
+    )
+  }
+
+  if (error instanceof Error && error.message === 'TOO_MANY_IMAGES') {
+    return Response.json(
+      { error: 'Upload up to 3 docket photos at a time, or combine additional pages into a PDF.' },
+      { status: 400 }
     )
   }
 
