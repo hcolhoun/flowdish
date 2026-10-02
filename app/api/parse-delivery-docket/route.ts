@@ -25,6 +25,8 @@ type ExtractedDocketRow = {
   lineTotal: number | null
   vatCode: string | null
   vatRatePercent: number | null
+  quantityConfidence: number | null
+  quantityReason: string | null
   notes: string | null
 }
 
@@ -68,6 +70,12 @@ function comparableVatCode(value: unknown) {
 function validVatRate(value: unknown) {
   const rate = toNullableNumber(value)
   return rate !== null && rate >= 0 && rate <= 100 ? rate : null
+}
+
+function validConfidence(value: unknown) {
+  const confidence = toNullableNumber(value)
+  if (confidence === null || confidence < 0 || confidence > 100) return null
+  return confidence <= 1 ? confidence : confidence / 100
 }
 
 type SupplierProductMatchCandidate = {
@@ -222,6 +230,9 @@ For each line item return:
 - lineTotal: total line price if visible, else null
 - vatCode: the VAT code printed on that line, if visible, else null
 - vatRatePercent: a VAT percentage printed directly on that line, if visible, else null
+- quantityConfidence: a number from 0 to 1 measuring only how clearly the delivered
+  quantity and unit can be read and calculated
+- quantityReason: a short reason for the quantity confidence
 - notes: anything uncertain or relevant
 
 Also extract the invoice VAT legend or VAT summary, where each VAT code is mapped to
@@ -243,6 +254,9 @@ Rules:
 - If a row shows litres/ml, convert qty to ml where possible and unitType "ml".
 - If price is unclear, use null.
 - If supplier SKU is unclear, use null.
+- Quantity confidence must not consider product identity, supplier, SKU, price, or VAT.
+- Use lower quantity confidence when CASE/UNIT counts, pack-size arithmetic, handwriting,
+  folds, glare, or column alignment make the delivered quantity uncertain.
 - Copy each line's VAT code exactly from the VAT CODE column.
 - Do not guess what a VAT code means. Only return a legend mapping when both its code and
   rate are visible in the document.
@@ -273,6 +287,8 @@ Return this shape exactly:
       "lineTotal": number | null,
       "vatCode": string | null,
       "vatRatePercent": number | null,
+      "quantityConfidence": number | null,
+      "quantityReason": string | null,
       "notes": string | null
     }
   ]
@@ -334,34 +350,40 @@ async function matchSupplierProduct(
     ? products.filter((product) => supplierMatches(supplier, product.supplier))
     : []
   const preferredProducts = supplierProducts.length > 0 ? supplierProducts : products
+  const exactSkuMatches = comparableRowSku
+    ? products.filter((product) => comparableSku(product.supplierSku) === comparableRowSku)
+    : []
 
-  if (comparableRowSku) {
-    const exact = preferredProducts.find(
+  if (comparableRowSku && supplierProducts.length > 0) {
+    const exact = supplierProducts.find(
       (product) => comparableSku(product.supplierSku) === comparableRowSku
     )
 
     if (exact) {
       return {
         supplierProduct: exact,
-        confidence: 0.98,
-        matchReason: supplierProducts.length > 0
-          ? 'Exact supplier SKU match'
-          : 'Exact SKU match without supplier confirmation',
+        confidence: 1,
+        matchReason: 'Exact SKU + supplier identity match',
+        supplierInferredFromSku: false,
       }
     }
   }
 
-  if (comparableRowSku) {
-    const skuMatch = products.find(
-      (product) => comparableSku(product.supplierSku) === comparableRowSku
-    )
+  if (comparableRowSku && !supplier && exactSkuMatches.length === 1) {
+    return {
+      supplierProduct: exactSkuMatches[0],
+      confidence: 0.5,
+      matchReason: 'Exact SKU match; supplier inferred from saved product',
+      supplierInferredFromSku: true,
+    }
+  }
 
-    if (skuMatch) {
-      return {
-        supplierProduct: skuMatch,
-        confidence: 0.9,
-        matchReason: 'SKU match without supplier confirmation',
-      }
+  if (comparableRowSku && !supplier && exactSkuMatches.length > 1) {
+    return {
+      supplierProduct: null,
+      confidence: 0.5,
+      matchReason: 'Exact SKU matches multiple suppliers; enter supplier to confirm',
+      supplierInferredFromSku: false,
     }
   }
 
@@ -374,21 +396,26 @@ async function matchSupplierProduct(
     if (best && best.score >= 0.62) {
       return {
         supplierProduct: best.product,
-        confidence: supplierProducts.length > 0 ? Math.min(0.88, best.score) : 0.62,
+        confidence: supplierProducts.length > 0 ? 0.5 : 0,
         matchReason:
           supplierProducts.length > 0
-            ? 'Supplier product name match'
-            : 'Product name match without supplier confirmation',
+            ? 'Supplier matched; L3 suggested by product name, SKU not confirmed'
+            : 'L3 suggested by product name; SKU and supplier not confirmed',
+        supplierInferredFromSku: false,
       }
     }
   }
 
   return {
     supplierProduct: null,
-    confidence: 0,
-    matchReason: sku
-      ? 'New or unrecognised supplier SKU'
-      : 'No supplier SKU or product match found',
+    confidence: supplierProducts.length > 0 ? 0.5 : 0,
+    matchReason:
+      comparableRowSku && supplier
+        ? 'Supplier found, but SKU does not match that supplier'
+        : supplierProducts.length > 0
+          ? 'Supplier matched; SKU is missing or unrecognised'
+          : 'SKU and supplier not matched',
+    supplierInferredFromSku: false,
   }
 }
 
@@ -455,6 +482,8 @@ export async function POST(req: Request) {
         lineTotal: toNullableNumber(row.lineTotal),
         vatCode: cleanText(row.vatCode),
         vatRatePercent: validVatRate(row.vatRatePercent),
+        quantityConfidence: validConfidence(row.quantityConfidence),
+        quantityReason: cleanText(row.quantityReason),
         notes: cleanText(row.notes),
       }
 
@@ -473,12 +502,24 @@ export async function POST(req: Request) {
       const vatNotes = unresolvedVatCode
         ? `VAT code ${cleanRow.vatCode} was not found in the selected VAT legend.`
         : null
+      const quantityConfidence =
+        cleanRow.quantityConfidence ??
+        (normalisedRow.qty && normalisedRow.unitType ? 0.8 : 0)
+      const quantityReason =
+        cleanRow.quantityReason ||
+        (quantityConfidence > 0 ? 'Quantity and unit were extracted.' : 'Quantity needs review.')
+      const matchedSupplier =
+        supplier ||
+        (match.supplierInferredFromSku ? match.supplierProduct?.supplier ?? null : null)
 
       matchedRows.push({
         ...normalisedRow,
         vatRatePercent,
+        quantityConfidence,
+        quantityReason,
         notes: [normalisedRow.notes, vatNotes].filter(Boolean).join(' ') || null,
-        supplier,
+        supplier: matchedSupplier,
+        supplierInferredFromSku: match.supplierInferredFromSku,
         matchedSupplierProductId: match.supplierProduct?.id ?? null,
         matchedSupplierProductName: match.supplierProduct?.name ?? null,
         matchedItemId: match.supplierProduct?.linkedItemId ?? null,
@@ -492,6 +533,7 @@ export async function POST(req: Request) {
           !match.supplierProduct.linkedItemId ||
           !normalisedRow.qty ||
           !normalisedRow.unitType ||
+          quantityConfidence < 0.75 ||
           unresolvedVatCode,
       })
     }

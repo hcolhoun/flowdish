@@ -173,12 +173,14 @@ function pricesChanged({
 async function createOrLinkL3({
   restaurantId,
   product,
+  unitType: requestedUnitType,
 }: {
   restaurantId: string
   product: any
+  unitType?: BaseUnit | null
 }) {
   const sku = makeSku(product)
-  const unitType = inferUnitType(product)
+  const unitType = requestedUnitType || inferUnitType(product)
   const shelfLifeDays = inferShelfLifeDays(product)
 
   let item = await prisma.item.findFirst({
@@ -293,6 +295,7 @@ export async function POST(req: Request) {
     const fileName = body.fileName ? String(body.fileName) : null
     const supplierName = body.supplier ? String(body.supplier) : 'Mixed'
     const createLinkedL3 = body.createLinkedL3 !== false
+    const returnSavedProducts = body.returnSavedProducts === true
 
     if (!Array.isArray(products)) {
       return NextResponse.json({ error: 'Products must be an array' }, { status: 400 })
@@ -328,6 +331,7 @@ export async function POST(req: Request) {
     let linkedCount = 0
     let priceChangeCount = 0
     let skippedCount = 0
+    const savedProductIds: string[] = []
 
     for (const product of deduped.values()) {
       const rawName = String(product.name || '').trim()
@@ -371,6 +375,12 @@ export async function POST(req: Request) {
         const linkedItem = await createOrLinkL3({
           restaurantId: tenant.restaurantId,
           product: cleanProduct,
+          unitType:
+            product.unitType === 'g' ||
+            product.unitType === 'ml' ||
+            product.unitType === 'each'
+              ? product.unitType
+              : null,
         })
 
         linkedItemId = linkedItem.id
@@ -393,6 +403,7 @@ export async function POST(req: Request) {
             linkedItemId,
           },
         })
+        if (returnSavedProducts) savedProductIds.push(updated.id)
 
         if (changed) {
           await prisma.supplierProductPriceHistory.create({
@@ -412,13 +423,14 @@ export async function POST(req: Request) {
 
         updatedCount++
       } else {
-        await prisma.supplierProduct.create({
+        const created = await prisma.supplierProduct.create({
           data: {
             restaurantId: tenant.restaurantId,
             ...cleanProduct,
             linkedItemId,
           },
         })
+        if (returnSavedProducts) savedProductIds.push(created.id)
 
         createdCount++
       }
@@ -436,6 +448,12 @@ export async function POST(req: Request) {
         priceChangeCount,
       },
     })
+    const savedProducts = returnSavedProducts
+      ? await prisma.supplierProduct.findMany({
+          where: { id: { in: savedProductIds } },
+          include: { linkedItem: true },
+        })
+      : undefined
 
     return NextResponse.json({
       success: true,
@@ -446,6 +464,7 @@ export async function POST(req: Request) {
       linkedCount,
       skippedCount,
       priceChangeCount,
+      ...(savedProducts ? { savedProducts } : {}),
     })
   } catch (error) {
     const tenantError = tenantErrorResponse(error)

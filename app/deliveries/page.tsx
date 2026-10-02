@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Plus } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
 import ImageRedactionEditor, {
   type ImageRedactionEditorHandle,
@@ -63,12 +64,16 @@ type ParsedDocketRow = {
   supplier: string | null
   supplierSku: string | null
   productName: string
+  packSize: string | null
   qty: number | null
   unitType: UnitType | null
   packPrice: number | null
   lineTotal: number | null
   vatCode: string | null
   vatRatePercent: number | null
+  quantityConfidence: number | null
+  quantityReason: string | null
+  supplierInferredFromSku: boolean
   notes: string | null
   matchedSupplierProductId: string | null
   matchedSupplierProductName: string | null
@@ -97,6 +102,8 @@ type ReviewRow = {
   supplier: string
   supplierSku: string
   productName: string
+  packSize: string
+  packPrice: string
   qty: string
   unitType: UnitType | ''
   totalCost: string
@@ -107,8 +114,9 @@ type ReviewRow = {
   selectedItemId: string
   itemSearch: string
   dropdownOpen: boolean
-  confidence: number
-  matchReason: string
+  quantityConfidence: number
+  quantityReason: string
+  supplierInferredFromSku: boolean
   notes: string
   needsReview: boolean
   matchedSupplierProductId: string | null
@@ -128,6 +136,20 @@ type EditingDelivery = {
 function toDateInputValue(value: string | null | undefined) {
   if (!value) return ''
   return new Date(value).toISOString().slice(0, 10)
+}
+
+function comparableSku(value: string | null | undefined) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function comparableSupplier(value: string | null | undefined) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function supplierNamesMatch(left: string | null | undefined, right: string | null | undefined) {
+  const first = comparableSupplier(left)
+  const second = comparableSupplier(right)
+  return Boolean(first && second && (first === second || first.includes(second) || second.includes(first)))
 }
 
 export default function DeliveriesPage() {
@@ -160,6 +182,7 @@ export default function DeliveriesPage() {
   const [docketParsing, setDocketParsing] = useState(false)
   const [docketOcrProgress, setDocketOcrProgress] = useState('')
   const [docketSaving, setDocketSaving] = useState(false)
+  const [addingReviewItemRowId, setAddingReviewItemRowId] = useState('')
   const [creditClaimSavingRowId, setCreditClaimSavingRowId] = useState('')
   const [parsedDocket, setParsedDocket] = useState<ParsedDocketResponse | null>(null)
   const [reviewRows, setReviewRows] = useState<ReviewRow[]>([])
@@ -734,14 +757,87 @@ export default function DeliveriesPage() {
     )
   }
 
+  function identityConfidenceForReviewRow(row: ReviewRow) {
+    const sku = comparableSku(row.supplierSku)
+    const supplier = row.supplier.trim()
+    const skuMatches = sku
+      ? supplierProducts.filter((product) => comparableSku(product.supplierSku) === sku)
+      : []
+    const supplierMatches = supplier
+      ? supplierProducts.filter((product) => supplierNamesMatch(product.supplier, supplier))
+      : []
+    const exact = skuMatches.find((product) => supplierNamesMatch(product.supplier, supplier))
+
+    if (exact) {
+      return {
+        confidence: 1,
+        reason: row.supplierInferredFromSku
+          ? 'Exact SKU; supplier inferred from saved product'
+          : 'Exact SKU + supplier match',
+      }
+    }
+
+    if (skuMatches.length > 0 && !supplier) {
+      return {
+        confidence: 0.5,
+        reason:
+          skuMatches.length === 1
+            ? 'SKU matched; supplier not confirmed'
+            : 'SKU matches multiple suppliers',
+      }
+    }
+
+    if (supplierMatches.length > 0) {
+      return {
+        confidence: 0.5,
+        reason: sku ? 'Supplier matched; SKU did not' : 'Supplier matched; SKU missing',
+      }
+    }
+
+    if (skuMatches.length > 0) {
+      return { confidence: 0.5, reason: 'SKU matched; supplier did not' }
+    }
+
+    return { confidence: 0, reason: 'SKU and supplier not matched' }
+  }
+
+  function reconcileReviewRowIdentity(
+    row: ReviewRow,
+    nextSupplier: string,
+    nextSupplierSku = row.supplierSku
+  ): ReviewRow {
+    const sku = comparableSku(nextSupplierSku)
+    const exact = supplierProducts.find(
+      (product) =>
+        sku &&
+        comparableSku(product.supplierSku) === sku &&
+        supplierNamesMatch(product.supplier, nextSupplier)
+    )
+    const linkedItem = exact?.linkedItemId
+      ? items.find((item) => item.id === exact.linkedItemId)
+      : null
+    const clearPreviousAutomaticMatch = Boolean(row.matchedSupplierProductId && !exact)
+
+    return {
+      ...row,
+      supplier: nextSupplier,
+      supplierSku: nextSupplierSku,
+      supplierInferredFromSku: false,
+      matchedSupplierProductId: exact?.id ?? null,
+      selectedItemId: linkedItem?.id ?? (clearPreviousAutomaticMatch ? '' : row.selectedItemId),
+      itemSearch: linkedItem
+        ? `${linkedItem.name} [${linkedItem.sku}]`
+        : clearPreviousAutomaticMatch
+          ? ''
+          : row.itemSearch,
+      unitType: linkedItem?.unitType ?? row.unitType,
+    }
+  }
+
   function applyReviewSupplierToAllRows() {
     const nextSupplier = reviewSupplier.trim()
     setReviewRows((rows) =>
-      rows.map((row) => ({
-        ...row,
-        supplier: nextSupplier,
-        matchedSupplierProductId: null,
-      }))
+      rows.map((row) => reconcileReviewRowIdentity(row, nextSupplier))
     )
   }
 
@@ -752,6 +848,7 @@ export default function DeliveriesPage() {
       unitType: item.unitType,
       dropdownOpen: false,
       matchedSupplierProductId: null,
+      supplierInferredFromSku: false,
     })
   }
 
@@ -762,6 +859,86 @@ export default function DeliveriesPage() {
       dropdownOpen: false,
       matchedSupplierProductId: null,
     })
+  }
+
+  async function addReviewRowAsNewItem(row: ReviewRow) {
+    try {
+      setError('')
+
+      if (!row.supplier.trim()) {
+        throw new Error('Enter the supplier before adding this product as a new L3 item.')
+      }
+
+      if (!row.productName.trim()) {
+        throw new Error('Enter the docket product name before adding a new L3 item.')
+      }
+
+      if (!row.unitType) {
+        throw new Error('Choose the product unit before adding a new L3 item.')
+      }
+
+      setAddingReviewItemRowId(row.rowId)
+      const qty = Number(row.qty)
+      const totalCost = Number(row.totalCost)
+      const unitPrice =
+        Number.isFinite(qty) && qty > 0 && Number.isFinite(totalCost) && totalCost >= 0
+          ? totalCost / qty
+          : null
+      const res = await fetch('/api/supplier-products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supplier: row.supplier.trim(),
+          fileName: docketFile?.name || 'Delivery docket review',
+          createLinkedL3: true,
+          returnSavedProducts: true,
+          products: [
+            {
+              supplier: row.supplier.trim(),
+              supplierSku: row.supplierSku.trim() || null,
+              name: row.productName.trim(),
+              unitType: row.unitType,
+              packSize: row.packSize || null,
+              weight: row.packSize || null,
+              packPrice: row.packPrice ? Number(row.packPrice) : null,
+              unitPrice,
+            },
+          ],
+        }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to add the new L3 item.')
+
+      const savedProduct = (data.savedProducts || [])[0] as SupplierProduct | undefined
+      const linkedItem = savedProduct?.linkedItem
+
+      if (!savedProduct || !linkedItem) {
+        throw new Error('The supplier product was saved but could not be linked to an L3 item.')
+      }
+
+      setSupplierProducts((current) => [
+        savedProduct,
+        ...current.filter((product) => product.id !== savedProduct.id),
+      ])
+      setItems((current) => [
+        linkedItem,
+        ...current.filter((item) => item.id !== linkedItem.id),
+      ])
+      updateReviewRow(row.rowId, {
+        selectedItemId: linkedItem.id,
+        itemSearch: `${linkedItem.name} [${linkedItem.sku}]`,
+        unitType: linkedItem.unitType,
+        dropdownOpen: false,
+        matchedSupplierProductId: savedProduct.id,
+        supplierInferredFromSku: false,
+      })
+      setMessage(`${linkedItem.name} added as a new L3 item and linked to this supplier.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add the new L3 item.')
+    } finally {
+      setAddingReviewItemRowId('')
+    }
   }
 
   async function parseDocket() {
@@ -893,6 +1070,8 @@ export default function DeliveriesPage() {
           supplier: row.supplier || data.supplier || '',
           supplierSku: row.supplierSku || '',
           productName: row.productName || '',
+          packSize: row.packSize || '',
+          packPrice: toInputValue(row.packPrice),
           qty: toInputValue(row.qty),
           unitType: row.matchedItemUnitType || row.unitType || matchedItem?.unitType || '',
           totalCost: toInputValue(row.lineTotal ?? row.packPrice),
@@ -907,8 +1086,12 @@ export default function DeliveriesPage() {
               ? `${row.matchedItemName} [${row.matchedItemSku}]`
               : '',
           dropdownOpen: false,
-          confidence: row.confidence || 0,
-          matchReason: row.matchReason || '',
+          quantityConfidence:
+            row.quantityConfidence ?? (row.qty && row.unitType ? 0.8 : 0),
+          quantityReason:
+            row.quantityReason ||
+            (row.qty && row.unitType ? 'Quantity and unit were extracted.' : 'Review quantity.'),
+          supplierInferredFromSku: Boolean(row.supplierInferredFromSku),
           notes: row.notes || '',
           needsReview: Boolean(row.needsReview),
           matchedSupplierProductId: row.matchedSupplierProductId,
@@ -1222,11 +1405,31 @@ export default function DeliveriesPage() {
             </div>
 
             <div className="max-h-[75vh] overflow-auto">
-              <table className="min-w-[2340px] w-full text-left">
+              <table className="min-w-[2140px] w-full text-left">
                 <thead className="bg-slate-100 text-sm">
                   <tr>
                     <th className="px-4 py-3 text-slate-800">Save</th>
-                    <th className="px-4 py-3 text-slate-800">Delivery Vehicle OK</th>
+                    <th className="px-4 py-3 text-slate-800">
+                      <label className="flex min-w-36 items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={
+                            reviewRows.length > 0 &&
+                            reviewRows.every((row) => row.deliveryVehicleOk)
+                          }
+                          onChange={(event) =>
+                            setReviewRows((rows) =>
+                              rows.map((row) => ({
+                                ...row,
+                                deliveryVehicleOk: event.target.checked,
+                              }))
+                            )
+                          }
+                          aria-label="Set delivery vehicle OK for all rows"
+                        />
+                        <span>Delivery Vehicle OK</span>
+                      </label>
+                    </th>
                     <th className="px-4 py-3 text-slate-800">Supplier</th>
                     <th className="px-4 py-3 text-slate-800">Supplier SKU</th>
                     <th className="px-4 py-3 text-slate-800">Docket Product</th>
@@ -1235,10 +1438,8 @@ export default function DeliveriesPage() {
                     <th className="px-4 py-3 text-slate-800">Unit</th>
                     <th className="px-4 py-3 text-slate-800">Total Cost</th>
                     <th className="px-4 py-3 text-slate-800">Price Check</th>
-                    <th className="px-4 py-3 text-slate-800">VAT Code</th>
-                    <th className="px-4 py-3 text-slate-800">VAT %</th>
-                    <th className="px-4 py-3 text-slate-800">VAT Treatment</th>
-                    <th className="px-4 py-3 text-slate-800">Confidence</th>
+                    <th className="px-4 py-3 text-slate-800">VAT</th>
+                    <th className="px-4 py-3 text-slate-800">Identity Confidence</th>
                     <th className="px-4 py-3 text-slate-800">Notes</th>
                   </tr>
                 </thead>
@@ -1250,8 +1451,14 @@ export default function DeliveriesPage() {
                     )
                     const dropdownItems = filteredReviewItems(row.itemSearch)
                     const priceCheck = priceCheckForReviewRow(row)
+                    const identityMatch = identityConfidenceForReviewRow(row)
                     const rowNeedsReview =
-                      row.needsReview || !selectedReviewItem || Boolean(priceCheck?.hasWarning)
+                      !selectedReviewItem ||
+                      !row.qty ||
+                      !row.unitType ||
+                      identityMatch.confidence < 1 ||
+                      row.quantityConfidence < 0.75 ||
+                      Boolean(priceCheck?.hasWarning)
 
                     return (
                       <tr
@@ -1324,10 +1531,13 @@ export default function DeliveriesPage() {
                           <input
                             value={row.supplier}
                             onChange={(e) =>
-                              updateReviewRow(row.rowId, {
-                                supplier: e.target.value,
-                                matchedSupplierProductId: null,
-                              })
+                              setReviewRows((rows) =>
+                                rows.map((current) =>
+                                  current.rowId === row.rowId
+                                    ? reconcileReviewRowIdentity(current, e.target.value)
+                                    : current
+                                )
+                              )
                             }
                             className="w-32 rounded-lg border px-2 py-1 text-sm"
                           />
@@ -1337,16 +1547,23 @@ export default function DeliveriesPage() {
                           <input
                             value={row.supplierSku}
                             onChange={(e) =>
-                              updateReviewRow(row.rowId, {
-                                supplierSku: e.target.value,
-                                matchedSupplierProductId: null,
-                              })
+                              setReviewRows((rows) =>
+                                rows.map((current) =>
+                                  current.rowId === row.rowId
+                                    ? reconcileReviewRowIdentity(
+                                        current,
+                                        current.supplier,
+                                        e.target.value
+                                      )
+                                    : current
+                                )
+                              )
                             }
                             className="w-32 rounded-lg border px-2 py-1 text-sm"
                           />
-                          {rowNeedsReview ? (
+                          {identityMatch.confidence < 1 ? (
                             <div className="mt-1 text-xs font-medium text-amber-800">
-                              New or unrecognised SKU
+                              {identityMatch.reason}
                             </div>
                           ) : null}
                         </td>
@@ -1397,23 +1614,37 @@ export default function DeliveriesPage() {
                                   <div className="px-4 py-3 text-sm text-slate-600">
                                     No matching L3 items found.
                                   </div>
-                                ) : (
-                                  dropdownItems.map((item) => (
-                                    <button
-                                      key={item.id}
-                                      type="button"
-                                      onClick={() => selectReviewItem(row.rowId, item)}
-                                      className="block w-full border-b px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
-                                    >
-                                      <div className="font-medium text-slate-900">
-                                        {item.name}
-                                      </div>
-                                      <div className="text-xs text-slate-500">
-                                        {item.sku} · {item.unitType}
-                                      </div>
-                                    </button>
-                                  ))
-                                )}
+                                ) : null}
+                                {dropdownItems.map((item) => (
+                                  <button
+                                    key={item.id}
+                                    type="button"
+                                    onClick={() => selectReviewItem(row.rowId, item)}
+                                    className="block w-full border-b px-4 py-3 text-left hover:bg-slate-50"
+                                  >
+                                    <div className="font-medium text-slate-900">
+                                      {item.name}
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                      {item.sku} · {item.unitType}
+                                    </div>
+                                  </button>
+                                ))}
+                                {!row.selectedItemId ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => addReviewRowAsNewItem(row)}
+                                    disabled={addingReviewItemRowId === row.rowId}
+                                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-teal-800 hover:bg-teal-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                                  >
+                                    <Plus size={16} aria-hidden="true" />
+                                    <span>
+                                      {addingReviewItemRowId === row.rowId
+                                        ? 'Adding new L3...'
+                                        : 'Add as new L3 item'}
+                                    </span>
+                                  </button>
+                                ) : null}
                               </div>
                             ) : null}
 
@@ -1437,6 +1668,19 @@ export default function DeliveriesPage() {
                             }
                             className="w-24 rounded-lg border px-2 py-1 text-sm"
                           />
+                          <div
+                            className={`mt-1 w-32 text-xs ${
+                              row.quantityConfidence < 0.75
+                                ? 'font-medium text-amber-800'
+                                : 'text-slate-500'
+                            }`}
+                          >
+                            <div>
+                              Quantity confidence:{' '}
+                              {Math.round(row.quantityConfidence * 100)}%
+                            </div>
+                            <div>{row.quantityReason}</div>
+                          </div>
                         </td>
 
                         <td className="px-4 py-3">
@@ -1509,59 +1753,67 @@ export default function DeliveriesPage() {
                           )}
                         </td>
 
-                        <td className="px-4 py-3 text-sm text-slate-700">
-                          {row.vatCode || '—'}
-                        </td>
-
                         <td className="px-4 py-3">
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.1"
-                            value={row.vatRatePercent}
-                            onChange={(e) => {
-                              const nextRate = e.target.value
-                              updateReviewRow(row.rowId, {
-                                vatRatePercent: nextRate,
-                                vatReclaimStatus:
-                                  Number(nextRate) > 0
-                                    ? row.vatReclaimStatus === 'NOT_APPLICABLE'
-                                      ? 'ELIGIBLE'
-                                      : row.vatReclaimStatus
-                                    : 'NOT_APPLICABLE',
-                              })
-                            }}
-                            className="w-20 rounded-lg border px-2 py-1 text-sm"
-                          />
-                        </td>
-
-                        <td className="px-4 py-3">
-                          <select
-                            value={row.vatReclaimStatus}
-                            disabled={Number(row.vatRatePercent) <= 0}
-                            onChange={(e) =>
-                              updateReviewRow(row.rowId, {
-                                vatReclaimStatus: e.target.value as VatReclaimStatus,
-                              })
-                            }
-                            className="w-36 rounded-lg border px-2 py-1 text-sm disabled:bg-slate-100"
-                          >
-                            <option value="NOT_APPLICABLE">Not applicable</option>
-                            <option value="ELIGIBLE">Eligible</option>
-                            <option value="CLAIMED">Claimed</option>
-                            <option value="NOT_CLAIMED">Not claimed</option>
-                          </select>
+                          <div className="w-36">
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.1"
+                                value={row.vatRatePercent}
+                                onChange={(e) => {
+                                  const nextRate = e.target.value
+                                  updateReviewRow(row.rowId, {
+                                    vatRatePercent: nextRate,
+                                    vatReclaimStatus:
+                                      Number(nextRate) > 0
+                                        ? row.vatReclaimStatus === 'NOT_APPLICABLE'
+                                          ? 'ELIGIBLE'
+                                          : row.vatReclaimStatus
+                                        : 'NOT_APPLICABLE',
+                                  })
+                                }}
+                                aria-label="VAT percentage"
+                                className="w-20 rounded-lg border px-2 py-1 text-sm"
+                              />
+                              <span className="text-sm text-slate-600">%</span>
+                            </div>
+                            <select
+                              value={row.vatReclaimStatus}
+                              disabled={Number(row.vatRatePercent) <= 0}
+                              onChange={(e) =>
+                                updateReviewRow(row.rowId, {
+                                  vatReclaimStatus: e.target.value as VatReclaimStatus,
+                                })
+                              }
+                              aria-label="VAT treatment"
+                              className="mt-1 w-full rounded-md border px-2 py-1 text-xs text-slate-600 disabled:bg-slate-100"
+                            >
+                              <option value="NOT_APPLICABLE">Not applicable</option>
+                              <option value="ELIGIBLE">Eligible</option>
+                              <option value="CLAIMED">Claimed</option>
+                              <option value="NOT_CLAIMED">Not claimed</option>
+                            </select>
+                            <div className="mt-1 text-xs text-slate-500">
+                              VAT Code: {row.vatCode || 'N/A'}
+                            </div>
+                          </div>
                         </td>
 
                         <td className="px-4 py-3 text-sm text-slate-700">
-                          <div>{Math.round((row.confidence || 0) * 100)}%</div>
+                          <div>{Math.round(identityMatch.confidence * 100)}%</div>
                           <div
-                            className={`text-xs ${
-                              rowNeedsReview ? 'font-medium text-amber-800' : 'text-slate-500'
+                            className={`w-44 text-xs ${
+                              identityMatch.confidence < 1
+                                ? 'font-medium text-amber-800'
+                                : 'text-slate-500'
                             }`}
                           >
-                            {row.matchReason}
+                            {identityMatch.reason}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            Measures SKU + supplier only
                           </div>
                         </td>
 

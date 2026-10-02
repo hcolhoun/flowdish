@@ -53,16 +53,16 @@ function clamp(value: number, minimum = 0, maximum = 1) {
 function suggestedBoxes(kind: RedactionDocumentKind, aspectRatio = 1): RedactionBox[] {
   if (kind === 'sales') {
     return [
-      { id: crypto.randomUUID(), x: 0.06, y: 0.16, width: 0.88, height: 0.7 },
+      { id: crypto.randomUUID(), x: 0, y: 0.16, width: 1, height: 0.7 },
     ]
   }
 
   return [
     kind === 'delivery'
       ? aspectRatio < 0.66
-        ? { id: crypto.randomUUID(), x: 0.03, y: 0.245, width: 0.94, height: 0.4 }
-        : { id: crypto.randomUUID(), x: 0.025, y: 0.27, width: 0.95, height: 0.53 }
-      : { id: crypto.randomUUID(), x: 0.04, y: 0.16, width: 0.92, height: 0.72 },
+        ? { id: crypto.randomUUID(), x: 0, y: 0.245, width: 1, height: 0.4 }
+        : { id: crypto.randomUUID(), x: 0, y: 0.27, width: 1, height: 0.53 }
+      : { id: crypto.randomUUID(), x: 0, y: 0.16, width: 1, height: 0.72 },
   ]
 }
 
