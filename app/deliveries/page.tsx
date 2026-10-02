@@ -1254,7 +1254,7 @@ export default function DeliveriesPage() {
           <h2 className="text-xl font-semibold text-slate-900">Upload Delivery Docket</h2>
           <p className="mt-2 text-sm text-slate-700">
             Take a photo or upload a PDF, Excel, TXT, or CSV docket. For photos, select only the
-            product table before DeepSeek reads the image. Review every row before saving.
+            product table before AI reads the image. Review every row before saving.
           </p>
 
           <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto_auto_auto] md:items-end">
