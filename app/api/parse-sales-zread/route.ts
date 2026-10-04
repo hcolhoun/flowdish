@@ -7,7 +7,7 @@ import {
   aiErrorResponse,
   cleanText,
   documentFromAiRequest,
-  parseJsonWithDeepSeek,
+  parseJsonWithOpenAI,
 } from '@/lib/ai-import'
 import { sanitiseDocumentForAi } from '@/lib/document-privacy'
 import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
@@ -345,7 +345,7 @@ Return this shape exactly:
 ${sourceInstructions}
 `
 
-    const parsed = await parseJsonWithDeepSeek<ParsedSalesReport>({
+    const parsed = await parseJsonWithOpenAI<ParsedSalesReport>({
       restaurantId: tenant.restaurantId,
       feature: 'sales_zread',
       prompt,

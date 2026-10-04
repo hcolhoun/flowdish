@@ -398,7 +398,7 @@ export default function SuppliersPage() {
 
         if (!redacted) throw new Error('Review the selected area before processing.')
 
-        setOcrProgress('DeepSeek is reading the selected price-list area...')
+        setOcrProgress('AI is reading the selected price-list area...')
         res = await fetch('/api/parse-supplier-price-list', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -895,7 +895,7 @@ async function handlePriceOnlySave() {
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Price List</h2>
           <p className="mt-2 text-sm text-slate-700">
-            For images, select only the product table before DeepSeek reads the image. PDF,
+            For images, select only the product table before AI reads the image. PDF,
             spreadsheet, CSV and text price lists use the same privacy-filtered AI import flow for
             every supplier.
           </p>

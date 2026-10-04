@@ -2,7 +2,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
-import { aiErrorResponse, cleanText, parseJsonWithDeepSeek } from '@/lib/ai-import'
+import { aiErrorResponse, cleanText, parseJsonWithOpenAI } from '@/lib/ai-import'
 import { prisma } from '@/lib/prisma'
 import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
 
@@ -194,7 +194,7 @@ Return no more than six actions. Kitchen data:
 ${JSON.stringify(context)}
 `
 
-    const briefing = await parseJsonWithDeepSeek<BriefingResult>({
+    const briefing = await parseJsonWithOpenAI<BriefingResult>({
       restaurantId: tenant.restaurantId,
       feature: 'dashboard_briefing',
       prompt,

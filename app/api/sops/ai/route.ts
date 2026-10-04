@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server'
 import {
   aiErrorResponse,
   cleanText,
-  parseJsonWithDeepSeek,
+  parseJsonWithOpenAI,
   supportedImageMimeType,
   textFromUploadFile,
 } from '@/lib/ai-import'
@@ -99,7 +99,7 @@ Return ONLY valid JSON:
 ${sourceInstruction}
 `
 
-  const draft = await parseJsonWithDeepSeek<SopDraft>({
+  const draft = await parseJsonWithOpenAI<SopDraft>({
     restaurantId,
     feature: 'sop_draft',
     prompt,
@@ -147,7 +147,7 @@ SOP instructions:
 ${instructions.slice(0, 30000)}
 `
 
-  const draft = await parseJsonWithDeepSeek<SopDraft>({
+  const draft = await parseJsonWithOpenAI<SopDraft>({
     restaurantId,
     feature: 'sop_translation',
     prompt,

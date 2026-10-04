@@ -142,19 +142,29 @@ type AiUsageRow = {
   restaurantName: string
   plan: 'BASIC' | 'PREMIUM'
   feature: string
+  provider: string
   model: string
   requestCount: number
   promptTokens: number
+  cachedPromptTokens: number
   completionTokens: number
   totalTokens: number
+  estimatedCostUsd: number
   missingTokenCount: number
+  missingCostCount: number
   lastUsedAt: string
 }
 
 type AiUsageResponse = {
   rows: AiUsageRow[]
+  selectedMonth: string
+  availableMonths: string[]
   totalRequests: number
+  totalPromptTokens: number
+  totalCompletionTokens: number
   totalTokens: number
+  totalEstimatedCostUsd: number
+  missingCostCount: number
 }
 
 type ColdStorageAdminMonitor = {
@@ -309,6 +319,7 @@ export default function AdminPage() {
   const [restaurants, setRestaurants] = useState<AdminRestaurant[]>([])
   const [templateL0s, setTemplateL0s] = useState<TemplateL0[]>([])
   const [aiUsage, setAiUsage] = useState<AiUsageResponse | null>(null)
+  const [aiUsageMonth, setAiUsageMonth] = useState(new Date().toISOString().slice(0, 7))
   const [loadingAiUsage, setLoadingAiUsage] = useState(false)
   const [coldStorageAdmin, setColdStorageAdmin] = useState<ColdStorageAdminResponse | null>(null)
   const [loadingColdStorageAdmin, setLoadingColdStorageAdmin] = useState(false)
@@ -447,10 +458,12 @@ export default function AdminPage() {
     }
   }
 
-  async function loadAiUsage() {
+  async function loadAiUsage(month = aiUsageMonth) {
     try {
       setLoadingAiUsage(true)
-      const res = await fetch('/api/admin/ai-usage', { cache: 'no-store' })
+      const res = await fetch(`/api/admin/ai-usage?month=${encodeURIComponent(month)}`, {
+        cache: 'no-store',
+      })
       const json = await safeJson(res)
 
       if (!res.ok) {
@@ -458,6 +471,7 @@ export default function AdminPage() {
       }
 
       setAiUsage(json)
+      setAiUsageMonth(json.selectedMonth)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -577,7 +591,6 @@ export default function AdminPage() {
       loadAiUsage()
       loadColdStorageAdmin()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.permissions.canCreateRestaurants])
 
   useEffect(() => {
@@ -586,7 +599,6 @@ export default function AdminPage() {
       loadVatReport()
       loadSupportTickets()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.permissions.canManageRestaurantMembers])
 
   async function submitSupportTicket(e: React.FormEvent) {
@@ -1072,6 +1084,23 @@ export default function AdminPage() {
     }).format(value || 0)
   }
 
+  function usd(value: number | null) {
+    return new Intl.NumberFormat('en-IE', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 4,
+      maximumFractionDigits: 6,
+    }).format(value || 0)
+  }
+
+  function monthLabel(value: string) {
+    return new Date(`${value}-01T12:00:00.000Z`).toLocaleDateString('en-IE', {
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC',
+    })
+  }
+
   const coldStorageIngestUrl = 'https://www.flowdish.ie/api/cold-storage/readings/ingest'
 
   return (
@@ -1446,47 +1475,82 @@ export default function AdminPage() {
               <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <h2 className="text-xl font-semibold text-slate-900">DeepSeek Usage</h2>
+                    <h2 className="text-xl font-semibold text-slate-900">AI Usage</h2>
                     <p className="mt-1 text-sm text-slate-600">
-                      Token usage by restaurant and AI import feature.
+                      Monthly usage and estimated API cost by restaurant and feature.
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={loadAiUsage}
-                    disabled={loadingAiUsage}
-                    className="rounded-xl border px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
-                  >
-                    {loadingAiUsage ? 'Loading...' : 'Refresh Usage'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="ai-usage-month" className="sr-only">
+                      Usage month
+                    </label>
+                    <select
+                      id="ai-usage-month"
+                      value={aiUsageMonth}
+                      onChange={(event) => {
+                        const month = event.target.value
+                        setAiUsageMonth(month)
+                        loadAiUsage(month)
+                      }}
+                      disabled={loadingAiUsage}
+                      className="rounded-md border bg-white px-3 py-2 text-sm text-slate-800"
+                    >
+                      {(aiUsage?.availableMonths?.length
+                        ? aiUsage.availableMonths
+                        : [aiUsageMonth]
+                      ).map((month) => (
+                        <option key={month} value={month}>
+                          {monthLabel(month)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => loadAiUsage()}
+                      disabled={loadingAiUsage}
+                      className="rounded-md border px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                    >
+                      {loadingAiUsage ? 'Loading...' : 'Refresh'}
+                    </button>
+                  </div>
                 </div>
 
-                <div className="mt-5 grid gap-4 md:grid-cols-2">
-                  <div className="rounded-xl border bg-slate-50 p-4">
-                    <div className="text-xs text-slate-500">DeepSeek Requests</div>
+                <div className="mt-5 grid gap-4 md:grid-cols-3">
+                  <div className="rounded-md border bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">Requests</div>
                     <div className="mt-1 text-2xl font-semibold text-slate-900">
                       {aiUsage?.totalRequests ?? 0}
                     </div>
                   </div>
 
-                  <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="rounded-md border bg-slate-50 p-4">
                     <div className="text-xs text-slate-500">Total Tokens</div>
                     <div className="mt-1 text-2xl font-semibold text-slate-900">
                       {(aiUsage?.totalTokens ?? 0).toLocaleString('en-GB')}
                     </div>
                   </div>
+
+                  <div className="rounded-md border bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">Estimated Cost</div>
+                    <div className="mt-1 text-2xl font-semibold text-slate-900">
+                      {usd(aiUsage?.totalEstimatedCostUsd ?? 0)}
+                    </div>
+                  </div>
                 </div>
 
-                <div className="mt-5 overflow-hidden rounded-xl border">
-                  <table className="w-full text-left text-sm">
+                <div className="mt-5 overflow-x-auto rounded-md border">
+                  <table className="min-w-[1080px] w-full text-left text-sm">
                     <thead className="bg-slate-100 text-slate-700">
                       <tr>
                         <th className="px-4 py-3">Restaurant</th>
                         <th className="px-4 py-3">Feature</th>
                         <th className="px-4 py-3">Model</th>
                         <th className="px-4 py-3">Requests</th>
-                        <th className="px-4 py-3">Tokens</th>
+                        <th className="px-4 py-3">Input</th>
+                        <th className="px-4 py-3">Output</th>
+                        <th className="px-4 py-3">Total</th>
+                        <th className="px-4 py-3">Cost</th>
                         <th className="px-4 py-3">Last Used</th>
                       </tr>
                     </thead>
@@ -1494,13 +1558,19 @@ export default function AdminPage() {
                       {aiUsage?.rows.length ? (
                         aiUsage.rows.map((row) => (
                           <tr
-                            key={`${row.restaurantId}-${row.feature}-${row.model}`}
+                            key={`${row.restaurantId}-${row.feature}-${row.provider}-${row.model}`}
                             className="border-t"
                           >
                             <td className="px-4 py-3">{row.restaurantName}</td>
                             <td className="px-4 py-3">{row.feature}</td>
                             <td className="px-4 py-3">{row.model}</td>
                             <td className="px-4 py-3">{row.requestCount}</td>
+                            <td className="px-4 py-3">
+                              {row.promptTokens.toLocaleString('en-GB')}
+                            </td>
+                            <td className="px-4 py-3">
+                              {row.completionTokens.toLocaleString('en-GB')}
+                            </td>
                             <td className="px-4 py-3">
                               {row.totalTokens.toLocaleString('en-GB')}
                               {row.missingTokenCount > 0 ? (
@@ -1509,17 +1579,47 @@ export default function AdminPage() {
                                 </span>
                               ) : null}
                             </td>
+                            <td className="px-4 py-3">
+                              {row.missingCostCount === row.requestCount
+                                ? 'Not recorded'
+                                : usd(row.estimatedCostUsd)}
+                            </td>
                             <td className="px-4 py-3">{formatDate(row.lastUsedAt)}</td>
                           </tr>
                         ))
                       ) : (
                         <tr className="border-t">
-                          <td className="px-4 py-3 text-slate-600" colSpan={6}>
-                            No DeepSeek usage logged yet.
+                          <td className="px-4 py-3 text-slate-600" colSpan={9}>
+                            No AI usage logged for this month.
                           </td>
                         </tr>
                       )}
                     </tbody>
+                    <tfoot className="border-t-2 bg-slate-50 font-semibold text-slate-900">
+                      <tr>
+                        <td className="px-4 py-3" colSpan={3}>
+                          {monthLabel(aiUsageMonth)} total
+                        </td>
+                        <td className="px-4 py-3">{aiUsage?.totalRequests ?? 0}</td>
+                        <td className="px-4 py-3">
+                          {(aiUsage?.totalPromptTokens ?? 0).toLocaleString('en-GB')}
+                        </td>
+                        <td className="px-4 py-3">
+                          {(aiUsage?.totalCompletionTokens ?? 0).toLocaleString('en-GB')}
+                        </td>
+                        <td className="px-4 py-3">
+                          {(aiUsage?.totalTokens ?? 0).toLocaleString('en-GB')}
+                        </td>
+                        <td className="px-4 py-3">
+                          {usd(aiUsage?.totalEstimatedCostUsd ?? 0)}
+                        </td>
+                        <td className="px-4 py-3 text-xs font-normal text-slate-500">
+                          {aiUsage?.missingCostCount
+                            ? `${aiUsage.missingCostCount} legacy request(s) have no stored cost.`
+                            : 'All recorded costs included.'}
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </section>

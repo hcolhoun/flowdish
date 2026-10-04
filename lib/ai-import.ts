@@ -22,7 +22,7 @@ export type AiFeature =
   | 'sop_draft'
   | 'sop_translation'
 
-type DeepSeekOptions<T> = {
+type OpenAiOptions<T> = {
   restaurantId: string
   feature: AiFeature
   prompt: string
@@ -32,19 +32,26 @@ type DeepSeekOptions<T> = {
   timeoutMs?: number
 }
 
-type DeepSeekResponse = {
+type OpenAiResponse = {
+  model?: string
   choices?: Array<{
     message?: {
       content?: string
+      refusal?: string | null
     }
   }>
   usage?: {
     prompt_tokens?: number
     completion_tokens?: number
     total_tokens?: number
+    prompt_tokens_details?: {
+      cached_tokens?: number
+    }
   }
   error?: {
     message?: string
+    code?: string
+    type?: string
   }
 }
 
@@ -93,23 +100,59 @@ export function extractJson(text: string) {
       return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1))
     }
 
-    throw new Error('DEEPSEEK_INVALID_JSON')
+    throw new Error('OPENAI_INVALID_JSON')
   }
 }
 
-function primaryDeepSeekModel() {
-  return process.env.DEEPSEEK_MODEL || 'deepseek-flash'
+function primaryOpenAiModel() {
+  return process.env.OPENAI_MODEL || 'gpt-5.4-mini-2026-03-17'
 }
 
-function fallbackDeepSeekModel(primaryModel: string) {
-  const configured = process.env.DEEPSEEK_FALLBACK_MODEL
+function fallbackOpenAiModel(primaryModel: string) {
+  const configured = process.env.OPENAI_FALLBACK_MODEL
 
   if (configured?.toLowerCase() === 'none') return null
   if (configured) return configured === primaryModel ? null : configured
-  return primaryModel === 'deepseek-v4-pro' ? null : 'deepseek-v4-pro'
+  return null
 }
 
-async function runDeepSeekJsonRequest<T>({
+type ModelPricing = {
+  input: number
+  cachedInput: number
+  output: number
+}
+
+function pricingForModel(model: string): ModelPricing | null {
+  if (model === 'gpt-5.4-mini' || model.startsWith('gpt-5.4-mini-')) {
+    return { input: 0.75, cachedInput: 0.075, output: 4.5 }
+  }
+
+  if (model === 'gpt-5.4-nano' || model.startsWith('gpt-5.4-nano-')) {
+    return { input: 0.2, cachedInput: 0.02, output: 1.25 }
+  }
+
+  return null
+}
+
+function estimatedOpenAiCostUsd(
+  model: string,
+  promptTokens: number | null,
+  cachedPromptTokens: number | null,
+  completionTokens: number | null
+) {
+  const pricing = pricingForModel(model)
+  if (!pricing || promptTokens === null || completionTokens === null) return null
+
+  const cached = Math.max(0, Math.min(promptTokens, cachedPromptTokens ?? 0))
+  const uncached = promptTokens - cached
+
+  return (
+    (uncached * pricing.input + cached * pricing.cachedInput + completionTokens * pricing.output) /
+    1_000_000
+  )
+}
+
+async function runOpenAiJsonRequest<T>({
   apiKey,
   restaurantId,
   feature,
@@ -119,7 +162,7 @@ async function runDeepSeekJsonRequest<T>({
   imageDataUrls,
   qualityCheck,
   timeoutMs = imageDataUrl || imageDataUrls?.length ? 90_000 : 60_000,
-}: DeepSeekOptions<T> & { apiKey: string; model: string }) {
+}: OpenAiOptions<T> & { apiKey: string; model: string }) {
   const images = imageDataUrls?.length ? imageDataUrls : imageDataUrl ? [imageDataUrl] : []
   const content = images.length
     ? [
@@ -134,10 +177,10 @@ async function runDeepSeekJsonRequest<T>({
   const abortController = new AbortController()
   const timeout = setTimeout(() => abortController.abort(), timeoutMs)
   let response: Response
-  let json: DeepSeekResponse
+  let json: OpenAiResponse
 
   try {
-    response = await fetch('https://api.deepseek.com/chat/completions', {
+    response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -147,64 +190,95 @@ async function runDeepSeekJsonRequest<T>({
         model,
         messages: [{ role: 'user', content }],
         response_format: { type: 'json_object' },
-        thinking: { type: 'disabled' },
+        store: false,
         stream: false,
       }),
       signal: abortController.signal,
     })
-    json = (await response.json()) as DeepSeekResponse
+    json = (await response.json()) as OpenAiResponse
   } catch (error) {
     if (abortController.signal.aborted) {
-      throw new Error('DEEPSEEK_TIMEOUT')
+      throw new Error('OPENAI_TIMEOUT')
     }
 
-    console.error('DeepSeek request could not be reached:', error)
-    throw new Error('DEEPSEEK_UNAVAILABLE')
+    console.error('OpenAI request could not be reached:', error)
+    throw new Error('OPENAI_UNAVAILABLE')
   } finally {
     clearTimeout(timeout)
   }
+
+  const promptTokens = Number.isInteger(json.usage?.prompt_tokens)
+    ? json.usage?.prompt_tokens ?? null
+    : null
+  const cachedPromptTokens = Number.isInteger(json.usage?.prompt_tokens_details?.cached_tokens)
+    ? json.usage?.prompt_tokens_details?.cached_tokens ?? null
+    : null
+  const completionTokens = Number.isInteger(json.usage?.completion_tokens)
+    ? json.usage?.completion_tokens ?? null
+    : null
+  const responseModel = json.model || model
 
   await prisma.aiUsageLog.create({
     data: {
       restaurantId,
       feature,
-      model,
-      promptTokens: Number.isInteger(json.usage?.prompt_tokens)
-        ? json.usage?.prompt_tokens
-        : null,
-      completionTokens: Number.isInteger(json.usage?.completion_tokens)
-        ? json.usage?.completion_tokens
-        : null,
+      provider: 'openai',
+      model: responseModel,
+      promptTokens,
+      cachedPromptTokens,
+      completionTokens,
       totalTokens: Number.isInteger(json.usage?.total_tokens) ? json.usage?.total_tokens : null,
+      estimatedCostUsd: estimatedOpenAiCostUsd(
+        responseModel,
+        promptTokens,
+        cachedPromptTokens,
+        completionTokens
+      ),
     },
   })
 
   if (!response.ok) {
-    console.error('DeepSeek parse failed:', json)
+    console.error('OpenAI parse failed:', json)
     const message = String(json.error?.message || '')
+    const errorCode = String(json.error?.code || json.error?.type || '')
 
     if (
       response.status === 401 ||
       response.status === 403 ||
       message.toLowerCase().includes('authentication')
     ) {
-      throw new Error('DEEPSEEK_AUTH_FAILED')
+      throw new Error('OPENAI_AUTH_FAILED')
     }
 
-    throw new Error('DEEPSEEK_REQUEST_FAILED')
+    if (
+      response.status === 429 &&
+      `${message} ${errorCode}`.toLowerCase().includes('quota')
+    ) {
+      throw new Error('OPENAI_QUOTA_EXCEEDED')
+    }
+
+    if (response.status === 429) {
+      throw new Error('OPENAI_RATE_LIMITED')
+    }
+
+    throw new Error('OPENAI_REQUEST_FAILED')
+  }
+
+  if (json.choices?.[0]?.message?.refusal) {
+    throw new Error('OPENAI_REQUEST_FAILED')
   }
 
   const outputText = json.choices?.[0]?.message?.content || ''
   const parsed = extractJson(outputText) as T
 
   if (qualityCheck && !qualityCheck(parsed)) {
-    throw new Error('DEEPSEEK_LOW_CONFIDENCE')
+    throw new Error('OPENAI_LOW_CONFIDENCE')
   }
 
   return parsed
 }
 
-export async function parseJsonWithDeepSeek<T>({
+export async function parseJsonWithOpenAI<T>({
   restaurantId,
   feature,
   prompt,
@@ -212,16 +286,15 @@ export async function parseJsonWithDeepSeek<T>({
   imageDataUrls,
   qualityCheck,
   timeoutMs,
-}: DeepSeekOptions<T>) {
-  const apiKey = process.env.DEEPSEEK_API_KEY
+}: OpenAiOptions<T>) {
+  const apiKey = process.env.OPENAI_API_KEY
 
   if (!apiKey) {
-    throw new Error('DEEPSEEK_API_KEY_MISSING')
+    throw new Error('OPENAI_API_KEY_MISSING')
   }
 
-  const hasImages = Boolean(imageDataUrl || imageDataUrls?.length)
-  const primaryModel = hasImages ? 'deepseek-flash' : primaryDeepSeekModel()
-  const fallbackModel = hasImages ? null : fallbackDeepSeekModel(primaryModel)
+  const primaryModel = primaryOpenAiModel()
+  const fallbackModel = fallbackOpenAiModel(primaryModel)
   const options = {
     restaurantId,
     feature,
@@ -233,7 +306,7 @@ export async function parseJsonWithDeepSeek<T>({
   }
 
   try {
-    return await runDeepSeekJsonRequest({
+    return await runOpenAiJsonRequest({
       ...options,
       apiKey,
       model: primaryModel,
@@ -242,12 +315,12 @@ export async function parseJsonWithDeepSeek<T>({
     if (
       !fallbackModel ||
       (error instanceof Error &&
-        ['DEEPSEEK_API_KEY_MISSING', 'DEEPSEEK_AUTH_FAILED'].includes(error.message))
+        ['OPENAI_API_KEY_MISSING', 'OPENAI_AUTH_FAILED'].includes(error.message))
     ) {
       throw error
     }
 
-    return runDeepSeekJsonRequest({
+    return runOpenAiJsonRequest({
       ...options,
       apiKey,
       model: fallbackModel,
@@ -432,21 +505,35 @@ export async function documentFromAiRequest(
 }
 
 export function aiErrorResponse(error: unknown) {
-  if (error instanceof Error && error.message === 'DEEPSEEK_API_KEY_MISSING') {
-    return Response.json({ error: 'DEEPSEEK_API_KEY is not configured.' }, { status: 500 })
+  if (error instanceof Error && error.message === 'OPENAI_API_KEY_MISSING') {
+    return Response.json({ error: 'OPENAI_API_KEY is not configured.' }, { status: 500 })
   }
 
-  if (error instanceof Error && error.message === 'DEEPSEEK_AUTH_FAILED') {
+  if (error instanceof Error && error.message === 'OPENAI_AUTH_FAILED') {
     return Response.json(
       {
         error:
-          'DeepSeek rejected the API key. Create a new key in the DeepSeek Platform, replace DEEPSEEK_API_KEY in Vercel Production, then redeploy.',
+          'OpenAI rejected the API key. Replace OPENAI_API_KEY in Vercel Production, then redeploy.',
       },
       { status: 500 }
     )
   }
 
-  if (error instanceof Error && error.message === 'DEEPSEEK_TIMEOUT') {
+  if (error instanceof Error && error.message === 'OPENAI_QUOTA_EXCEEDED') {
+    return Response.json(
+      { error: 'The OpenAI API account has no available credit or has reached its spend limit.' },
+      { status: 503 }
+    )
+  }
+
+  if (error instanceof Error && error.message === 'OPENAI_RATE_LIMITED') {
+    return Response.json(
+      { error: 'The AI reader is busy. Wait a moment and try again.' },
+      { status: 429 }
+    )
+  }
+
+  if (error instanceof Error && error.message === 'OPENAI_TIMEOUT') {
     return Response.json(
       {
         error:
@@ -456,7 +543,7 @@ export function aiErrorResponse(error: unknown) {
     )
   }
 
-  if (error instanceof Error && error.message === 'DEEPSEEK_UNAVAILABLE') {
+  if (error instanceof Error && error.message === 'OPENAI_UNAVAILABLE') {
     return Response.json(
       {
         error:
@@ -466,7 +553,7 @@ export function aiErrorResponse(error: unknown) {
     )
   }
 
-  if (error instanceof Error && error.message === 'DEEPSEEK_REQUEST_FAILED') {
+  if (error instanceof Error && error.message === 'OPENAI_REQUEST_FAILED') {
     return Response.json(
       { error: 'The AI reader rejected this request. Try the image again or use manual entry.' },
       { status: 502 }
@@ -477,7 +564,7 @@ export function aiErrorResponse(error: unknown) {
     return Response.json(
       {
         error:
-          'This file needs OCR before DeepSeek can parse it. Use Take Photo for image files, or upload a text-based PDF, Excel, TXT, or CSV file.',
+          'This file needs image reading before AI can parse it. Use Take Photo for image files, or upload a text-based PDF, Excel, TXT, or CSV file.',
       },
       { status: 400 }
     )
@@ -549,11 +636,11 @@ export function aiErrorResponse(error: unknown) {
     )
   }
 
-  if (error instanceof Error && error.message === 'DEEPSEEK_INVALID_JSON') {
-    return Response.json({ error: 'DeepSeek returned unreadable JSON. Try again.' }, { status: 500 })
+  if (error instanceof Error && error.message === 'OPENAI_INVALID_JSON') {
+    return Response.json({ error: 'The AI reader returned unreadable data. Try again.' }, { status: 500 })
   }
 
-  if (error instanceof Error && error.message === 'DEEPSEEK_LOW_CONFIDENCE') {
+  if (error instanceof Error && error.message === 'OPENAI_LOW_CONFIDENCE') {
     return Response.json(
       { error: 'The AI could not read this reliably. Try a clearer file or enter it manually.' },
       { status: 422 }

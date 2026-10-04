@@ -8,6 +8,10 @@ const publicRoutes = [
   '/reset-password',
   '/staff-login',
   '/privacy',
+  '/terms',
+  '/data-processing',
+  '/ai-processing',
+  '/subprocessors',
 ]
 
 function isPublicPath(path: string) {

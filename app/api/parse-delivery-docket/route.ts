@@ -7,7 +7,7 @@ import {
   aiErrorResponse,
   cleanText,
   documentFromAiRequest,
-  parseJsonWithDeepSeek,
+  parseJsonWithOpenAI,
 } from '@/lib/ai-import'
 import { sanitiseDocumentForAi } from '@/lib/document-privacy'
 import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
@@ -343,7 +343,7 @@ function normaliseQuantityForMatchedProduct(
   }
 }
 
-async function extractDocketWithDeepSeek(
+async function extractDocketWithOpenAI(
   restaurantId: string,
   input: { text: string | null; imageDataUrls: string[] },
   supplierHint: string | null
@@ -495,7 +495,7 @@ Return this shape exactly:
 
 ${sourceInstructions}
 `
-  return parseJsonWithDeepSeek<ExtractedDocket>({
+  return parseJsonWithOpenAI<ExtractedDocket>({
     restaurantId,
     feature: 'delivery_docket',
     prompt,
@@ -640,10 +640,10 @@ export async function POST(req: Request) {
 
     const docketInput = await deliveryDocketInput(req)
     console.info(
-      `[delivery-parser:${requestId}] Input prepared (${docketInput.mode}); starting DeepSeek.`
+      `[delivery-parser:${requestId}] Input prepared (${docketInput.mode}); starting OpenAI.`
     )
 
-    const extracted = await extractDocketWithDeepSeek(
+    const extracted = await extractDocketWithOpenAI(
       tenant.restaurantId,
       {
         text: docketInput.text,
@@ -652,7 +652,7 @@ export async function POST(req: Request) {
       docketInput.supplierHint
     )
     console.info(
-      `[delivery-parser:${requestId}] DeepSeek returned ${Array.isArray(extracted.rows) ? extracted.rows.length : 0} row(s).`
+      `[delivery-parser:${requestId}] OpenAI returned ${Array.isArray(extracted.rows) ? extracted.rows.length : 0} row(s).`
     )
 
     const supplier = normaliseSupplier(cleanText(extracted.supplier) || docketInput.supplierHint)
@@ -805,7 +805,7 @@ export async function POST(req: Request) {
         rows: matchedRows,
         rawExtracted: extracted,
         parser: {
-          provider: 'deepseek',
+          provider: 'openai',
           mode: docketInput.mode,
           model: 'flash-first',
           removedLineCount: docketInput.removedLineCount,

@@ -1767,7 +1767,7 @@ export default function BomPage() {
     try {
       setCalculatingPrepTime(true)
       setError('')
-      setMessage('Calculating prep time with DeepSeek...')
+      setMessage('Calculating prep time with AI...')
 
       const res = await fetch('/api/l2-prep-time', {
         method: 'POST',
@@ -3260,7 +3260,7 @@ export default function BomPage() {
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">L2 Prep Time</h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    Review the DeepSeek estimate for one standard batch, correct it if needed,
+                    Review the AI estimate for one standard batch, correct it if needed,
                     then confirm it.
                   </p>
                 </div>

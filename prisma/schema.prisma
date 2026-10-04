@@ -103,6 +103,7 @@ model Restaurant {
   supplierCreditClaims        SupplierCreditClaim[]
   supplierCreditConfigs       SupplierCreditConfig[]
   supportTickets              SupportTicket[]
+  legalAcceptances            LegalAcceptance[]
 }
 
 model UserMembership {
@@ -626,10 +627,13 @@ model AiUsageLog {
   id               String   @id @default(cuid())
   restaurantId     String
   feature          String
+  provider         String   @default("openai")
   model            String
   promptTokens     Int?
+  cachedPromptTokens Int?
   completionTokens Int?
   totalTokens      Int?
+  estimatedCostUsd Float?
   createdAt        DateTime @default(now())
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
@@ -637,6 +641,30 @@ model AiUsageLog {
   @@index([restaurantId])
   @@index([feature])
   @@index([createdAt])
+}
+
+model LegalAcceptance {
+  id                   String   @id @default(cuid())
+  restaurantId         String
+  authUserId           String
+  email                String?
+  businessLegalName    String
+  selectedPlan         String
+  termsVersion         String
+  dpaVersion           String
+  privacyVersion       String
+  aiNoticeVersion      String?
+  authorityConfirmed   Boolean  @default(false)
+  aiProcessingAccepted Boolean  @default(false)
+  acceptedAt           DateTime
+  recordedAt           DateTime @default(now())
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([authUserId])
+  @@index([acceptedAt])
+  @@unique([restaurantId, authUserId, termsVersion, dpaVersion, selectedPlan])
 }
 
 model ColdStorageMonitor {

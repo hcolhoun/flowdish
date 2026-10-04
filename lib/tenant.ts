@@ -2,6 +2,7 @@ import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import { prisma } from '@/lib/prisma'
 import { getStaffSession } from '@/lib/staff-auth'
+import { LEGAL_VERSIONS, planUsesAi } from '@/lib/legal'
 
 type TenantContext = {
   authUserId: string
@@ -69,11 +70,99 @@ export async function getCurrentUser() {
   return {
     id: user.id,
     email: user.email ?? null,
+    metadata: user.user_metadata as Record<string, unknown>,
   }
 }
 
-async function createEmptyRestaurantForUser(user: { id: string; email: string | null }) {
+function metadataText(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function metadataBoolean(metadata: Record<string, unknown>, key: string) {
+  return metadata[key] === true
+}
+
+function acceptedAtFromMetadata(metadata: Record<string, unknown>) {
+  const value = metadataText(metadata, 'legal_accepted_at')
+  if (!value) return new Date()
+
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? new Date() : date
+}
+
+async function recordLegalAcceptanceForUser(
+  user: { id: string; email: string | null; metadata: Record<string, unknown> },
+  restaurantId: string,
+  fallbackBusinessName: string
+) {
+  const selectedPlan = metadataText(user.metadata, 'requested_plan')
+  const termsVersion = metadataText(user.metadata, 'terms_version')
+  const dpaVersion = metadataText(user.metadata, 'dpa_version')
+  const privacyVersion = metadataText(user.metadata, 'privacy_version')
+  const authorityConfirmed = metadataBoolean(user.metadata, 'authority_confirmed')
+
+  if (
+    !selectedPlan ||
+    !termsVersion ||
+    !dpaVersion ||
+    !privacyVersion ||
+    !authorityConfirmed
+  ) {
+    return
+  }
+
+  const businessLegalName =
+    metadataText(user.metadata, 'business_legal_name') || fallbackBusinessName
+  const aiProcessingAccepted = metadataBoolean(user.metadata, 'ai_processing_accepted')
+  const aiNoticeVersion = metadataText(user.metadata, 'ai_notice_version')
+
+  await prisma.legalAcceptance.upsert({
+    where: {
+      restaurantId_authUserId_termsVersion_dpaVersion_selectedPlan: {
+        restaurantId,
+        authUserId: user.id,
+        termsVersion,
+        dpaVersion,
+        selectedPlan,
+      },
+    },
+    create: {
+      restaurantId,
+      authUserId: user.id,
+      email: user.email,
+      businessLegalName,
+      selectedPlan,
+      termsVersion,
+      dpaVersion,
+      privacyVersion,
+      aiNoticeVersion:
+        planUsesAi(selectedPlan) && aiProcessingAccepted
+          ? aiNoticeVersion || LEGAL_VERSIONS.aiNotice
+          : null,
+      authorityConfirmed,
+      aiProcessingAccepted: planUsesAi(selectedPlan) && aiProcessingAccepted,
+      acceptedAt: acceptedAtFromMetadata(user.metadata),
+    },
+    update: {},
+  })
+}
+
+async function createEmptyRestaurantForUser(user: {
+  id: string
+  email: string | null
+  metadata: Record<string, unknown>
+}) {
   const restaurantName = user.email ? `${user.email}'s Restaurant` : 'New Restaurant'
+  const selectedPlan = metadataText(user.metadata, 'requested_plan') || 'HACCP_CORE'
+  const businessLegalName =
+    metadataText(user.metadata, 'business_legal_name') || restaurantName
+  const termsVersion = metadataText(user.metadata, 'terms_version')
+  const dpaVersion = metadataText(user.metadata, 'dpa_version')
+  const privacyVersion = metadataText(user.metadata, 'privacy_version')
+  const authorityConfirmed = metadataBoolean(user.metadata, 'authority_confirmed')
+  const aiProcessingAccepted = metadataBoolean(user.metadata, 'ai_processing_accepted')
+  const aiNoticeVersion = metadataText(user.metadata, 'ai_notice_version')
 
   return prisma.restaurant.create({
     data: {
@@ -88,6 +177,27 @@ async function createEmptyRestaurantForUser(user: { id: string; email: string | 
           role: 'OWNER',
         },
       },
+      legalAcceptances:
+        termsVersion && dpaVersion && privacyVersion && authorityConfirmed
+          ? {
+              create: {
+                authUserId: user.id,
+                email: user.email,
+                businessLegalName,
+                selectedPlan,
+                termsVersion,
+                dpaVersion,
+                privacyVersion,
+                aiNoticeVersion:
+                  planUsesAi(selectedPlan) && aiProcessingAccepted
+                    ? aiNoticeVersion || LEGAL_VERSIONS.aiNotice
+                    : null,
+                authorityConfirmed,
+                aiProcessingAccepted: planUsesAi(selectedPlan) && aiProcessingAccepted,
+                acceptedAt: acceptedAtFromMetadata(user.metadata),
+              },
+            }
+          : undefined,
     },
     include: {
       memberships: true,
@@ -167,6 +277,12 @@ export async function requireTenant(): Promise<TenantContext> {
   if (membership.restaurant.isTemplate) {
     throw new Error('TEMPLATE_RESTAURANT_LOGIN_BLOCKED')
   }
+
+  await recordLegalAcceptanceForUser(
+    user,
+    membership.restaurantId,
+    membership.restaurant.name
+  )
 
   return {
     authUserId: user.id,

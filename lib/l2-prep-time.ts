@@ -1,6 +1,6 @@
 import crypto from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { parseJsonWithDeepSeek } from '@/lib/ai-import'
+import { parseJsonWithOpenAI } from '@/lib/ai-import'
 
 type PrepTimeEstimate = {
   setupMinutes: number
@@ -155,7 +155,7 @@ L2 context:
 ${JSON.stringify(context, null, 2)}
 `
 
-  const estimate = await parseJsonWithDeepSeek<PrepTimeEstimate>({
+  const estimate = await parseJsonWithOpenAI<PrepTimeEstimate>({
     restaurantId,
     feature: 'l2_prep_time',
     prompt,

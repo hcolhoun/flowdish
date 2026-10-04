@@ -365,7 +365,7 @@ export default function SalesPage() {
 
         if (!redacted) throw new Error('Review the selected area before processing.')
 
-        setOcrProgress('DeepSeek is reading the selected POS area...')
+        setOcrProgress('AI is reading the selected POS area...')
         res = await fetch('/api/parse-sales-zread', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -559,7 +559,7 @@ export default function SalesPage() {
           <h2 className="text-xl font-semibold text-slate-900">Import Z-Read / POS Report</h2>
           <p className="mt-2 text-sm text-slate-700">
             Take a photo, upload a text-style file, or paste text. For photos, select only the sales
-            table before DeepSeek reads the image. Review matched L1 sales before stock is consumed.
+            table before AI reads the image. Review matched L1 sales before stock is consumed.
           </p>
 
           <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto_auto_auto] lg:items-end">

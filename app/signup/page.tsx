@@ -7,6 +7,7 @@ import CopyableError from '@/app/components/CopyableError'
 import BrandLogo from '@/app/components/BrandLogo'
 import { TurnstileWidget } from '@/app/components/TurnstileWidget'
 import { FLOWDISH_PLANS, type FlowdishPlanId } from '@/lib/plans'
+import { LEGAL_VERSIONS, planUsesAi } from '@/lib/legal'
 import { createClient } from '@/lib/supabase'
 import { verifyTurnstileBeforeSubmit } from '@/lib/turnstile-client'
 
@@ -17,6 +18,9 @@ export default function SignupPage() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [selectedPlan, setSelectedPlan] = useState<FlowdishPlanId | ''>('')
+  const [businessLegalName, setBusinessLegalName] = useState('')
+  const [legalAccepted, setLegalAccepted] = useState(false)
+  const [aiProcessingAccepted, setAiProcessingAccepted] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -38,6 +42,21 @@ export default function SignupPage() {
         return
       }
 
+      if (!businessLegalName.trim()) {
+        setError('Business legal name is required.')
+        return
+      }
+
+      if (!legalAccepted) {
+        setError('Accept the Flowdish terms and data processing agreement to continue.')
+        return
+      }
+
+      if (planUsesAi(selectedPlan) && !aiProcessingAccepted) {
+        setError('Accept the Enterprise AI processing notice to continue.')
+        return
+      }
+
       if (!cleanEmail) {
         setError('Email is required.')
         return
@@ -56,6 +75,8 @@ export default function SignupPage() {
       await verifyTurnstileBeforeSubmit(turnstileToken)
 
       const supabase = createClient()
+      const acceptedAt = new Date().toISOString()
+      const usesAi = planUsesAi(selectedPlan)
 
       const { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
@@ -64,6 +85,14 @@ export default function SignupPage() {
           emailRedirectTo: `${window.location.origin}/login`,
           data: {
             requested_plan: selectedPlan,
+            business_legal_name: businessLegalName.trim(),
+            authority_confirmed: true,
+            legal_accepted_at: acceptedAt,
+            terms_version: LEGAL_VERSIONS.terms,
+            dpa_version: LEGAL_VERSIONS.dpa,
+            privacy_version: LEGAL_VERSIONS.privacy,
+            ai_processing_accepted: usesAi && aiProcessingAccepted,
+            ai_notice_version: usesAi ? LEGAL_VERSIONS.aiNotice : null,
           },
         },
       })
@@ -190,6 +219,23 @@ export default function SignupPage() {
             <div className="mt-6 space-y-4">
               <div>
                 <label
+                  htmlFor="signup-business-name"
+                  className="mb-1 block text-sm font-medium text-slate-900"
+                >
+                  Business legal name
+                </label>
+                <input
+                  id="signup-business-name"
+                  value={businessLegalName}
+                  onChange={(e) => setBusinessLegalName(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                  placeholder="Restaurant company or sole trader name"
+                  required
+                />
+              </div>
+
+              <div>
+                <label
                   htmlFor="signup-email"
                   className="mb-1 block text-sm font-medium text-slate-900"
                 >
@@ -247,12 +293,60 @@ export default function SignupPage() {
                 resetKey={turnstileResetKey}
               />
 
+              <label className="flex items-start gap-3 rounded-md border bg-white p-3 text-sm leading-6 text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={legalAccepted}
+                  onChange={(event) => setLegalAccepted(event.target.checked)}
+                  className="mt-1 h-4 w-4 shrink-0 accent-emerald-700"
+                  required
+                />
+                <span>
+                  I confirm that I am authorised to act for the named business and agree to the{' '}
+                  <Link href="/terms" target="_blank" className="font-medium underline">
+                    Terms
+                  </Link>{' '}
+                  and{' '}
+                  <Link href="/data-processing" target="_blank" className="font-medium underline">
+                    Data Processing Agreement
+                  </Link>
+                  . I acknowledge the{' '}
+                  <Link href="/privacy" target="_blank" className="font-medium underline">
+                    Privacy Statement
+                  </Link>
+                  .
+                </span>
+              </label>
+
+              {planUsesAi(selectedPlan) ? (
+                <label className="flex items-start gap-3 rounded-md border border-teal-200 bg-teal-50 p-3 text-sm leading-6 text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={aiProcessingAccepted}
+                    onChange={(event) => setAiProcessingAccepted(event.target.checked)}
+                    className="mt-1 h-4 w-4 shrink-0 accent-teal-700"
+                    required
+                  />
+                  <span>
+                    I understand that Enterprise AI features send selected or filtered document
+                    content to OpenAI for processing, subject to human review before saving.{' '}
+                    <Link
+                      href="/ai-processing"
+                      target="_blank"
+                      className="font-medium underline"
+                    >
+                      AI processing details
+                    </Link>
+                  </span>
+                </label>
+              ) : null}
+
               <button
                 type="submit"
                 disabled={loading}
                 className="w-full rounded-lg bg-slate-900 px-4 py-3 font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {loading ? 'Creating account...' : 'Create Head Chef Account'}
+                {loading ? 'Creating account...' : 'Accept and create account'}
               </button>
             </div>
 

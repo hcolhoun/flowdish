@@ -6,7 +6,7 @@ import {
   aiErrorResponse,
   cleanText,
   documentFromAiRequest,
-  parseJsonWithDeepSeek,
+  parseJsonWithOpenAI,
 } from '@/lib/ai-import'
 import { sanitiseDocumentForAi } from '@/lib/document-privacy'
 import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
@@ -108,7 +108,7 @@ Return this shape exactly:
 ${sourceInstructions}
 `
 
-    const parsed = await parseJsonWithDeepSeek<ParsedSupplierPriceList>({
+    const parsed = await parseJsonWithOpenAI<ParsedSupplierPriceList>({
       restaurantId: tenant.restaurantId,
       feature: 'supplier_price_import',
       prompt,

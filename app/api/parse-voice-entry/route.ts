@@ -2,11 +2,9 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
-import { aiErrorResponse, cleanText, parseJsonWithDeepSeek } from '@/lib/ai-import'
+import { aiErrorResponse, cleanText, parseJsonWithOpenAI } from '@/lib/ai-import'
 import { kitchenAccessErrorResponse, requireKitchenAccess } from '@/lib/kitchen-access'
 import { prisma } from '@/lib/prisma'
-
-type VoiceEntryMode = 'waste' | 'prep'
 
 type ParsedVoiceEntry = {
   itemId: string | null
@@ -137,7 +135,7 @@ Chef transcript:
 ${JSON.stringify(transcript)}
 `
 
-    const parsed = await parseJsonWithDeepSeek<ParsedVoiceEntry>({
+    const parsed = await parseJsonWithOpenAI<ParsedVoiceEntry>({
       restaurantId: access.restaurantId,
       feature: mode === 'waste' ? 'waste_voice' : 'prep_voice',
       prompt,
