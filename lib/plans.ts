@@ -22,7 +22,6 @@ export const FLOWDISH_PLANS = [
     monthlyPrice: 149,
     annualPrice: 1490,
     setupPrice: 750,
-    recommended: true,
     features: [
       'Everything in HACCP Core',
       'Recipes, costing, inventory and waste',
@@ -37,6 +36,7 @@ export const FLOWDISH_PLANS = [
     monthlyPrice: 249,
     annualPrice: 2490,
     setupPrice: 950,
+    recommended: true,
     features: [
       'Everything in Kitchen Pro',
       'AI delivery docket scanning',
