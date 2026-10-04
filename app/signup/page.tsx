@@ -222,11 +222,23 @@ export default function SignupPage() {
                   </div>
                 ))}
               </div>
-              <p className="mt-3 border-t border-slate-200 pt-3 text-xs leading-5 text-slate-500">
-                Annual billing includes two months free. Enterprise includes 500 AI document pages
-                per site each month. HACCP Core includes one refrigeration temperature probe;
-                installation and additional probes are quoted for the site.
-              </p>
+              <div className="mt-3 space-y-2 border-t border-slate-200 pt-3 text-xs leading-5 text-slate-500">
+                <p>
+                  Annual billing includes two months free. Enterprise includes 500 AI document
+                  pages per site each month.
+                </p>
+                <p>
+                  HACCP Core&apos;s €295 setup includes software and HACCP configuration, head-chef
+                  onboarding, and one refrigeration probe installed and commissioned during
+                  onboarding. Additional probes installed during the same visit are €69 each plus
+                  €4 per month; monitoring for the first probe is included. A later installation
+                  visit is €125 plus €69 per probe.
+                </p>
+                <p>
+                  Setup is separate from consultancy and may be included when both are purchased
+                  together. All prices exclude VAT.
+                </p>
+              </div>
             </details>
           </fieldset>
 
