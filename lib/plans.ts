@@ -3,7 +3,9 @@ export const FLOWDISH_PLANS = [
     id: 'HACCP_CORE',
     name: 'Flowdish HACCP Core',
     summary: 'The essential digital HACCP toolkit for a compliant kitchen.',
-    priceLabel: 'Monthly price coming soon',
+    monthlyPrice: 69,
+    annualPrice: 690,
+    setupPrice: 295,
     features: [
       'Prep and HACCP records',
       'Delivery intake and expiry records',
@@ -17,7 +19,9 @@ export const FLOWDISH_PLANS = [
     id: 'KITCHEN_PRO',
     name: 'Flowdish Kitchen Pro',
     summary: 'Complete kitchen operations without AI file automation.',
-    priceLabel: 'Monthly price coming soon',
+    monthlyPrice: 149,
+    annualPrice: 1490,
+    setupPrice: 750,
     recommended: true,
     features: [
       'Everything in HACCP Core',
@@ -30,7 +34,9 @@ export const FLOWDISH_PLANS = [
     id: 'ENTERPRISE',
     name: 'Flowdish Enterprise',
     summary: 'Every Flowdish feature, including AI-powered automation.',
-    priceLabel: 'Monthly price coming soon',
+    monthlyPrice: 249,
+    annualPrice: 2490,
+    setupPrice: 1250,
     features: [
       'Everything in Kitchen Pro',
       'AI delivery docket scanning',

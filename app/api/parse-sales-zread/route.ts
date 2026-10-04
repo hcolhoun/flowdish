@@ -220,7 +220,7 @@ export async function POST(req: Request) {
       )
     }
 
-    const { text: rawText, imageDataUrl } = await documentFromAiRequest(req)
+    const { text: rawText, imageDataUrl, documentPages } = await documentFromAiRequest(req)
     const sanitised = imageDataUrl ? null : sanitiseDocumentForAi(rawText || '', 'sales')
 
     if (sanitised && sanitised.text.length < 30) {
@@ -350,6 +350,7 @@ ${sourceInstructions}
       feature: 'sales_zread',
       prompt,
       imageDataUrl: imageDataUrl || undefined,
+      documentPages,
     })
 
     const rows = Array.isArray(parsed.rows) ? parsed.rows : []

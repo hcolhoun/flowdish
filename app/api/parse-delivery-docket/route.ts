@@ -345,7 +345,7 @@ function normaliseQuantityForMatchedProduct(
 
 async function extractDocketWithOpenAI(
   restaurantId: string,
-  input: { text: string | null; imageDataUrls: string[] },
+  input: { text: string | null; imageDataUrls: string[]; documentPages: number },
   supplierHint: string | null
 ) {
   const sourceInstructions = input.imageDataUrls.length
@@ -500,6 +500,7 @@ ${sourceInstructions}
     feature: 'delivery_docket',
     prompt,
     imageDataUrls: input.imageDataUrls.length ? input.imageDataUrls : undefined,
+    documentPages: input.documentPages,
     qualityCheck: (value) =>
       Array.isArray(value.rows) &&
       value.rows.length > 0 &&
@@ -508,7 +509,8 @@ ${sourceInstructions}
 }
 
 async function deliveryDocketInput(req: Request) {
-  const { text, imageDataUrl, imageDataUrls, body } = await documentFromAiRequest(req)
+  const { text, imageDataUrl, imageDataUrls, documentPages, body } =
+    await documentFromAiRequest(req)
   const images = imageDataUrls?.length
     ? imageDataUrls
     : imageDataUrl
@@ -519,6 +521,7 @@ async function deliveryDocketInput(req: Request) {
     return {
       text: null,
       imageDataUrls: images,
+      documentPages,
       supplierHint: cleanText(body?.supplierHint),
       removedLineCount: 0,
       tableBoundaryFound: false,
@@ -535,6 +538,7 @@ async function deliveryDocketInput(req: Request) {
   return {
     text: sanitised.text,
     imageDataUrls: [] as string[],
+    documentPages,
     supplierHint: cleanText(body?.supplierHint),
     removedLineCount: sanitised.removedLineCount,
     tableBoundaryFound: sanitised.tableBoundaryFound,
@@ -648,6 +652,7 @@ export async function POST(req: Request) {
       {
         text: docketInput.text,
         imageDataUrls: docketInput.imageDataUrls,
+        documentPages: docketInput.documentPages,
       },
       docketInput.supplierHint
     )

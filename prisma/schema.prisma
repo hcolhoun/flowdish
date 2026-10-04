@@ -634,6 +634,7 @@ model AiUsageLog {
   completionTokens Int?
   totalTokens      Int?
   estimatedCostUsd Float?
+  documentPages    Int      @default(0)
   createdAt        DateTime @default(now())
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)

@@ -45,7 +45,8 @@ export async function POST(req: Request) {
       )
     }
 
-    const { text: rawText, imageDataUrl, body } = await documentFromAiRequest(req)
+    const { text: rawText, imageDataUrl, documentPages, body } =
+      await documentFromAiRequest(req)
     const sanitised = imageDataUrl
       ? null
       : sanitiseDocumentForAi(rawText || '', 'supplier_price')
@@ -113,6 +114,7 @@ ${sourceInstructions}
       feature: 'supplier_price_import',
       prompt,
       imageDataUrl: imageDataUrl || undefined,
+      documentPages,
     })
 
     const fallbackSupplier = cleanText(parsed.supplier) || requestedSupplier || ''

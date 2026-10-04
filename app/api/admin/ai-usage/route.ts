@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { canAdmin, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 import { isSystemOwnerEmail } from '@/lib/system-owner'
+
+const MONTHLY_DOCUMENT_PAGE_ALLOWANCE = 500
 
 function currentMonth() {
   return new Date().toISOString().slice(0, 7)
@@ -39,20 +41,23 @@ function monthOptions(firstDate: Date | null) {
 export async function GET(req: Request) {
   try {
     const tenant = await requireTenant()
+    const isSystemOwner = isSystemOwnerEmail(tenant.email)
 
-    if (!isSystemOwnerEmail(tenant.email)) {
-      return NextResponse.json({ error: 'System owner access required.' }, { status: 403 })
+    if (!isSystemOwner && !canAdmin(tenant.role)) {
+      return NextResponse.json({ error: 'Restaurant admin access required.' }, { status: 403 })
     }
 
     const url = new URL(req.url)
     const selectedMonth = validMonth(url.searchParams.get('month')) || currentMonth()
+    const usageScope = isSystemOwner ? {} : { restaurantId: tenant.restaurantId }
     const earliestLog = await prisma.aiUsageLog.findFirst({
+      where: usageScope,
       select: { createdAt: true },
       orderBy: { createdAt: 'asc' },
     })
 
     const logs = await prisma.aiUsageLog.findMany({
-      where: { createdAt: monthRange(selectedMonth) },
+      where: { ...usageScope, createdAt: monthRange(selectedMonth) },
       include: {
         restaurant: {
           select: {
@@ -81,6 +86,8 @@ export async function GET(req: Request) {
           provider: log.provider,
           model: log.model,
           requestCount: 0,
+          documentSubmissions: 0,
+          documentPages: 0,
           promptTokens: 0,
           cachedPromptTokens: 0,
           completionTokens: 0,
@@ -92,6 +99,8 @@ export async function GET(req: Request) {
         }
 
       existing.requestCount += 1
+      if (log.documentPages > 0) existing.documentSubmissions += 1
+      existing.documentPages += log.documentPages
       existing.promptTokens += log.promptTokens ?? 0
       existing.cachedPromptTokens += log.cachedPromptTokens ?? 0
       existing.completionTokens += log.completionTokens ?? 0
@@ -108,9 +117,13 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       rows: Array.from(grouped.values()).sort((a, b) => b.totalTokens - a.totalTokens),
+      scope: isSystemOwner ? 'system' : 'restaurant',
       selectedMonth,
       availableMonths: monthOptions(earliestLog?.createdAt ?? null),
       totalRequests: logs.length,
+      totalDocumentSubmissions: logs.filter((log) => log.documentPages > 0).length,
+      totalDocumentPages: logs.reduce((sum, log) => sum + log.documentPages, 0),
+      monthlyDocumentPageAllowance: MONTHLY_DOCUMENT_PAGE_ALLOWANCE,
       totalPromptTokens: logs.reduce((sum, log) => sum + (log.promptTokens ?? 0), 0),
       totalCompletionTokens: logs.reduce(
         (sum, log) => sum + (log.completionTokens ?? 0),

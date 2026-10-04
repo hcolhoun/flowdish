@@ -28,6 +28,7 @@ type OpenAiOptions<T> = {
   prompt: string
   imageDataUrl?: string
   imageDataUrls?: string[]
+  documentPages?: number
   qualityCheck?: (value: T) => boolean
   timeoutMs?: number
 }
@@ -160,6 +161,7 @@ async function runOpenAiJsonRequest<T>({
   model,
   imageDataUrl,
   imageDataUrls,
+  documentPages = 0,
   qualityCheck,
   timeoutMs = imageDataUrl || imageDataUrls?.length ? 90_000 : 60_000,
 }: OpenAiOptions<T> & { apiKey: string; model: string }) {
@@ -234,6 +236,7 @@ async function runOpenAiJsonRequest<T>({
         cachedPromptTokens,
         completionTokens
       ),
+      documentPages: response.ok ? Math.max(0, Math.floor(documentPages)) : 0,
     },
   })
 
@@ -284,6 +287,7 @@ export async function parseJsonWithOpenAI<T>({
   prompt,
   imageDataUrl,
   imageDataUrls,
+  documentPages,
   qualityCheck,
   timeoutMs,
 }: OpenAiOptions<T>) {
@@ -301,6 +305,7 @@ export async function parseJsonWithOpenAI<T>({
     prompt,
     imageDataUrl,
     imageDataUrls,
+    documentPages,
     qualityCheck,
     timeoutMs,
   }
@@ -358,7 +363,7 @@ function textFromWorkbook(buffer: Buffer) {
   return sheetTexts.join('\n\n').trim()
 }
 
-export async function textFromUploadFile(file: File) {
+async function uploadTextFromFile(file: File) {
   assertDocumentUploadSize(file)
 
   const mimeType = file.type || 'application/octet-stream'
@@ -386,21 +391,28 @@ export async function textFromUploadFile(file: File) {
     const text = String(parsed.text || '').trim()
 
     if (text.length < 30) throw new Error('OCR_PROVIDER_REQUIRED')
-    return text
+    return {
+      text,
+      documentPages: Math.max(1, Number(parsed.numpages) || 1),
+    }
   }
 
   if (isSpreadsheet) {
     const text = textFromWorkbook(buffer)
 
     if (text.length < 30) throw new Error('EMPTY_SPREADSHEET')
-    return text
+    return { text, documentPages: 1 }
   }
 
   if (isText) {
-    return buffer.toString('utf8').trim()
+    return { text: buffer.toString('utf8').trim(), documentPages: 1 }
   }
 
   throw new Error('UNSUPPORTED_FILE')
+}
+
+export async function textFromUploadFile(file: File) {
+  return (await uploadTextFromFile(file)).text
 }
 
 export async function textFromAiRequest(req: Request, textKeys = ['ocrText', 'pastedText', 'text']) {
@@ -412,7 +424,7 @@ export async function textFromAiRequest(req: Request, textKeys = ['ocrText', 'pa
 
     if (text.length < 30) throw new Error('OCR_TEXT_TOO_SHORT')
     assertDocumentTextSize(text)
-    return { text, body }
+    return { text, body, documentPages: 1 }
   }
 
   const formData = await req.formData()
@@ -431,10 +443,9 @@ export async function textFromAiRequest(req: Request, textKeys = ['ocrText', 'pa
     body[key] = String(value)
   }
 
-  return {
-    text: await textFromUploadFile(file),
-    body,
-  }
+  const document = await uploadTextFromFile(file)
+
+  return { ...document, body }
 }
 
 export async function documentFromAiRequest(
@@ -465,6 +476,7 @@ export async function documentFromAiRequest(
         text: null,
         imageDataUrl: null,
         imageDataUrls: redactedImageDataUrls.map(assertRedactedImageDataUrl),
+        documentPages: redactedImageDataUrls.length,
         body,
       }
     }
@@ -478,6 +490,7 @@ export async function documentFromAiRequest(
         text: null,
         imageDataUrl: assertRedactedImageDataUrl(redactedImageDataUrl),
         imageDataUrls: null,
+        documentPages: 1,
         body,
       }
     }
@@ -491,6 +504,7 @@ export async function documentFromAiRequest(
       text,
       imageDataUrl: null,
       imageDataUrls: null,
+      documentPages: 1,
       body,
     }
   }

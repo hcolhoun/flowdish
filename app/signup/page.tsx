@@ -173,8 +173,12 @@ export default function SignupPage() {
                     </span>
 
                     <span className="mt-4 text-sm leading-6 text-slate-600">{plan.summary}</span>
-                    <span className="mt-3 text-sm font-semibold text-slate-900">
-                      {plan.priceLabel}
+                    <span className="mt-4 flex items-end gap-1 text-slate-900">
+                      <span className="text-3xl font-semibold">€{plan.monthlyPrice}</span>
+                      <span className="pb-1 text-sm text-slate-600">/ site / month</span>
+                    </span>
+                    <span className="mt-1 text-xs text-slate-500">
+                      Ex VAT · Unlimited staff users
                     </span>
 
                     <ul className="mt-5 space-y-2 border-t border-slate-200 pt-4 text-sm text-slate-700">
@@ -201,6 +205,29 @@ export default function SignupPage() {
                 )
               })}
             </div>
+
+            <details className="mt-4 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+              <summary className="cursor-pointer font-semibold text-slate-900">
+                Pricing details
+              </summary>
+              <div className="mt-3 grid gap-3 border-t border-slate-200 pt-3 md:grid-cols-3">
+                {FLOWDISH_PLANS.map((plan) => (
+                  <div key={plan.id}>
+                    <div className="font-medium text-slate-900">{plan.name}</div>
+                    <div className="mt-1 text-slate-600">
+                      €{plan.annualPrice.toLocaleString('en-IE')} annually or €
+                      {plan.monthlyPrice}/month. One-time setup €
+                      {plan.setupPrice.toLocaleString('en-IE')}.
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 border-t border-slate-200 pt-3 text-xs leading-5 text-slate-500">
+                Annual billing includes two months free. Enterprise includes 500 AI document pages
+                per site each month. HACCP Core includes one refrigeration temperature probe;
+                installation and additional probes are quoted for the site.
+              </p>
+            </details>
           </fieldset>
 
           <section className="mx-auto mt-10 max-w-xl border-t border-slate-300 pt-8">

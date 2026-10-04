@@ -38,6 +38,15 @@ export async function GET() {
             createdAt: true,
           },
         },
+        legalAcceptances: {
+          orderBy: {
+            acceptedAt: 'desc',
+          },
+          take: 1,
+          select: {
+            selectedPlan: true,
+          },
+        },
       },
     })
 
@@ -90,6 +99,7 @@ export async function GET() {
         slug: restaurant.slug,
         isTemplate: restaurant.isTemplate,
         plan: restaurant.plan,
+        subscriptionPlan: restaurant.legalAcceptances[0]?.selectedPlan ?? null,
         staffLoginCode: restaurant.slug || restaurant.id,
         createdAt: restaurant.createdAt,
         updatedAt: restaurant.updatedAt,

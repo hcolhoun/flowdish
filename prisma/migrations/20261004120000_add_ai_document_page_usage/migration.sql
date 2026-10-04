@@ -1,0 +1,2 @@
+ALTER TABLE "AiUsageLog"
+ADD COLUMN "documentPages" INTEGER NOT NULL DEFAULT 0;

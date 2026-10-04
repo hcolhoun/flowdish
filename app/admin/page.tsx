@@ -28,6 +28,7 @@ type Restaurant = {
   slug: string | null
   isTemplate: boolean
   plan: 'BASIC' | 'PREMIUM'
+  subscriptionPlan: 'HACCP_CORE' | 'KITCHEN_PRO' | 'ENTERPRISE' | null
   staffLoginCode: string
   createdAt: string
   updatedAt: string
@@ -145,6 +146,8 @@ type AiUsageRow = {
   provider: string
   model: string
   requestCount: number
+  documentSubmissions: number
+  documentPages: number
   promptTokens: number
   cachedPromptTokens: number
   completionTokens: number
@@ -157,9 +160,13 @@ type AiUsageRow = {
 
 type AiUsageResponse = {
   rows: AiUsageRow[]
+  scope: 'system' | 'restaurant'
   selectedMonth: string
   availableMonths: string[]
   totalRequests: number
+  totalDocumentSubmissions: number
+  totalDocumentPages: number
+  monthlyDocumentPageAllowance: number
   totalPromptTokens: number
   totalCompletionTokens: number
   totalTokens: number
@@ -588,13 +595,13 @@ export default function AdminPage() {
   useEffect(() => {
     if (data?.permissions.canCreateRestaurants) {
       loadFrontloadData()
-      loadAiUsage()
       loadColdStorageAdmin()
     }
   }, [data?.permissions.canCreateRestaurants])
 
   useEffect(() => {
     if (data?.permissions.canManageRestaurantMembers) {
+      loadAiUsage()
       loadSupplierCredits()
       loadVatReport()
       loadSupportTickets()
@@ -1120,10 +1127,10 @@ export default function AdminPage() {
               loadData()
               if (data?.permissions.canCreateRestaurants) {
                 loadFrontloadData()
-                loadAiUsage()
                 loadColdStorageAdmin()
               }
               if (data?.permissions.canManageRestaurantMembers) {
+                loadAiUsage()
                 loadSupplierCredits()
                 loadVatReport()
                 loadSupportTickets()
@@ -1471,6 +1478,108 @@ export default function AdminPage() {
               </div>
             </section>
 
+            {data.permissions.canManageRestaurantMembers &&
+            !data.currentUser.isSystemOwner &&
+            (data.restaurant.subscriptionPlan === 'ENTERPRISE' ||
+              (aiUsage?.totalDocumentPages ?? 0) > 0) ? (
+              <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-xl font-semibold text-slate-900">AI Document Usage</h2>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Enterprise includes 500 processed document pages per site each month.
+                    </p>
+                  </div>
+
+                  <label className="text-sm text-slate-600">
+                    <span className="sr-only">Usage month</span>
+                    <select
+                      value={aiUsageMonth}
+                      onChange={(event) => {
+                        const month = event.target.value
+                        setAiUsageMonth(month)
+                        loadAiUsage(month)
+                      }}
+                      disabled={loadingAiUsage}
+                      className="rounded-md border bg-white px-3 py-2 text-sm text-slate-800"
+                    >
+                      {(aiUsage?.availableMonths?.length
+                        ? aiUsage.availableMonths
+                        : [aiUsageMonth]
+                      ).map((month) => (
+                        <option key={month} value={month}>
+                          {monthLabel(month)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="mt-5 grid grid-cols-2 border-y border-slate-200 py-4">
+                  <div className="border-r border-slate-200 pr-4">
+                    <div className="text-xs text-slate-500">Pages processed</div>
+                    <div className="mt-1 text-2xl font-semibold text-slate-900">
+                      {aiUsage?.totalDocumentPages ?? 0}
+                      <span className="ml-1 text-sm font-normal text-slate-500">
+                        / {aiUsage?.monthlyDocumentPageAllowance ?? 500}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="pl-4">
+                    <div className="text-xs text-slate-500">Document submissions</div>
+                    <div className="mt-1 text-2xl font-semibold text-slate-900">
+                      {aiUsage?.totalDocumentSubmissions ?? 0}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 h-2 overflow-hidden rounded bg-slate-200">
+                  <div
+                    className={`h-full ${
+                      (aiUsage?.totalDocumentPages ?? 0) >=
+                      (aiUsage?.monthlyDocumentPageAllowance ?? 500)
+                        ? 'bg-red-600'
+                        : (aiUsage?.totalDocumentPages ?? 0) >=
+                            (aiUsage?.monthlyDocumentPageAllowance ?? 500) * 0.8
+                          ? 'bg-amber-500'
+                          : 'bg-teal-600'
+                    }`}
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        ((aiUsage?.totalDocumentPages ?? 0) /
+                          (aiUsage?.monthlyDocumentPageAllowance || 500)) *
+                          100
+                      )}%`,
+                    }}
+                  />
+                </div>
+
+                {(aiUsage?.totalDocumentPages ?? 0) >=
+                (aiUsage?.monthlyDocumentPageAllowance ?? 500) ? (
+                  <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+                    This site has passed its 500-page monthly allowance. Additional document
+                    processing may be billed separately.
+                  </p>
+                ) : (aiUsage?.totalDocumentPages ?? 0) >=
+                  (aiUsage?.monthlyDocumentPageAllowance ?? 500) * 0.8 ? (
+                  <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    This site is approaching its monthly document allowance.
+                  </p>
+                ) : null}
+
+                <details className="mt-4 text-sm text-slate-600">
+                  <summary className="cursor-pointer font-medium text-slate-800">
+                    What counts as a page?
+                  </summary>
+                  <p className="mt-2 leading-6">
+                    Delivery docket, supplier price-list and POS/Z-read pages count toward the
+                    allowance. Voice entries, SOP assistance and dashboard summaries do not.
+                  </p>
+                </details>
+              </section>
+            ) : null}
+
             {data.currentUser.isSystemOwner ? (
               <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1516,11 +1625,22 @@ export default function AdminPage() {
                   </div>
                 </div>
 
-                <div className="mt-5 grid gap-4 md:grid-cols-3">
+                <div className="mt-5 grid gap-4 md:grid-cols-4">
                   <div className="rounded-md border bg-slate-50 p-4">
                     <div className="text-xs text-slate-500">Requests</div>
                     <div className="mt-1 text-2xl font-semibold text-slate-900">
                       {aiUsage?.totalRequests ?? 0}
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">Documents</div>
+                    <div className="mt-1 text-2xl font-semibold text-slate-900">
+                      {aiUsage?.totalDocumentPages ?? 0}
+                      <span className="ml-1 text-xs font-normal text-slate-500">pages</span>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {aiUsage?.totalDocumentSubmissions ?? 0} submissions
                     </div>
                   </div>
 
@@ -1540,13 +1660,15 @@ export default function AdminPage() {
                 </div>
 
                 <div className="mt-5 overflow-x-auto rounded-md border">
-                  <table className="min-w-[1080px] w-full text-left text-sm">
+                  <table className="min-w-[1240px] w-full text-left text-sm">
                     <thead className="bg-slate-100 text-slate-700">
                       <tr>
                         <th className="px-4 py-3">Restaurant</th>
                         <th className="px-4 py-3">Feature</th>
                         <th className="px-4 py-3">Model</th>
                         <th className="px-4 py-3">Requests</th>
+                        <th className="px-4 py-3">Documents</th>
+                        <th className="px-4 py-3">Pages</th>
                         <th className="px-4 py-3">Input</th>
                         <th className="px-4 py-3">Output</th>
                         <th className="px-4 py-3">Total</th>
@@ -1565,6 +1687,8 @@ export default function AdminPage() {
                             <td className="px-4 py-3">{row.feature}</td>
                             <td className="px-4 py-3">{row.model}</td>
                             <td className="px-4 py-3">{row.requestCount}</td>
+                            <td className="px-4 py-3">{row.documentSubmissions}</td>
+                            <td className="px-4 py-3">{row.documentPages}</td>
                             <td className="px-4 py-3">
                               {row.promptTokens.toLocaleString('en-GB')}
                             </td>
@@ -1589,7 +1713,7 @@ export default function AdminPage() {
                         ))
                       ) : (
                         <tr className="border-t">
-                          <td className="px-4 py-3 text-slate-600" colSpan={9}>
+                          <td className="px-4 py-3 text-slate-600" colSpan={11}>
                             No AI usage logged for this month.
                           </td>
                         </tr>
@@ -1601,6 +1725,10 @@ export default function AdminPage() {
                           {monthLabel(aiUsageMonth)} total
                         </td>
                         <td className="px-4 py-3">{aiUsage?.totalRequests ?? 0}</td>
+                        <td className="px-4 py-3">
+                          {aiUsage?.totalDocumentSubmissions ?? 0}
+                        </td>
+                        <td className="px-4 py-3">{aiUsage?.totalDocumentPages ?? 0}</td>
                         <td className="px-4 py-3">
                           {(aiUsage?.totalPromptTokens ?? 0).toLocaleString('en-GB')}
                         </td>
