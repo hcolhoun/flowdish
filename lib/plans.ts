@@ -36,7 +36,7 @@ export const FLOWDISH_PLANS = [
     summary: 'Every Flowdish feature, including AI-powered automation.',
     monthlyPrice: 249,
     annualPrice: 2490,
-    setupPrice: 1250,
+    setupPrice: 950,
     features: [
       'Everything in Kitchen Pro',
       'AI delivery docket scanning',

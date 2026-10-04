@@ -223,6 +223,20 @@ export default function SignupPage() {
                 ))}
               </div>
               <div className="mt-3 space-y-2 border-t border-slate-200 pt-3 text-xs leading-5 text-slate-500">
+                <p className="font-medium text-slate-700">
+                  For customers joining through the on-site consultancy programme, Flowdish
+                  onboarding is incorporated into the wider consultancy engagement rather than
+                  charged again as a separate setup fee.{' '}
+                  <a
+                    href="https://cocos.ie/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline"
+                  >
+                    Visit Coco&apos;s Culinary Group
+                  </a>
+                  .
+                </p>
                 <p>
                   Annual billing includes two months free. Enterprise includes 500 AI document
                   pages per site each month.
@@ -235,9 +249,13 @@ export default function SignupPage() {
                   visit is €125 plus €69 per probe.
                 </p>
                 <p>
-                  Setup is separate from consultancy and may be included when both are purchased
-                  together. All prices exclude VAT.
+                  Kitchen Pro&apos;s €750 setup adds initial supplier, stock, recipe, costing and
+                  planning configuration with team onboarding. Enterprise&apos;s €950 setup also
+                  covers supplier and SKU matching, initial AI docket, price-list and POS import
+                  testing, privacy workflow configuration and team training. Bespoke integrations
+                  are quoted separately.
                 </p>
+                <p>All prices exclude VAT.</p>
               </div>
             </details>
           </fieldset>
