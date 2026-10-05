@@ -92,6 +92,28 @@ type CreateStaffResult = {
 
 type AccountPinResult = CreateStaffResult
 
+type StaffActivityRow = {
+  staffUserId: string
+  displayName: string
+  username: string
+  active: boolean
+  prepEntries: number
+  wasteEntries: number
+  totalEntries: number
+  points: number
+  rank: number
+}
+
+type StaffActivityResponse = {
+  selectedMonth: string
+  availableMonths: string[]
+  pointWeights: {
+    prep: number
+    waste: number
+  }
+  rows: StaffActivityRow[]
+}
+
 type AdminRestaurant = {
   id: string
   name: string
@@ -314,6 +336,11 @@ export default function AdminPage() {
   const [staffDisplayName, setStaffDisplayName] = useState('')
   const [staffPin, setStaffPin] = useState('')
   const [staffResult, setStaffResult] = useState<CreateStaffResult | null>(null)
+  const [staffActivity, setStaffActivity] = useState<StaffActivityResponse | null>(null)
+  const [staffActivityMonth, setStaffActivityMonth] = useState(
+    new Date().toISOString().slice(0, 7)
+  )
+  const [loadingStaffActivity, setLoadingStaffActivity] = useState(false)
   const [editingStaffId, setEditingStaffId] = useState('')
   const [editingStaffDisplayName, setEditingStaffDisplayName] = useState('')
   const [editingStaffPin, setEditingStaffPin] = useState('')
@@ -382,6 +409,28 @@ export default function AdminPage() {
   const staffPinUsers = useMemo(
     () => data?.staffUsers.filter((staff) => !staff.isAccountPin) || [],
     [data?.staffUsers]
+  )
+
+  const staffActivityById = useMemo(
+    () =>
+      new Map(
+        (staffActivity?.rows || []).map((row) => [row.staffUserId, row])
+      ),
+    [staffActivity?.rows]
+  )
+
+  const rankedStaffPinUsers = useMemo(
+    () =>
+      [...staffPinUsers].sort((a, b) => {
+        const aActivity = staffActivityById.get(a.id)
+        const bActivity = staffActivityById.get(b.id)
+
+        if (aActivity && bActivity) return aActivity.rank - bActivity.rank
+        if (aActivity) return -1
+        if (bActivity) return 1
+        return a.createdAt.localeCompare(b.createdAt)
+      }),
+    [staffActivityById, staffPinUsers]
   )
 
   const openSupportTickets = useMemo(
@@ -483,6 +532,27 @@ export default function AdminPage() {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setLoadingAiUsage(false)
+    }
+  }
+
+  async function loadStaffActivity(month = staffActivityMonth) {
+    try {
+      setLoadingStaffActivity(true)
+      const res = await fetch(`/api/admin/staff-activity?month=${encodeURIComponent(month)}`, {
+        cache: 'no-store',
+      })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to load staff activity')
+      }
+
+      setStaffActivity(json)
+      setStaffActivityMonth(json.selectedMonth)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoadingStaffActivity(false)
     }
   }
 
@@ -601,6 +671,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (data?.permissions.canManageRestaurantMembers) {
+      loadStaffActivity()
       loadAiUsage()
       loadSupplierCredits()
       loadVatReport()
@@ -1130,6 +1201,7 @@ export default function AdminPage() {
                 loadColdStorageAdmin()
               }
               if (data?.permissions.canManageRestaurantMembers) {
+                loadStaffActivity()
                 loadAiUsage()
                 loadSupplierCredits()
                 loadVatReport()
@@ -2066,18 +2138,54 @@ export default function AdminPage() {
             </section>
 
             <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">Staff PIN Users</h2>
-              <p className="mt-1 text-sm text-slate-600">
-                Staff PIN users can only access Prep and Waste. Basic includes 3 staff PIN users
-                plus the account PIN above.
-              </p>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">Staff PIN Users</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Staff PIN users can only access Prep and Waste. Basic includes 3 staff PIN users
+                    plus the account PIN above.
+                  </p>
+                </div>
 
-              <div className="mt-5 overflow-hidden rounded-xl border">
-                <table className="w-full text-left text-sm">
+                <label className="text-sm font-medium text-slate-700">
+                  Activity month
+                  <select
+                    value={staffActivityMonth}
+                    onChange={(event) => {
+                      const month = event.target.value
+                      setStaffActivityMonth(month)
+                      loadStaffActivity(month)
+                    }}
+                    disabled={loadingStaffActivity}
+                    className="mt-1 block rounded-lg border bg-white px-3 py-2 text-sm text-slate-900 disabled:opacity-60"
+                  >
+                    {(staffActivity?.availableMonths || [staffActivityMonth]).map((month) => (
+                      <option key={month} value={month}>
+                        {monthLabel(month)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <details className="mt-3 text-sm text-slate-600">
+                <summary className="cursor-pointer font-medium text-teal-700">How points work</summary>
+                <p className="mt-2 max-w-3xl">
+                  Prep records earn {staffActivity?.pointWeights.prep ?? 3} points and waste records
+                  earn {staffActivity?.pointWeights.waste ?? 1} point. Only records submitted by a
+                  Staff PIN user and still present in Flowdish are counted. Edits do not add points,
+                  and deleted records lose their points.
+                </p>
+              </details>
+
+              <div className="mt-5 overflow-x-auto rounded-xl border">
+                <table className="min-w-[900px] w-full text-left text-sm">
                   <thead className="bg-slate-100 text-slate-700">
                     <tr>
-                      <th className="px-4 py-3">Display Name</th>
-                      <th className="px-4 py-3">Username</th>
+                      <th className="px-4 py-3">Rank</th>
+                      <th className="px-4 py-3">Staff</th>
+                      <th className="px-4 py-3">Entries</th>
+                      <th className="px-4 py-3">Points</th>
                       <th className="px-4 py-3">Status</th>
                       <th className="px-4 py-3">Created</th>
                       <th className="px-4 py-3">Actions</th>
@@ -2086,16 +2194,24 @@ export default function AdminPage() {
                   <tbody>
                     {staffPinUsers.length === 0 ? (
                       <tr>
-                        <td className="px-4 py-3 text-slate-600" colSpan={5}>
+                        <td className="px-4 py-3 text-slate-600" colSpan={7}>
                           No staff PIN users yet.
                         </td>
                       </tr>
                     ) : (
-                      staffPinUsers.map((staff) => {
+                      rankedStaffPinUsers.map((staff) => {
                         const isEditing = editingStaffId === staff.id
+                        const activity = staffActivityById.get(staff.id)
 
                         return (
                           <tr key={staff.id} className="border-t align-top">
+                            <td className="px-4 py-3 font-semibold text-slate-700">
+                              {loadingStaffActivity
+                                ? '...'
+                                : activity && activity.points > 0
+                                  ? `#${activity.rank}`
+                                  : '-'}
+                            </td>
                             <td className="px-4 py-3">
                               {isEditing ? (
                                 <input
@@ -2106,8 +2222,27 @@ export default function AdminPage() {
                               ) : (
                                 staff.displayName
                               )}
+                              <div className="mt-1 font-mono text-xs text-slate-500">
+                                {staff.username}
+                              </div>
                             </td>
-                            <td className="px-4 py-3 font-mono text-xs">{staff.username}</td>
+                            <td className="px-4 py-3 text-slate-700">
+                              {loadingStaffActivity ? (
+                                'Loading...'
+                              ) : (
+                                <>
+                                  <div>{activity?.prepEntries || 0} prep</div>
+                                  <div className="mt-1 text-xs text-slate-500">
+                                    {activity?.wasteEntries || 0} waste
+                                  </div>
+                                </>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="font-semibold text-teal-700">
+                                {loadingStaffActivity ? '...' : activity?.points || 0}
+                              </span>
+                            </td>
                             <td className="px-4 py-3">
                               {staff.active ? (
                                 <span className="rounded-lg bg-green-50 px-2 py-1 text-xs font-semibold text-green-700">
