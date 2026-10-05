@@ -322,6 +322,7 @@ export default function AdminPage() {
   const [savingRestaurant, setSavingRestaurant] = useState(false)
   const [savingStaff, setSavingStaff] = useState(false)
   const [savingAccountPin, setSavingAccountPin] = useState(false)
+  const [removingAccountPinId, setRemovingAccountPinId] = useState('')
   const [loadingFrontloadData, setLoadingFrontloadData] = useState(false)
   const [frontloading, setFrontloading] = useState(false)
 
@@ -408,6 +409,11 @@ export default function AdminPage() {
 
   const staffPinUsers = useMemo(
     () => data?.staffUsers.filter((staff) => !staff.isAccountPin) || [],
+    [data?.staffUsers]
+  )
+
+  const headChefPinUsers = useMemo(
+    () => data?.staffUsers.filter((staff) => staff.isAccountPin && staff.active) || [],
     [data?.staffUsers]
   )
 
@@ -1070,6 +1076,43 @@ export default function AdminPage() {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setSavingAccountPin(false)
+    }
+  }
+
+  async function handleRemoveAccountPin(staff: StaffUser) {
+    const confirmed = window.confirm(
+      `Remove the Head Chef PIN login for ${staff.displayName}? Their email account and audit history will remain.`
+    )
+    if (!confirmed) return
+
+    try {
+      setRemovingAccountPinId(staff.id)
+      setError('')
+      setMessage('')
+      setAccountPinResult(null)
+
+      const res = await fetch(
+        `/api/admin/account-pin?staffUserId=${encodeURIComponent(staff.id)}`,
+        { method: 'DELETE' }
+      )
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to remove Head Chef PIN')
+      }
+
+      if (json.requiresRelogin) {
+        window.location.assign('/login')
+        return
+      }
+
+      setMessage('Head Chef PIN login removed. The email account remains active.')
+      setAccountPin('')
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setRemovingAccountPinId('')
     }
   }
 
@@ -2070,17 +2113,39 @@ export default function AdminPage() {
                 login. It does not use one of the Basic plan staff PIN slots.
               </p>
 
-              {data.accountPin ? (
-                <div className="mt-5 rounded-xl border bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  Current PIN username:{' '}
-                  <span className="font-mono font-semibold text-slate-900">
-                    {data.accountPin.username}
-                  </span>
+              {headChefPinUsers.length > 0 ? (
+                <div className="mt-5 divide-y rounded-xl border bg-slate-50">
+                  {headChefPinUsers.map((staff) => (
+                    <div
+                      key={staff.id}
+                      className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0 text-sm">
+                        <div className="font-semibold text-slate-900">
+                          {staff.displayName}
+                          {staff.id === data.accountPin?.id ? (
+                            <span className="ml-2 text-xs font-normal text-slate-500">You</span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 truncate text-xs text-slate-500">
+                          {staff.accountEmail || staff.username}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveAccountPin(staff)}
+                        disabled={Boolean(removingAccountPinId)}
+                        className="self-start rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 sm:self-auto"
+                      >
+                        {removingAccountPinId === staff.id ? 'Removing...' : 'Remove PIN'}
+                      </button>
+                    </div>
+                  ))}
                 </div>
               ) : null}
 
               <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                To recover or change the Head Chef PIN, enter a new 4-digit PIN below and save it.
+                To create or change your own Head Chef PIN, enter a new 4-digit PIN below.
               </div>
 
               <form onSubmit={handleSaveAccountPin} className="mt-6 grid gap-4 md:grid-cols-3">
@@ -2102,11 +2167,14 @@ export default function AdminPage() {
                     4 Digit PIN
                   </label>
                   <input
+                    type="password"
                     value={accountPin}
                     onChange={(e) => setAccountPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
                     className="w-full rounded-xl border px-3 py-2"
-                    placeholder="1234"
                     inputMode="numeric"
+                    autoComplete="off"
+                    data-1p-ignore="true"
+                    data-lpignore="true"
                     maxLength={4}
                     required
                   />

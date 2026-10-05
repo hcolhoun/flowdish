@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { canAdmin, getCurrentUser, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 import { hashPin } from '@/lib/staff-auth'
+import { isSystemOwnerEmail } from '@/lib/system-owner'
 
 function slugifyName(value: string) {
   return value
@@ -123,5 +124,59 @@ export async function POST(req: Request) {
 
     console.error('POST /api/admin/account-pin failed:', error)
     return NextResponse.json({ error: 'Failed to save account PIN.' }, { status: 500 })
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const signedInUser = await getCurrentUser()
+    const tenant = await requireTenant()
+    const url = new URL(req.url)
+    const requestedStaffUserId = String(url.searchParams.get('staffUserId') || '').trim()
+
+    const accountPin = await prisma.staffUser.findFirst({
+      where: {
+        restaurantId: tenant.restaurantId,
+        isAccountPin: true,
+        active: true,
+        ...(requestedStaffUserId
+          ? { id: requestedStaffUserId }
+          : { accountAuthUserId: tenant.authUserId }),
+      },
+      select: {
+        id: true,
+        accountAuthUserId: true,
+      },
+    })
+
+    if (!accountPin) {
+      return NextResponse.json({ error: 'Head Chef PIN user not found.' }, { status: 404 })
+    }
+
+    const isOwnPin = accountPin.accountAuthUserId === tenant.authUserId
+    const canRemoveAnyPin = isSystemOwnerEmail(tenant.email) || canAdmin(tenant.role)
+
+    if (!isOwnPin && !canRemoveAnyPin) {
+      return NextResponse.json(
+        { error: 'You do not have permission to remove this Head Chef PIN.' },
+        { status: 403 }
+      )
+    }
+
+    await prisma.staffUser.update({
+      where: { id: accountPin.id },
+      data: { active: false },
+    })
+
+    return NextResponse.json({
+      success: true,
+      requiresRelogin: isOwnPin && !signedInUser,
+    })
+  } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
+    console.error('DELETE /api/admin/account-pin failed:', error)
+    return NextResponse.json({ error: 'Failed to remove Head Chef PIN.' }, { status: 500 })
   }
 }
