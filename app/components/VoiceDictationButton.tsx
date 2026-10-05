@@ -19,6 +19,51 @@ const VOICE_LANGUAGES = [
   { code: 'fr-FR', label: 'French' },
 ]
 
+type RecognitionSegment = {
+  text: string
+  isFinal: boolean
+}
+
+function mergeTranscriptFragments(fragments: string[]) {
+  let mergedTokens: string[] = []
+
+  for (const fragment of fragments) {
+    const tokens = fragment.trim().split(/\s+/).filter(Boolean)
+    if (tokens.length === 0) continue
+
+    if (mergedTokens.length === 0) {
+      mergedTokens = tokens
+      continue
+    }
+
+    const mergedLower = mergedTokens.map((token) => token.toLowerCase())
+    const tokensLower = tokens.map((token) => token.toLowerCase())
+    const startsWith = (source: string[], prefix: string[]) =>
+      prefix.every((token, index) => source[index] === token)
+
+    if (startsWith(tokensLower, mergedLower)) {
+      mergedTokens = tokens
+      continue
+    }
+
+    if (startsWith(mergedLower, tokensLower)) continue
+
+    let overlap = Math.min(mergedTokens.length, tokens.length)
+    while (
+      overlap > 0 &&
+      !tokensLower
+        .slice(0, overlap)
+        .every((token, index) => token === mergedLower[mergedLower.length - overlap + index])
+    ) {
+      overlap -= 1
+    }
+
+    mergedTokens = [...mergedTokens, ...tokens.slice(overlap)]
+  }
+
+  return mergedTokens.join(' ')
+}
+
 function recognitionErrorMessage(code: string) {
   if (code === 'not-allowed' || code === 'service-not-allowed') {
     return 'Microphone access was blocked. Allow microphone access for Flowdish and try again.'
@@ -37,8 +82,7 @@ export default function VoiceDictationButton({
   disabled = false,
 }: VoiceDictationButtonProps) {
   const recognitionRef = useRef<VoiceRecognition | null>(null)
-  const finalTranscriptRef = useRef('')
-  const interimTranscriptRef = useRef('')
+  const recognitionSegmentsRef = useRef<RecognitionSegment[]>([])
   const shouldSubmitRef = useRef(false)
   const submittedRef = useRef(false)
   const [supported, setSupported] = useState(true)
@@ -48,9 +92,12 @@ export default function VoiceDictationButton({
   const [language, setLanguage] = useState('en-IE')
 
   useEffect(() => {
-    setSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition))
+    const timeoutId = window.setTimeout(() => {
+      setSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition))
+    }, 0)
 
     return () => {
+      window.clearTimeout(timeoutId)
       shouldSubmitRef.current = false
       recognitionRef.current?.abort()
     }
@@ -62,9 +109,9 @@ export default function VoiceDictationButton({
 
     if (!shouldSubmitRef.current || submittedRef.current) return
 
-    const transcript = `${finalTranscriptRef.current} ${interimTranscriptRef.current}`
-      .replace(/\s+/g, ' ')
-      .trim()
+    const transcript = mergeTranscriptFragments(
+      recognitionSegmentsRef.current.map((segment) => segment.text)
+    )
 
     if (!transcript) {
       setError('No speech was heard. Tap the microphone and try again.')
@@ -85,8 +132,7 @@ export default function VoiceDictationButton({
     }
 
     const recognition = new Recognition()
-    finalTranscriptRef.current = ''
-    interimTranscriptRef.current = ''
+    recognitionSegmentsRef.current = []
     shouldSubmitRef.current = true
     submittedRef.current = false
     setError('')
@@ -97,23 +143,18 @@ export default function VoiceDictationButton({
     recognition.lang = language
 
     recognition.onresult = (event) => {
-      let interim = ''
+      const segments: RecognitionSegment[] = []
 
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      for (let index = 0; index < event.results.length; index += 1) {
         const result = event.results[index]
-        const text = result[0]?.transcript || ''
-
-        if (result.isFinal) {
-          finalTranscriptRef.current = `${finalTranscriptRef.current} ${text}`.trim()
-        } else {
-          interim += text
-        }
+        segments.push({
+          text: result[0]?.transcript || '',
+          isFinal: result.isFinal,
+        })
       }
 
-      interimTranscriptRef.current = interim.trim()
-      setInterimText(
-        `${finalTranscriptRef.current} ${interimTranscriptRef.current}`.replace(/\s+/g, ' ').trim()
-      )
+      recognitionSegmentsRef.current = segments
+      setInterimText(mergeTranscriptFragments(segments.map((segment) => segment.text)))
     }
 
     recognition.onerror = (event) => {

@@ -112,6 +112,7 @@ Rules:
 - Convert kilograms to grams for items whose unitType is "g".
 - Convert litres to millilitres for items whose unitType is "ml".
 - For "each" items, retain the stated count.
+- Speech recognition may repeat progressively longer fragments of the same phrase. Treat those as one mention and never add repeated quantities together.
 - date must be YYYY-MM-DD. Today is ${today}. Resolve words such as today or yesterday; otherwise use null.
 - reason is only relevant to waste. For prep, return null.
 - confidence is from 0 to 1.

@@ -8,11 +8,65 @@ import {
 } from '@/lib/staff-auth'
 import { turnstileErrorMessage, verifyTurnstileToken } from '@/lib/turnstile'
 
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url)
+    const restaurantCode = String(url.searchParams.get('restaurantCode') || '').trim()
+
+    if (!restaurantCode) {
+      return NextResponse.json({ error: 'Restaurant code is required.' }, { status: 400 })
+    }
+
+    const restaurant = await prisma.restaurant.findFirst({
+      where: {
+        OR: [{ id: restaurantCode }, { slug: restaurantCode }],
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        staffUsers: {
+          where: { active: true },
+          orderBy: [{ isAccountPin: 'desc' }, { displayName: 'asc' }],
+          select: {
+            id: true,
+            displayName: true,
+            isAccountPin: true,
+          },
+        },
+      },
+    })
+
+    if (!restaurant) {
+      return NextResponse.json({ error: 'Restaurant not found.' }, { status: 404 })
+    }
+
+    return NextResponse.json(
+      {
+        restaurant: {
+          name: restaurant.name,
+          code: restaurant.slug || restaurant.id,
+        },
+        staffUsers: restaurant.staffUsers,
+      },
+      {
+        headers: {
+          'Cache-Control': 'no-store',
+        },
+      }
+    )
+  } catch (error) {
+    console.error('GET /api/staff-login failed:', error)
+    return NextResponse.json({ error: 'Failed to load kitchen PIN users.' }, { status: 500 })
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json()
 
     const restaurantCode = String(body.restaurantCode || '').trim()
+    const staffUserId = String(body.staffUserId || '').trim()
     const username = String(body.username || '').trim().toLowerCase()
     const pin = String(body.pin || '').trim()
     const remoteIp = req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for')
@@ -27,8 +81,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Restaurant code is required.' }, { status: 400 })
     }
 
-    if (!username) {
-      return NextResponse.json({ error: 'Username is required.' }, { status: 400 })
+    if (!staffUserId && !username) {
+      return NextResponse.json({ error: 'Choose a staff user.' }, { status: 400 })
     }
 
     if (!/^\d{4}$/.test(pin)) {
@@ -51,7 +105,7 @@ export async function POST(req: Request) {
     const staffUser = await prisma.staffUser.findFirst({
       where: {
         restaurantId: restaurant.id,
-        username,
+        ...(staffUserId ? { id: staffUserId } : { username }),
         active: true,
       },
     })
