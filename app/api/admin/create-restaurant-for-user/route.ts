@@ -183,6 +183,26 @@ async function copyTemplateRestaurant({
     })
   }
 
+  const bomL2OutputRows = await prisma.bomL2Output.findMany({
+    where: { restaurantId: templateRestaurantId },
+  })
+
+  for (const row of bomL2OutputRows) {
+    const parentL2ItemId = itemIdMap.get(row.parentL2ItemId)
+    const outputL2ItemId = itemIdMap.get(row.outputL2ItemId)
+
+    if (!parentL2ItemId || !outputL2ItemId) continue
+
+    await prisma.bomL2Output.create({
+      data: {
+        restaurantId: targetRestaurantId,
+        parentL2ItemId,
+        outputL2ItemId,
+        qty: row.qty,
+      },
+    })
+  }
+
   const sopDocuments = await prisma.sopDocument.findMany({
     where: { restaurantId: templateRestaurantId },
   })

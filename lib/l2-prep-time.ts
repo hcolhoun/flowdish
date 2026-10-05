@@ -35,7 +35,7 @@ export async function getL2PrepTimeContext(restaurantId: string, itemId: string)
 
   if (!item) throw new Error('L2_NOT_FOUND')
 
-  const [childL2Rows, ingredientRows, sop] = await Promise.all([
+  const [childL2Rows, ingredientRows, outputRows, sop] = await Promise.all([
     prisma.bomL2L2.findMany({
       where: {
         restaurantId,
@@ -50,6 +50,14 @@ export async function getL2PrepTimeContext(restaurantId: string, itemId: string)
         l2ItemId: itemId,
       },
       include: { l3: true },
+      orderBy: { id: 'asc' },
+    }),
+    prisma.bomL2Output.findMany({
+      where: {
+        restaurantId,
+        parentL2ItemId: itemId,
+      },
+      include: { outputL2: true },
       orderBy: { id: 'asc' },
     }),
     prisma.sopDocument.findFirst({
@@ -79,6 +87,12 @@ export async function getL2PrepTimeContext(restaurantId: string, itemId: string)
       name: row.l3.name,
       qty: row.qty,
       unitType: row.l3.unitType,
+    })),
+    additionalOutputs: outputRows.map((row) => ({
+      sku: row.outputL2.sku,
+      name: row.outputL2.name,
+      qty: row.qty,
+      unitType: row.outputL2.unitType,
     })),
     sopInstructions: sop?.instructions?.trim() || null,
   }
@@ -140,6 +154,7 @@ Rules:
 - Estimate one standard batch, not one serving.
 - Do not include the labour needed to make child L2 components. They are planned separately.
 - Include only the handling time needed to collect or add already-prepared child L2 components.
+- Include any hands-on separation, trimming, weighing, or packing needed for additional outputs.
 - Treat every L3 ingredient as already supplied in the state described by its saved name.
 - Do not invent cooking, thawing, washing, peeling, trimming, or other transformation of an L3
   unless the L2 SOP explicitly requires that operation or the L3 name explicitly says it is raw

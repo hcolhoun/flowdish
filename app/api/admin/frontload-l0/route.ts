@@ -179,6 +179,31 @@ async function upsertBomL2L3(data: {
   await prisma.bomL2L3.create({ data })
 }
 
+async function upsertBomL2Output(data: {
+  restaurantId: string
+  parentL2ItemId: string
+  outputL2ItemId: string
+  qty: number
+}) {
+  const existing = await prisma.bomL2Output.findFirst({
+    where: {
+      restaurantId: data.restaurantId,
+      parentL2ItemId: data.parentL2ItemId,
+      outputL2ItemId: data.outputL2ItemId,
+    },
+  })
+
+  if (existing) {
+    await prisma.bomL2Output.update({
+      where: { id: existing.id },
+      data: { qty: data.qty },
+    })
+    return
+  }
+
+  await prisma.bomL2Output.create({ data })
+}
+
 export async function POST(req: Request) {
   try {
     const tenant = await requireTenant()
@@ -331,6 +356,7 @@ export async function POST(req: Request) {
 
     const bomL2L2Rows: Awaited<ReturnType<typeof prisma.bomL2L2.findMany>> = []
     const bomL2L3Rows: Awaited<ReturnType<typeof prisma.bomL2L3.findMany>> = []
+    const bomL2OutputRows: Awaited<ReturnType<typeof prisma.bomL2Output.findMany>> = []
 
     const processedL2Ids = new Set<string>()
     let safetyCounter = 0
@@ -369,8 +395,16 @@ export async function POST(req: Request) {
         },
       })
 
+      const outputRows = await prisma.bomL2Output.findMany({
+        where: {
+          restaurantId: FRONTLOAD_SOURCE_RESTAURANT_ID,
+          parentL2ItemId: nextL2Id,
+        },
+      })
+
       bomL2L2Rows.push(...childL2Rows)
       bomL2L3Rows.push(...childL3Rows)
+      bomL2OutputRows.push(...outputRows)
 
       for (const row of childL2Rows) {
         neededItemIds.add(row.parentL2ItemId)
@@ -381,6 +415,11 @@ export async function POST(req: Request) {
       for (const row of childL3Rows) {
         neededItemIds.add(row.l2ItemId)
         neededItemIds.add(row.l3ItemId)
+      }
+
+      for (const row of outputRows) {
+        neededItemIds.add(row.parentL2ItemId)
+        neededItemIds.add(row.outputL2ItemId)
       }
     }
 
@@ -468,6 +507,20 @@ export async function POST(req: Request) {
         restaurantId: targetRestaurantId,
         l2ItemId,
         l3ItemId,
+        qty: row.qty,
+      })
+    }
+
+    for (const row of bomL2OutputRows) {
+      const parentL2ItemId = itemIdMap.get(row.parentL2ItemId)
+      const outputL2ItemId = itemIdMap.get(row.outputL2ItemId)
+
+      if (!parentL2ItemId || !outputL2ItemId) continue
+
+      await upsertBomL2Output({
+        restaurantId: targetRestaurantId,
+        parentL2ItemId,
+        outputL2ItemId,
         qty: row.qty,
       })
     }
@@ -589,6 +642,7 @@ export async function POST(req: Request) {
         l1l3: bomL1L3Rows.length,
         l2l2: bomL2L2Rows.length,
         l2l3: bomL2L3Rows.length,
+        l2Outputs: bomL2OutputRows.length,
       },
       copiedSops: sourceSops.length,
       supplierProducts: {

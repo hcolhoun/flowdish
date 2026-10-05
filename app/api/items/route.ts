@@ -167,6 +167,8 @@ export async function DELETE(req: Request) {
       bomL2AsChildL2,
       bomL2AsParentL3,
       bomL3AsChildL2,
+      bomL2AsOutputParent,
+      bomL2AsOutputChild,
       deliveries,
       inventoryLots,
       prepBatches,
@@ -184,6 +186,8 @@ export async function DELETE(req: Request) {
       prisma.bomL2L2.count({ where: { restaurantId: tenant.restaurantId, childL2ItemId: id } }),
       prisma.bomL2L3.count({ where: { restaurantId: tenant.restaurantId, l2ItemId: id } }),
       prisma.bomL2L3.count({ where: { restaurantId: tenant.restaurantId, l3ItemId: id } }),
+      prisma.bomL2Output.count({ where: { restaurantId: tenant.restaurantId, parentL2ItemId: id } }),
+      prisma.bomL2Output.count({ where: { restaurantId: tenant.restaurantId, outputL2ItemId: id } }),
       prisma.delivery.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
       prisma.inventoryLot.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
       prisma.prepBatch.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
@@ -203,6 +207,8 @@ export async function DELETE(req: Request) {
       bomL2AsChildL2 +
       bomL2AsParentL3 +
       bomL3AsChildL2 +
+      bomL2AsOutputParent +
+      bomL2AsOutputChild +
       deliveries +
       inventoryLots +
       prepBatches +

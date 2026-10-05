@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import CopyableError from '@/app/components/CopyableError'
 
 type ItemType = 'L0' | 'L1' | 'L2' | 'L3'
@@ -93,6 +94,7 @@ function suggestedSku(itemType: ItemType, name: string) {
 }
 
 export default function ItemsPage() {
+  const router = useRouter()
   const messageRef = useRef<HTMLDivElement | null>(null)
 
   const [items, setItems] = useState<Item[]>([])
@@ -328,10 +330,13 @@ export default function ItemsPage() {
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError('')
     setMessage('')
+
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null
+    const buildAfterSave = submitter?.value === 'build'
 
     try {
       const res = await fetch('/api/items', {
@@ -355,6 +360,11 @@ export default function ItemsPage() {
 
       if (!res.ok) {
         throw new Error(data.error || 'Failed to save item')
+      }
+
+      if (buildAfterSave && itemType !== 'L3') {
+        router.push(`/bom?parentId=${encodeURIComponent(data.id)}`)
+        return
       }
 
       setSku('')
@@ -455,7 +465,7 @@ export default function ItemsPage() {
       <div className="mx-auto max-w-7xl">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold text-slate-900">Items</h1>
+            <h1 className="text-3xl font-semibold text-slate-900">My Items</h1>
             <p className="mt-2 text-slate-800">
               Create and view L0 menus, L1 dishes, L2 prep items, and L3 bought ingredients.
             </p>
@@ -571,10 +581,23 @@ export default function ItemsPage() {
             </div>
           ) : null}
 
-          <div className="flex items-end">
-            <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-white">
+          <div className="flex flex-wrap items-end gap-2">
+            <button
+              type="submit"
+              value="save"
+              className="rounded-xl bg-slate-900 px-4 py-2 text-white"
+            >
               Save Item
             </button>
+            {itemType !== 'L3' ? (
+              <button
+                type="submit"
+                value="build"
+                className="rounded-xl border border-slate-900 px-4 py-2 font-medium text-slate-900 hover:bg-slate-50"
+              >
+                Save &amp; Build
+              </button>
+            ) : null}
           </div>
 
           {(itemType === 'L0' || itemType === 'L1' || itemType === 'L2') ? (

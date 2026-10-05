@@ -51,9 +51,9 @@ type NavLink = {
 
 const fullLinks: NavLink[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/items', label: 'Items', icon: Boxes },
-  { href: '/suppliers', label: 'Supplier Products', icon: PackageSearch },
+  { href: '/items', label: 'My Items', icon: Boxes },
   { href: '/bom', label: 'BOM', icon: GitBranch },
+  { href: '/suppliers', label: 'Supplier Products', icon: PackageSearch },
   { href: '/sops', label: 'SOPs', icon: ClipboardList },
   { href: '/deliveries', label: 'Deliveries', icon: Truck },
   { href: '/inventory', label: 'Inventory', icon: Boxes },

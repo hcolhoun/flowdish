@@ -179,7 +179,7 @@ export async function POST(req: Request) {
       )
     }
 
-    const [l2Rows, l3Rows] = await Promise.all([
+    const [l2Rows, l3Rows, outputRows] = await Promise.all([
       prisma.bomL2L2.findMany({
         where: {
           restaurantId: tenant.restaurantId,
@@ -194,6 +194,13 @@ export async function POST(req: Request) {
           l2ItemId: l2Item.id,
         },
         include: { l3: true },
+      }),
+      prisma.bomL2Output.findMany({
+        where: {
+          restaurantId: tenant.restaurantId,
+          parentL2ItemId: l2Item.id,
+        },
+        include: { outputL2: true },
       }),
     ])
 
@@ -350,6 +357,24 @@ export async function POST(req: Request) {
         },
       })
 
+      for (const outputRow of outputRows) {
+        const outputQty = outputRow.qty * scaleFactor
+
+        await tx.inventoryLot.create({
+          data: {
+            restaurantId: tenant.restaurantId,
+            itemId: outputRow.outputL2ItemId,
+            qtyInitial: outputQty,
+            qtyRemaining: outputQty,
+            unitType: outputRow.outputL2.unitType,
+            expiryAt,
+            sourceType: 'PREP',
+            unitCost: 0,
+            prepBatchId: prepBatch.id,
+          },
+        })
+      }
+
       return tx.prepBatch.findUnique({
         where: { id: prepBatch.id },
         include: { item: true, haccpRecord: true },
@@ -459,7 +484,9 @@ export async function PATCH(req: Request) {
       })
 
       if (stockFieldsChanged) {
-        if (linkedLots.length === 0) {
+        const primaryLot = linkedLots.find((lot: any) => lot.itemId === existing.itemId)
+
+        if (!primaryLot) {
           throw new Error('PREP_LOT_NOT_LINKED')
         }
 
@@ -487,25 +514,31 @@ export async function PATCH(req: Request) {
         })
       }
 
-      if (linkedLots.length > 0) {
-        const lotData: any = {}
+      if (linkedLots.length > 0 && stockFieldsChanged) {
+        const outputScale =
+          'qtyOutput' in updateData && existing.qtyOutput > 0
+            ? updateData.qtyOutput / existing.qtyOutput
+            : 1
 
-        if ('qtyOutput' in updateData) {
-          lotData.qtyInitial = updateData.qtyOutput
-          lotData.qtyRemaining = updateData.qtyOutput
-        }
+        for (const lot of linkedLots as any[]) {
+          const lotData: any = {}
 
-        if ('expiryAt' in updateData) {
-          lotData.expiryAt = updateData.expiryAt
-        }
+          if ('qtyOutput' in updateData) {
+            const nextQty =
+              lot.itemId === existing.itemId
+                ? updateData.qtyOutput
+                : lot.qtyInitial * outputScale
 
-        if (Object.keys(lotData).length > 0) {
-          await tx.inventoryLot.updateMany({
-            where: {
-              restaurantId: tenant.restaurantId,
-              prepBatchId: existing.id,
-              sourceType: 'PREP',
-            },
+            lotData.qtyInitial = nextQty
+            lotData.qtyRemaining = nextQty
+          }
+
+          if ('expiryAt' in updateData) {
+            lotData.expiryAt = updateData.expiryAt
+          }
+
+          await tx.inventoryLot.update({
+            where: { id: lot.id },
             data: lotData,
           })
         }

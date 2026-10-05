@@ -165,7 +165,7 @@ export async function POST(req: Request) {
       }
 
       if (source.itemType === 'L2') {
-        const [l2Rows, l3Rows] = await Promise.all([
+        const [l2Rows, l3Rows, outputRows] = await Promise.all([
           tx.bomL2L2.findMany({
             where: {
               restaurantId: tenant.restaurantId,
@@ -176,6 +176,12 @@ export async function POST(req: Request) {
             where: {
               restaurantId: tenant.restaurantId,
               l2ItemId: source.id,
+            },
+          }),
+          tx.bomL2Output.findMany({
+            where: {
+              restaurantId: tenant.restaurantId,
+              parentL2ItemId: source.id,
             },
           }),
         ])
@@ -197,6 +203,17 @@ export async function POST(req: Request) {
               restaurantId: tenant.restaurantId,
               l2ItemId: item.id,
               l3ItemId: row.l3ItemId,
+              qty: row.qty,
+            })),
+          })
+        }
+
+        if (outputRows.length > 0) {
+          await tx.bomL2Output.createMany({
+            data: outputRows.map((row) => ({
+              restaurantId: tenant.restaurantId,
+              parentL2ItemId: item.id,
+              outputL2ItemId: row.outputL2ItemId,
               qty: row.qty,
             })),
           })

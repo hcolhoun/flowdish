@@ -95,6 +95,11 @@ type L1CostingRow = {
   isEstimated: boolean
 }
 
+type L2OutputApiRow = {
+  outputL2ItemId: string
+  qty: number
+}
+
 type ExpandedL1Bom = {
   loading: boolean
   error: string
@@ -122,6 +127,7 @@ type ExpandedL2Bom = {
   standardBatchOutput: string
   l2ToL2Rows: ChildRow[]
   l2ToL3Rows: ChildRow[]
+  outputRows: ChildRow[]
 }
 
 function QtyInput({
@@ -425,6 +431,8 @@ export default function BomPage() {
   const [l1CostingRows, setL1CostingRows] = useState<L1CostingRow[]>([])
 
   const [parentId, setParentId] = useState('')
+  const [parentSearch, setParentSearch] = useState('')
+  const [parentTypeFilter, setParentTypeFilter] = useState<'ALL' | 'L0' | 'L1' | 'L2'>('ALL')
   const [loading, setLoading] = useState(false)
   const [costingLoading, setCostingLoading] = useState(false)
   const [error, setError] = useState('')
@@ -446,6 +454,7 @@ export default function BomPage() {
   const [l1ToL3Rows, setL1ToL3Rows] = useState<ChildRow[]>([])
   const [l2ToL2Rows, setL2ToL2Rows] = useState<ChildRow[]>([])
   const [l2ToL3Rows, setL2ToL3Rows] = useState<ChildRow[]>([])
+  const [l2OutputRows, setL2OutputRows] = useState<ChildRow[]>([])
 
   const [expandedL1Ids, setExpandedL1Ids] = useState<string[]>([])
   const [expandedL1BomById, setExpandedL1BomById] = useState<Record<string, ExpandedL1Bom>>({})
@@ -520,6 +529,7 @@ export default function BomPage() {
     l1ToL3Rows: ChildRow[]
     l2ToL2Rows: ChildRow[]
     l2ToL3Rows: ChildRow[]
+    l2OutputRows: ChildRow[]
   }) {
     return JSON.stringify({
       parentId: input.parentId,
@@ -536,6 +546,7 @@ export default function BomPage() {
       l1ToL3Rows: normaliseRows(input.l1ToL3Rows),
       l2ToL2Rows: normaliseRows(input.l2ToL2Rows),
       l2ToL3Rows: normaliseRows(input.l2ToL3Rows),
+      l2OutputRows: normaliseRows(input.l2OutputRows),
     })
   }
 
@@ -575,6 +586,7 @@ export default function BomPage() {
       standardBatchOutput: input.standardBatchOutput,
       l2ToL2Rows: normaliseRows(input.l2ToL2Rows),
       l2ToL3Rows: normaliseRows(input.l2ToL3Rows),
+      outputRows: normaliseRows(input.outputRows),
     })
   }
 
@@ -638,15 +650,32 @@ export default function BomPage() {
     [items, parentId]
   )
 
-  const l0Items = items.filter((item) => item.itemType === 'L0')
   const l1Items = items.filter((item) => item.itemType === 'L1')
   const l2Items = items.filter((item) => item.itemType === 'L2')
   const l3Items = items.filter((item) => item.itemType === 'L3')
+
+  const filteredParentItems = useMemo(() => {
+    const query = parentSearch.trim().toLowerCase()
+
+    return items
+      .filter((item) => item.itemType !== 'L3')
+      .filter((item) => parentTypeFilter === 'ALL' || item.itemType === parentTypeFilter)
+      .filter((item) => {
+        if (!query) return true
+        return item.name.toLowerCase().includes(query) || item.sku.toLowerCase().includes(query)
+      })
+      .slice(0, 50)
+  }, [items, parentSearch, parentTypeFilter])
 
   const l2ChildOptions = useMemo(() => {
     if (!parentItem || parentItem.itemType !== 'L2') return l2Items
     return l2Items.filter((item) => item.id !== parentItem.id)
   }, [l2Items, parentItem])
+
+  useEffect(() => {
+    if (!parentItem || parentSearch) return
+    setParentSearch(`${parentItem.name} [${parentItem.sku}]`)
+  }, [parentItem, parentSearch])
 
   const l1CostingByItemId = useMemo(() => {
     return new Map(l1CostingRows.map((row) => [row.itemId, row]))
@@ -977,6 +1006,7 @@ export default function BomPage() {
         l1ToL3Rows,
         l2ToL2Rows,
         l2ToL3Rows,
+        l2OutputRows,
       }),
     [
       parentId,
@@ -993,6 +1023,7 @@ export default function BomPage() {
       l1ToL3Rows,
       l2ToL2Rows,
       l2ToL3Rows,
+      l2OutputRows,
     ]
   )
   const hasUnsavedExpandedL2Changes = useMemo(
@@ -1020,6 +1051,7 @@ export default function BomPage() {
       setL1ToL3Rows([])
       setL2ToL2Rows([])
       setL2ToL3Rows([])
+      setL2OutputRows([])
       setSavedBomSignature('')
       setExpandedL2Ids([])
       setExpandedL2BomById({})
@@ -1052,6 +1084,7 @@ export default function BomPage() {
           setL1ToL3Rows([])
           setL2ToL2Rows([])
           setL2ToL3Rows([])
+          setL2OutputRows([])
           setSavedBomSignature(
             bomSignature({
               parentId: parentItem.id,
@@ -1062,6 +1095,7 @@ export default function BomPage() {
               l1ToL3Rows: [],
               l2ToL2Rows: [],
               l2ToL3Rows: [],
+              l2OutputRows: [],
             })
           )
         }
@@ -1093,6 +1127,7 @@ export default function BomPage() {
           setL0ToL1Rows([])
           setL2ToL2Rows([])
           setL2ToL3Rows([])
+          setL2OutputRows([])
           setSavedBomSignature(
             bomSignature({
               parentId: parentItem.id,
@@ -1103,21 +1138,25 @@ export default function BomPage() {
               l1ToL3Rows: nextL1ToL3Rows,
               l2ToL2Rows: [],
               l2ToL3Rows: [],
+              l2OutputRows: [],
             })
           )
         }
 
         if (parentItem.itemType === 'L2') {
-          const [l2l2Res, l2l3Res] = await Promise.all([
+          const [l2l2Res, l2l3Res, outputRes] = await Promise.all([
             fetch(`/api/bom/l2-l2?parentId=${parentItem.id}`, { cache: 'no-store' }),
             fetch(`/api/bom/l2-l3?parentId=${parentItem.id}`, { cache: 'no-store' }),
+            fetch(`/api/bom/l2-outputs?parentId=${parentItem.id}`, { cache: 'no-store' }),
           ])
 
           const l2l2Data = await safeJson(l2l2Res)
           const l2l3Data = await safeJson(l2l3Res)
+          const outputData = await safeJson(outputRes)
 
           if (!l2l2Res.ok) throw new Error(l2l2Data?.error || 'Failed to load L2 → L2 BOM')
           if (!l2l3Res.ok) throw new Error(l2l3Data?.error || 'Failed to load L2 → L3 BOM')
+          if (!outputRes.ok) throw new Error(outputData?.error || 'Failed to load L2 outputs')
 
           const nextL2ToL2Rows = l2l2Data.map((row: any) => ({
             childId: row.childL2ItemId,
@@ -1129,8 +1168,14 @@ export default function BomPage() {
             qty: String(row.qty),
           }))
 
+          const nextL2OutputRows = (outputData as L2OutputApiRow[]).map((row) => ({
+            childId: row.outputL2ItemId,
+            qty: String(row.qty),
+          }))
+
           setL2ToL2Rows(nextL2ToL2Rows)
           setL2ToL3Rows(nextL2ToL3Rows)
+          setL2OutputRows(nextL2OutputRows)
           setL0ToL1Rows([])
           setL1ToL2Rows([])
           setL1ToL3Rows([])
@@ -1144,6 +1189,7 @@ export default function BomPage() {
               l1ToL3Rows: [],
               l2ToL2Rows: nextL2ToL2Rows,
               l2ToL3Rows: nextL2ToL3Rows,
+              l2OutputRows: nextL2OutputRows,
             })
           )
         }
@@ -1202,8 +1248,8 @@ export default function BomPage() {
   }
 
   function handleParentChange(nextParentId: string) {
-    if (nextParentId === parentId) return
-    if (!confirmDiscardBomChanges()) return
+    if (nextParentId === parentId) return true
+    if (!confirmDiscardBomChanges()) return false
 
     setSavedBomSignature('')
     setParentId(nextParentId)
@@ -1214,6 +1260,7 @@ export default function BomPage() {
     setSavedExpandedL2SignatureById({})
     setMessage('')
     setError('')
+    return true
   }
 
   function addRow(setter: React.Dispatch<React.SetStateAction<ChildRow[]>>) {
@@ -1332,6 +1379,7 @@ export default function BomPage() {
           standardBatchOutput: '',
           l2ToL2Rows: [],
           l2ToL3Rows: [],
+          outputRows: [],
         } satisfies ExpandedL2Bom)
 
       return {
@@ -1370,17 +1418,20 @@ export default function BomPage() {
             : String(item.standardBatchOutput),
         l2ToL2Rows: [],
         l2ToL3Rows: [],
+        outputRows: [],
       },
     }))
 
     try {
-      const [l2l2Res, l2l3Res] = await Promise.all([
+      const [l2l2Res, l2l3Res, outputRes] = await Promise.all([
         fetch(`/api/bom/l2-l2?parentId=${l2ItemId}`, { cache: 'no-store' }),
         fetch(`/api/bom/l2-l3?parentId=${l2ItemId}`, { cache: 'no-store' }),
+        fetch(`/api/bom/l2-outputs?parentId=${l2ItemId}`, { cache: 'no-store' }),
       ])
 
       const l2l2Data = await safeJson(l2l2Res)
       const l2l3Data = await safeJson(l2l3Res)
+      const outputData = await safeJson(outputRes)
 
       if (!l2l2Res.ok) {
         throw new Error(l2l2Data?.error || 'Failed to load L2 prep rows')
@@ -1388,6 +1439,10 @@ export default function BomPage() {
 
       if (!l2l3Res.ok) {
         throw new Error(l2l3Data?.error || 'Failed to load L2 ingredient rows')
+      }
+
+      if (!outputRes.ok) {
+        throw new Error(outputData?.error || 'Failed to load additional L2 outputs')
       }
 
       const existingExpandedL2Bom = expandedL2BomById[l2ItemId]
@@ -1402,6 +1457,7 @@ export default function BomPage() {
             : String(item.standardBatchOutput),
         l2ToL2Rows: [],
         l2ToL3Rows: [],
+        outputRows: [],
       }
       const loadedExpandedL2Bom = {
         ...baseExpandedL2Bom,
@@ -1413,6 +1469,10 @@ export default function BomPage() {
         })),
         l2ToL3Rows: l2l3Data.map((row: any) => ({
           childId: row.l3ItemId,
+          qty: String(row.qty),
+        })),
+        outputRows: (outputData as L2OutputApiRow[]).map((row) => ({
+          childId: row.outputL2ItemId,
           qty: String(row.qty),
         })),
       } satisfies ExpandedL2Bom
@@ -1432,11 +1492,15 @@ export default function BomPage() {
         error: err instanceof Error ? err.message : 'Unknown error',
         l2ToL2Rows: [],
         l2ToL3Rows: [],
+        outputRows: [],
       }))
     }
   }
 
-  function addExpandedL2Row(l2ItemId: string, rowType: 'l2ToL2Rows' | 'l2ToL3Rows') {
+  function addExpandedL2Row(
+    l2ItemId: string,
+    rowType: 'l2ToL2Rows' | 'l2ToL3Rows' | 'outputRows'
+  ) {
     setExpandedL2Bom(l2ItemId, (current) => ({
       ...current,
       message: '',
@@ -1446,7 +1510,7 @@ export default function BomPage() {
 
   function updateExpandedL2Row(
     l2ItemId: string,
-    rowType: 'l2ToL2Rows' | 'l2ToL3Rows',
+    rowType: 'l2ToL2Rows' | 'l2ToL3Rows' | 'outputRows',
     index: number,
     field: 'childId' | 'qty',
     value: string
@@ -1465,7 +1529,7 @@ export default function BomPage() {
 
   function removeExpandedL2Row(
     l2ItemId: string,
-    rowType: 'l2ToL2Rows' | 'l2ToL3Rows',
+    rowType: 'l2ToL2Rows' | 'l2ToL3Rows' | 'outputRows',
     index: number
   ) {
     setExpandedL2Bom(l2ItemId, (current) => {
@@ -1494,7 +1558,8 @@ export default function BomPage() {
 
       const validationError =
         validateRows(expandedBom.l2ToL2Rows, 'L2 -> L2') ||
-        validateRows(expandedBom.l2ToL3Rows, 'L2 -> L3')
+        validateRows(expandedBom.l2ToL3Rows, 'L2 -> L3') ||
+        validateRows(expandedBom.outputRows, 'Additional output')
 
       if (validationError) {
         setExpandedL2Bom(l2ItemId, (current) => ({
@@ -1543,6 +1608,16 @@ export default function BomPage() {
           })),
       }
 
+      const payloadOutputs = {
+        parentId: l2ItemId,
+        rows: expandedBom.outputRows
+          .filter((row) => row.childId && row.qty !== '')
+          .map((row) => ({
+            childId: row.childId,
+            qty: Number(row.qty),
+          })),
+      }
+
       const [l2l2Res, l2l3Res] = await Promise.all([
         fetch('/api/bom/l2-l2', {
           method: 'POST',
@@ -1562,6 +1637,17 @@ export default function BomPage() {
       if (!l2l2Res.ok) throw new Error(l2l2Data?.error || 'Failed to save L2 prep rows')
       if (!l2l3Res.ok) throw new Error(l2l3Data?.error || 'Failed to save L2 ingredient rows')
 
+      const outputRes = await fetch('/api/bom/l2-outputs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payloadOutputs),
+      })
+      const outputData = await safeJson(outputRes)
+
+      if (!outputRes.ok) {
+        throw new Error(outputData?.error || 'Failed to save additional L2 outputs')
+      }
+
       await Promise.all([loadItems(), loadCosting()])
       setSavedExpandedL2SignatureById((prev) => ({
         ...prev,
@@ -1574,8 +1660,8 @@ export default function BomPage() {
         error: '',
         message:
           buildStatus === 'BUILT'
-            ? `L2 BOM saved as built. ${payloadL2L2.rows.length} child L2 row(s), ${payloadL2L3.rows.length} L3 row(s).`
-            : `L2 BOM saved. ${payloadL2L2.rows.length} child L2 row(s), ${payloadL2L3.rows.length} L3 row(s).`,
+            ? `L2 BOM saved as built with ${payloadOutputs.rows.length} additional output(s).`
+            : `L2 BOM saved with ${payloadOutputs.rows.length} additional output(s).`,
       }))
     } catch (err) {
       setExpandedL2Bom(l2ItemId, (current) => ({
@@ -1843,7 +1929,9 @@ export default function BomPage() {
       }
 
       const validationError =
-        validateRows(l2ToL2Rows, 'L2 → L2') || validateRows(l2ToL3Rows, 'L2 → L3')
+        validateRows(l2ToL2Rows, 'L2 → L2') ||
+        validateRows(l2ToL3Rows, 'L2 → L3') ||
+        validateRows(l2OutputRows, 'Additional output')
 
       if (validationError) {
         setMessage('')
@@ -1888,6 +1976,16 @@ export default function BomPage() {
           })),
       }
 
+      const payloadOutputs = {
+        parentId: parentItem.id,
+        rows: l2OutputRows
+          .filter((row) => row.childId && row.qty !== '')
+          .map((row) => ({
+            childId: row.childId,
+            qty: Number(row.qty),
+          })),
+      }
+
       const [l2l2Res, l2l3Res] = await Promise.all([
         fetch('/api/bom/l2-l2', {
           method: 'POST',
@@ -1908,11 +2006,22 @@ export default function BomPage() {
       if (!l2l2Res.ok) throw new Error(l2l2Data?.error || 'Failed to save L2 → L2')
       if (!l2l3Res.ok) throw new Error(l2l3Data?.error || 'Failed to save L2 → L3')
 
+      const outputRes = await fetch('/api/bom/l2-outputs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payloadOutputs),
+      })
+      const outputData = await safeJson(outputRes)
+
+      if (!outputRes.ok) {
+        throw new Error(outputData?.error || 'Failed to save additional L2 outputs')
+      }
+
       await Promise.all([loadItems(), loadCosting()])
       setSavedBomSignature(currentBomSignature)
 
       setMessage(
-        `L2 BOM saved. Showing ${payloadL2L2.rows.length} child L2 row(s) and ${payloadL2L3.rows.length} L3 row(s). Calculate or recalculate prep time before marking it as built.`
+        `L2 BOM saved with ${payloadOutputs.rows.length} additional output(s). Calculate or recalculate prep time before marking it as built.`
       )
     } catch (err) {
       setMessage('')
@@ -2078,6 +2187,91 @@ export default function BomPage() {
               </div>
             </div>
 
+            <div className="mt-5 border-t pt-4">
+              <label className="flex items-center gap-3 text-sm font-semibold text-slate-900">
+                <input
+                  type="checkbox"
+                  checked={l2ExpandedBom.outputRows.length > 0}
+                  onChange={(e) =>
+                    setExpandedL2Bom(l2Item.id, (current) => ({
+                      ...current,
+                      message: '',
+                      outputRows: e.target.checked ? [{ childId: '', qty: '1' }] : [],
+                    }))
+                  }
+                  className="h-4 w-4"
+                />
+                This prep creates additional outputs
+              </label>
+
+              {l2ExpandedBom.outputRows.length > 0 ? (
+                <div className="mt-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="text-xs text-slate-500">Fat, bones, trim, or other usable byproducts.</div>
+                    <button
+                      type="button"
+                      onClick={() => addExpandedL2Row(l2Item.id, 'outputRows')}
+                      className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
+                    >
+                      Add Output
+                    </button>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <div className="min-w-[650px] space-y-3">
+                      {l2ExpandedBom.outputRows.map((row, rowIndex) => (
+                        <div
+                          key={rowIndex}
+                          className="grid grid-cols-[minmax(300px,1fr)_200px_100px] gap-3"
+                        >
+                          <L2Picker
+                            selectedId={row.childId}
+                            l2Items={l2Items.filter(
+                              (candidate) =>
+                                candidate.id !== l2Item.id &&
+                                candidate.unitType === l2Item.unitType
+                            )}
+                            onSelect={(id) =>
+                              updateExpandedL2Row(
+                                l2Item.id,
+                                'outputRows',
+                                rowIndex,
+                                'childId',
+                                id
+                              )
+                            }
+                          />
+                          <QtyInput
+                            value={row.qty}
+                            unit={getUnit(row.childId) || l2Item.unitType}
+                            placeholder="Standard output"
+                            onChange={(value) =>
+                              updateExpandedL2Row(
+                                l2Item.id,
+                                'outputRows',
+                                rowIndex,
+                                'qty',
+                                value
+                              )
+                            }
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removeExpandedL2Row(l2Item.id, 'outputRows', rowIndex)
+                            }
+                            className="rounded-xl border px-3 py-2"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <div className="mt-5 flex flex-wrap gap-3">
               <button
                 type="button"
@@ -2132,56 +2326,62 @@ export default function BomPage() {
         ) : null}
 
         <div className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-          <label className="mb-2 block text-sm font-medium text-slate-900">
-            Parent Item
-          </label>
+          <div className="grid gap-4 md:grid-cols-[1fr_180px]">
+            <label className="text-sm font-medium text-slate-900">
+              Find item to build
+              <input
+                value={parentSearch}
+                onChange={(e) => setParentSearch(e.target.value)}
+                className="mt-1 w-full rounded-xl border px-3 py-2"
+                placeholder="Type a name or SKU..."
+              />
+            </label>
 
-          <select
-            value={parentId}
-            onChange={(e) => handleParentChange(e.target.value)}
-            className="w-full rounded-xl border px-3 py-2"
-          >
-            <option value="">Select parent item</option>
+            <label className="text-sm font-medium text-slate-900">
+              Type
+              <select
+                value={parentTypeFilter}
+                onChange={(e) =>
+                  setParentTypeFilter(e.target.value as 'ALL' | 'L0' | 'L1' | 'L2')
+                }
+                className="mt-1 w-full rounded-xl border px-3 py-2"
+              >
+                <option value="ALL">All buildable items</option>
+                <option value="L0">L0 menus</option>
+                <option value="L1">L1 dishes</option>
+                <option value="L2">L2 prep</option>
+              </select>
+            </label>
+          </div>
 
-            <optgroup label="L0">
-              {l0Items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} [{item.sku}] {item.buildStatus === 'BUILT' ? '- Built' : '- Unbuilt'}
-                </option>
-              ))}
-            </optgroup>
-
-            <optgroup label="L1">
-              {l1Items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} [{item.sku}] {item.buildStatus === 'BUILT' ? '- Built' : '- Unbuilt'}
-                </option>
-              ))}
-            </optgroup>
-
-            <optgroup label="L2">
-              {l2Items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} [{item.sku}] {item.buildStatus === 'BUILT' ? '- Built' : '- Unbuilt'}
-                </option>
-              ))}
-            </optgroup>
-
-            <optgroup label="L3">
-              {l3Items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} [{item.sku}]
-                </option>
-              ))}
-            </optgroup>
-
-            {false && [...l0Items, ...l1Items, ...l2Items].map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name} [{item.sku}] ({item.itemType}){' '}
-                {item.buildStatus === 'BUILT' ? '— Built' : '— Unbuilt'}
-              </option>
-            ))}
-          </select>
+          <div className="mt-3 max-h-64 overflow-y-auto rounded-xl border">
+            {filteredParentItems.length > 0 ? (
+              filteredParentItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    if (handleParentChange(item.id)) {
+                      setParentSearch(`${item.name} [${item.sku}]`)
+                    }
+                  }}
+                  className={`flex w-full items-center justify-between gap-3 border-b px-4 py-3 text-left text-sm last:border-b-0 ${
+                    parentId === item.id ? 'bg-teal-50' : 'hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium text-slate-900">{item.name}</span>
+                    <span className="block truncate text-xs text-slate-500">{item.sku}</span>
+                  </span>
+                  <span className="shrink-0 text-xs text-slate-600">
+                    {item.itemType} · {item.buildStatus === 'BUILT' ? 'Built' : 'Unbuilt'}
+                  </span>
+                </button>
+              ))
+            ) : (
+              <div className="px-4 py-3 text-sm text-slate-500">No matching items.</div>
+            )}
+          </div>
 
           {hasUnsavedBomChanges ? (
             <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
@@ -3112,8 +3312,9 @@ export default function BomPage() {
                 </button>
               </div>
 
-              <div className="mt-4 space-y-3">
-                {l1ToL2Rows.map((row, index) => {
+              <div className="mt-4 overflow-x-auto pb-2">
+                <div className="min-w-[1050px] space-y-3">
+                  {l1ToL2Rows.map((row, index) => {
                   const item = getItem(row.childId)
                   const cost = getL2Cost(row.childId)
                   const l2Expanded = row.childId ? isL2Expanded(row.childId) : false
@@ -3181,7 +3382,8 @@ export default function BomPage() {
                       ) : null}
                     </Fragment>
                   )
-                })}
+                  })}
+                </div>
               </div>
             </section>
 
@@ -3528,6 +3730,92 @@ export default function BomPage() {
                   )
                 })}
               </div>
+            </section>
+
+            <section className="rounded-2xl border bg-white p-6 shadow-sm">
+              <label className="flex items-center gap-3 text-sm font-semibold text-slate-900">
+                <input
+                  type="checkbox"
+                  checked={l2OutputRows.length > 0}
+                  onChange={(e) =>
+                    setL2OutputRows(e.target.checked ? [{ childId: '', qty: '1' }] : [])
+                  }
+                  className="h-4 w-4"
+                />
+                This prep creates additional outputs
+              </label>
+
+              {l2OutputRows.length > 0 ? (
+                <div className="mt-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-sm text-slate-600">
+                      Add usable byproducts such as fat, bones, trim, or stock components.
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => addRow(setL2OutputRows)}
+                      className="rounded-xl bg-slate-900 px-4 py-2 text-sm text-white"
+                    >
+                      Add Output
+                    </button>
+                  </div>
+
+                  <div className="mt-4 overflow-x-auto pb-2">
+                    <div className="min-w-[650px] space-y-3">
+                      {l2OutputRows.map((row, index) => (
+                        <div
+                          key={index}
+                          className="grid grid-cols-[minmax(300px,1fr)_200px_100px] gap-3"
+                        >
+                          <L2Picker
+                            selectedId={row.childId}
+                            l2Items={l2Items.filter(
+                              (item) =>
+                                item.id !== parentItem.id && item.unitType === parentItem.unitType
+                            )}
+                            onSelect={(id) =>
+                              updateRow(l2OutputRows, setL2OutputRows, index, 'childId', id)
+                            }
+                          />
+                          <QtyInput
+                            value={row.qty}
+                            unit={getUnit(row.childId) || parentItem.unitType}
+                            placeholder="Standard output"
+                            onChange={(value) =>
+                              updateRow(l2OutputRows, setL2OutputRows, index, 'qty', value)
+                            }
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeRow(l2OutputRows, setL2OutputRows, index)}
+                            className="rounded-xl border px-3 py-2"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-2 text-xs text-slate-500">
+                    Combined standard output:{' '}
+                    {numberLabel(
+                      getQty(parentStandardBatchOutput) +
+                        l2OutputRows.reduce((sum, row) => sum + getQty(row.qty), 0)
+                    )}{' '}
+                    {parentItem.unitType}
+                  </div>
+
+                  <details className="mt-3 text-sm text-slate-600">
+                    <summary className="cursor-pointer font-medium text-slate-700">More info</summary>
+                    <p className="mt-2">
+                      Recording the primary prep batch also adds these outputs to inventory in the
+                      same proportion. Their stock value starts at zero so the ingredient cost is
+                      not counted twice. Combined outputs cannot exceed the comparable BOM input.
+                    </p>
+                  </details>
+                </div>
+              ) : null}
             </section>
 
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
