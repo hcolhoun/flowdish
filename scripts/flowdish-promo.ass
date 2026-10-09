@@ -1,0 +1,77 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Label,Segoe UI Semibold,28,&H009C9C0B,&H000000FF,&H00F8F7F4,&H00000000,-1,0,0,0,100,100,2,0,1,0,0,8,40,40,46,1
+Style: Heading,Segoe UI Semibold,62,&H00492E06,&H000000FF,&H00F8F7F4,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,55,55,115,1
+Style: Subheading,Segoe UI,34,&H002A1B0D,&H000000FF,&H00F8F7F4,&H00000000,0,0,0,0,100,100,0,0,1,0,0,8,70,70,285,1
+Style: Benefit,Segoe UI Semibold,46,&H00492E06,&H000000FF,&H00F8F7F4,&HE6FFFFFF,-1,0,0,0,100,100,0,0,3,18,0,8,65,65,1215,1
+Style: Detail,Segoe UI,34,&H002A1B0D,&H000000FF,&H00F8F7F4,&HE6FFFFFF,0,0,0,0,100,100,0,0,3,15,0,8,75,75,1435,1
+Style: MobileBenefit,Segoe UI Semibold,38,&H00FFFFFF,&H000000FF,&H00492E06,&HD9492E06,-1,0,0,0,100,100,0,0,3,18,0,2,72,72,72,1
+Style: Intro,Segoe UI Semibold,76,&H00492E06,&H000000FF,&H00F8F7F4,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,55,55,690,1
+Style: Accent,Segoe UI Semibold,88,&H009C9C0B,&H000000FF,&H00F8F7F4,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,55,55,955,1
+Style: Outro,Segoe UI Semibold,60,&H00492E06,&H000000FF,&H00F8F7F4,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,55,55,680,1
+Style: Caption,Segoe UI Semibold,46,&H00FFFFFF,&H000000FF,&H00492E06,&H20492E06,-1,0,0,0,100,100,0,0,3,18,0,2,70,70,180,1
+Style: MobileCaption,Segoe UI Semibold,38,&H00FFFFFF,&H000000FF,&H00492E06,&H20492E06,-1,0,0,0,100,100,0,0,3,17,0,2,62,62,70,1
+Style: Summary,Segoe UI Semibold,40,&H00492E06,&H000000FF,&H00F8F7F4,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,70,70,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.15,0:00:05.05,Caption,,0,0,0,,{\pos(540,1370)\fs40\fad(150,140)}Flowdish brings margin, stock and food safety\Ninto one operating system.
+
+Dialogue: 0,0:00:05.20,0:00:14.40,Label,,0,0,0,,ACTUAL FLOWDISH WORKFLOW • SPED UP
+Dialogue: 0,0:00:05.30,0:00:08.30,Caption,,0,0,0,,{\pos(540,1370)}Start with current supplier prices.
+Dialogue: 0,0:00:08.30,0:00:14.20,Caption,,0,0,0,,{\pos(540,1370)}Upload the file, review every proposed change,\Nand catch price drift before it reaches the menu.
+
+Dialogue: 0,0:00:14.40,0:00:24.60,Label,,0,0,0,,ACTUAL FLOWDISH WORKFLOW • SPED UP
+Dialogue: 0,0:00:14.50,0:00:20.10,Caption,,0,0,0,,{\pos(540,1370)}Build dishes from ingredients, yield and portion size,\Nwith a live cost at every level.
+Dialogue: 0,0:00:20.10,0:00:24.50,Caption,,0,0,0,,{\pos(540,1370)}Use your own recipes,\Nor start with Coco's proven menus.
+
+Dialogue: 0,0:00:24.60,0:00:34.30,Label,,0,0,0,,ACTUAL FLOWDISH WORKFLOW • SPED UP
+Dialogue: 0,0:00:24.70,0:00:28.50,Caption,,0,0,0,,{\pos(540,1370)}One click turns the recipe\Ninto an interactive SOP.
+Dialogue: 0,0:00:28.50,0:00:34.20,Caption,,0,0,0,,{\pos(540,1370)}It reads aloud, pauses and repeats hands-free\Nwhile the chef prepares the dish.
+
+Dialogue: 0,0:00:34.30,0:00:44.80,Label,,0,0,0,,ACTUAL FLOWDISH WORKFLOW • SPED UP
+Dialogue: 0,0:00:34.40,0:00:38.20,Caption,,0,0,0,,{\pos(540,1370)}Forecast tomorrow's menu.
+Dialogue: 0,0:00:38.20,0:00:44.70,Caption,,0,0,0,,{\pos(540,1370)\fs42}Flowdish plans the prep, allocates FIFO batches,\Nand turns stock shortfalls into an order list ready to paste.
+
+Dialogue: 0,0:00:44.80,0:00:54.00,Label,,0,0,0,,ACTUAL FLOWDISH WORKFLOW • SPED UP
+Dialogue: 0,0:00:44.90,0:00:48.00,Caption,,0,0,0,,{\pos(540,1370)}At the back door, photograph the docket.
+Dialogue: 0,0:00:48.00,0:00:53.90,Caption,,0,0,0,,{\pos(540,1370)}AI matches your SKU codes, checks price and VAT,\Nthen updates inventory after review.
+
+Dialogue: 0,0:00:54.00,0:01:05.30,Label,,0,0,0,,ACTUAL FLOWDISH WORKFLOW • SPED UP
+Dialogue: 0,0:00:54.10,0:00:58.60,Caption,,0,0,0,,{\pos(540,1370)}Import the till readout,\Nand sales feed back into stock and margin.
+Dialogue: 0,0:00:58.60,0:01:05.20,Caption,,0,0,0,,{\pos(540,1370)\fs42}The dashboard highlights profit, shortages and expiring batches\Nbefore they become waste.
+
+Dialogue: 0,0:01:05.30,0:01:09.30,Label,,0,0,0,,ACTUAL FLOWDISH WORKFLOW
+Dialogue: 0,0:01:05.40,0:01:09.00,MobileCaption,,0,0,0,,On the floor, each chef enters with a private PIN.
+
+Dialogue: 0,0:01:09.30,0:01:26.40,Label,,0,0,0,,ACTUAL FLOWDISH WORKFLOW
+Dialogue: 0,0:01:09.45,0:01:14.55,MobileCaption,,0,0,0,,During prep, say what was made, then add the\NHACCP time and temperature checks.
+Dialogue: 0,0:01:15.50,0:01:19.70,MobileCaption,,0,0,0,,"5.6 kilos of short rib"
+Dialogue: 0,0:01:20.10,0:01:24.90,MobileCaption,,0,0,0,,Flowdish drafts the batch, yield and expiry for approval.
+
+Dialogue: 0,0:01:26.40,0:01:39.80,Label,,0,0,0,,ACTUAL FLOWDISH WORKFLOW
+Dialogue: 0,0:01:26.55,0:01:30.10,MobileCaption,,0,0,0,,For waste, say the item, amount and reason.
+Dialogue: 0,0:01:30.90,0:01:34.20,MobileCaption,,0,0,0,,"Spilled a kilo of coleslaw"
+Dialogue: 0,0:01:34.40,0:01:39.75,MobileCaption,,0,0,0,,Stock changes only after approval,\Nso every loss becomes measurable.
+
+Dialogue: 0,0:01:39.80,0:01:44.60,Label,,0,0,0,,ACTUAL FLOWDISH WORKFLOW • SPED UP
+Dialogue: 0,0:01:39.90,0:01:44.40,Caption,,0,0,0,,{\pos(540,1370)}Monthly points make good recording visible\Nand help teams build the habit.
+
+Dialogue: 0,0:01:44.60,0:01:52.50,Label,,0,0,0,,ACTUAL FLOWDISH WORKFLOW • SPED UP
+Dialogue: 0,0:01:44.70,0:01:48.60,Caption,,0,0,0,,{\pos(540,1370)}Cold storage probes and manual checks\Nkeep HACCP evidence together.
+Dialogue: 0,0:01:48.60,0:01:52.30,Caption,,0,0,0,,{\pos(540,1370)}With live history ready when you need it.
+
+Dialogue: 0,0:01:52.65,0:01:59.70,Summary,,0,0,0,,{\pos(540,710)\fs42}• Live prices and precise portion costing
+Dialogue: 0,0:01:52.95,0:01:59.70,Summary,,0,0,0,,{\pos(540,835)\fs42}• Batch, expiry and waste control
+Dialogue: 0,0:01:53.25,0:01:59.70,Summary,,0,0,0,,{\pos(540,960)\fs42}• AI workflows and HACCP evidence
+Dialogue: 0,0:01:53.55,0:01:59.80,Accent,,0,0,0,,{\pos(540,1210)\fs54\fad(180,140)}KNOW EVERY COST. TRACK EVERY BATCH.\NPROVE EVERY CHECK.
+Dialogue: 0,0:01:56.80,0:01:59.80,Subheading,,0,0,0,,{\pos(540,1440)\fs42\c&H009C9C0B&\b1}cocos.ie
+Dialogue: 0,0:01:52.50,0:01:59.90,Detail,,0,0,0,,{\pos(540,1550)\fs24\c&H00707070&\bord0\shad0}AI-generated narration

@@ -523,6 +523,7 @@ model Waste {
   date         DateTime
   itemId       String
   qty          Float
+  cost         Float?
   reason       String?
   createdAt    DateTime @default(now())
 

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireKitchenAccess, kitchenAccessErrorResponse } from '@/lib/kitchen-access'
+import { calculateAndConsumeL1Sale, consumeInventoryForItem } from '@/lib/sales-recording'
 
 function actorFieldsFromKitchenAccess(tenant: Awaited<ReturnType<typeof requireKitchenAccess>>) {
   if (tenant.type === 'STAFF') {
@@ -20,78 +21,6 @@ function actorFieldsFromKitchenAccess(tenant: Awaited<ReturnType<typeof requireK
     enteredByAuthUserId: tenant.authUserId,
     enteredByStaffUserId: null,
   }
-}
-
-async function ensureEnoughStock({
-  restaurantId,
-  itemId,
-  qty,
-}: {
-  restaurantId: string
-  itemId: string
-  qty: number
-}) {
-  const lots = await prisma.inventoryLot.findMany({
-    where: {
-      restaurantId,
-      itemId,
-      qtyRemaining: { gt: 0 },
-    },
-  })
-
-  const availableQty = lots.reduce((sum, lot) => sum + lot.qtyRemaining, 0)
-
-  return availableQty >= qty
-}
-
-async function consumeInventoryFifo({
-  tx,
-  restaurantId,
-  itemId,
-  qty,
-}: {
-  tx: any
-  restaurantId: string
-  itemId: string
-  qty: number
-}) {
-  let qtyNeeded = qty
-  let totalCost = 0
-
-  const lots = await tx.inventoryLot.findMany({
-    where: {
-      restaurantId,
-      itemId,
-      qtyRemaining: { gt: 0 },
-    },
-    orderBy: [
-      { expiryAt: 'asc' },
-      { createdAt: 'asc' },
-    ],
-  })
-
-  for (const lot of lots) {
-    if (qtyNeeded <= 0) break
-
-    const takeQty = Math.min(lot.qtyRemaining, qtyNeeded)
-
-    totalCost += takeQty * (lot.unitCost ?? 0)
-
-    await tx.inventoryLot.update({
-      where: { id: lot.id },
-      data: {
-        qtyRemaining: lot.qtyRemaining - takeQty,
-      },
-    })
-
-    qtyNeeded -= takeQty
-  }
-
-  if (qtyNeeded > 0) {
-    throw new Error('NOT_ENOUGH_STOCK')
-  }
-
-  return totalCost
 }
 
 export async function GET() {
@@ -149,9 +78,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 })
     }
 
-    if (item.itemType !== 'L2' && item.itemType !== 'L3') {
+    if (item.itemType !== 'L1' && item.itemType !== 'L2' && item.itemType !== 'L3') {
       return NextResponse.json(
-        { error: 'Waste can only be recorded against an L2 or L3 item.' },
+        { error: 'Waste can only be recorded against an L1, L2, or L3 item.' },
         { status: 400 }
       )
     }
@@ -164,26 +93,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Quantity must be greater than 0' }, { status: 400 })
     }
 
-    const enough = await ensureEnoughStock({
-      restaurantId: tenant.restaurantId,
-      itemId: item.id,
-      qty,
-    })
-
-    if (!enough) {
-      return NextResponse.json(
-        { error: `Insufficient stock for ${item.name} [${item.sku}]` },
-        { status: 400 }
-      )
-    }
-
     const waste = await prisma.$transaction(async (tx: any) => {
-      await consumeInventoryFifo({
-        tx,
-        restaurantId: tenant.restaurantId,
-        itemId: item.id,
-        qty,
-      })
+      const cost =
+        item.itemType === 'L1'
+          ? await calculateAndConsumeL1Sale({
+              tx,
+              restaurantId: tenant.restaurantId,
+              l1ItemId: item.id,
+              qtySold: qty,
+            })
+          : await consumeInventoryForItem({
+              tx,
+              restaurantId: tenant.restaurantId,
+              itemId: item.id,
+              qty,
+            })
 
       return tx.waste.create({
         data: {
@@ -191,6 +115,7 @@ export async function POST(req: Request) {
           date,
           itemId: item.id,
           qty,
+          cost,
           reason,
           ...actorFieldsFromKitchenAccess(tenant),
         },
@@ -204,7 +129,17 @@ export async function POST(req: Request) {
     if (accessError) return accessError
 
     if (error instanceof Error && error.message === 'NOT_ENOUGH_STOCK') {
-      return NextResponse.json({ error: 'Insufficient stock for waste record.' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Insufficient ingredient or prep stock for this waste record.' },
+        { status: 400 }
+      )
+    }
+
+    if (error instanceof Error && error.message === 'NO_BOM') {
+      return NextResponse.json(
+        { error: 'This L1 dish needs a saved BOM before it can be recorded as waste.' },
+        { status: 400 }
+      )
     }
 
     console.error('POST /api/waste failed:', error)

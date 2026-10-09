@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import CopyableError from '@/app/components/CopyableError'
 
 type Reading = {
@@ -24,14 +24,25 @@ type Monitor = {
   latestReading: Reading | null
 }
 
-type ChartRange = '24h' | '7d' | '30d' | '3m' | 'all'
+type HistoryReading = Reading & {
+  monitorName: string
+  location: string | null
+}
+
+type HistoryPagination = {
+  page: number
+  pageSize: number
+  total: number
+  totalPages: number
+}
+
+type ChartRange = '24h' | '7d' | '30d' | '3m'
 
 const chartRangeOptions: Array<{ value: ChartRange; label: string }> = [
   { value: '24h', label: 'Last 24 hours' },
   { value: '7d', label: 'Last 7 days' },
   { value: '30d', label: 'Last 30 days' },
   { value: '3m', label: 'Last 3 months' },
-  { value: 'all', label: 'All readings' },
 ]
 
 function formatDateTime(value: string | null | undefined) {
@@ -43,11 +54,6 @@ function formatDateTime(value: string | null | undefined) {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-function tempLabel(value: number | null | undefined) {
-  if (value === null || value === undefined) return '—'
-  return `${value.toFixed(1)}°C`
 }
 
 function statusForMonitor(monitor: Monitor) {
@@ -183,8 +189,8 @@ function TemperatureTrend({ monitor, range }: { monitor: Monitor; range: ChartRa
     )
   }
 
-  const yTicks = Array.from({ length: 5 }, (_, index) => {
-    const value = minTemp + ((maxTemp - minTemp) / 4) * index
+  const yTicks = Array.from({ length: 9 }, (_, index) => {
+    const value = minTemp + ((maxTemp - minTemp) / 8) * index
     return {
       value,
       y: yFor(value),
@@ -297,19 +303,15 @@ export default function ColdStoragePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [chartRange, setChartRange] = useState<ChartRange>('24h')
-
-  const allReadings = useMemo(() => {
-    return monitors
-      .flatMap((monitor) =>
-        monitor.readings.map((reading) => ({
-          ...reading,
-          monitorName: monitor.name,
-          location: monitor.location,
-        }))
-      )
-      .sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime())
-      .slice(0, 100)
-  }, [monitors])
+  const [historyReadings, setHistoryReadings] = useState<HistoryReading[]>([])
+  const [historyPagination, setHistoryPagination] = useState<HistoryPagination>({
+    page: 1,
+    pageSize: 100,
+    total: 0,
+    totalPages: 1,
+  })
+  const [historyLoading, setHistoryLoading] = useState(true)
+  const [historyError, setHistoryError] = useState('')
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -340,8 +342,30 @@ export default function ColdStoragePage() {
     }
   }
 
+  async function loadHistory(page: number) {
+    try {
+      setHistoryLoading(true)
+      setHistoryError('')
+
+      const res = await fetch(`/api/cold-storage/readings?page=${page}`, { cache: 'no-store' })
+      const data = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to load cold storage readings')
+      }
+
+      setHistoryReadings(data.readings || [])
+      setHistoryPagination(data.pagination)
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
   useEffect(() => {
-    loadData()
+    void loadData()
+    void loadHistory(1)
   }, [])
 
   return (
@@ -358,11 +382,14 @@ export default function ColdStoragePage() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <button
               type="button"
-              onClick={loadData}
-              disabled={loading}
+              onClick={() => {
+                void loadData()
+                void loadHistory(historyPagination.page)
+              }}
+              disabled={loading || historyLoading}
               className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
             >
-              {loading ? 'Loading...' : 'Refresh'}
+              {loading || historyLoading ? 'Loading...' : 'Refresh'}
             </button>
           </div>
         </div>
@@ -457,9 +484,24 @@ export default function ColdStoragePage() {
         </section>
 
         <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <div className="border-b px-6 py-4">
-            <h2 className="text-xl font-semibold text-slate-900">Recent Readings</h2>
+          <div className="flex flex-col gap-2 border-b px-6 py-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">All Readings</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Complete recorded temperature history, newest first.
+              </p>
+            </div>
+            <div className="text-sm text-slate-600">
+              {historyPagination.total === 0
+                ? '0 readings'
+                : `${(historyPagination.page - 1) * historyPagination.pageSize + 1}-${Math.min(
+                    historyPagination.page * historyPagination.pageSize,
+                    historyPagination.total
+                  )} of ${historyPagination.total}`}
+            </div>
           </div>
+
+          {historyError ? <CopyableError message={historyError} className="m-4" /> : null}
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
@@ -473,14 +515,20 @@ export default function ColdStoragePage() {
                 </tr>
               </thead>
               <tbody>
-                {allReadings.length === 0 ? (
+                {historyLoading ? (
+                  <tr className="border-t">
+                    <td className="px-4 py-3 text-slate-700" colSpan={5}>
+                      Loading readings...
+                    </td>
+                  </tr>
+                ) : historyReadings.length === 0 ? (
                   <tr className="border-t">
                     <td className="px-4 py-3 text-slate-700" colSpan={5}>
                       No readings yet.
                     </td>
                   </tr>
                 ) : (
-                  allReadings.map((reading) => (
+                  historyReadings.map((reading) => (
                     <tr key={reading.id} className="border-t">
                       <td className="px-4 py-3 text-slate-800">{reading.monitorName}</td>
                       <td className="px-4 py-3 text-slate-800">{reading.location || ''}</td>
@@ -496,6 +544,28 @@ export default function ColdStoragePage() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 border-t px-4 py-3">
+            <button
+              type="button"
+              onClick={() => void loadHistory(historyPagination.page - 1)}
+              disabled={historyLoading || historyPagination.page <= 1}
+              className="rounded-lg border bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <span className="text-sm text-slate-600">
+              Page {historyPagination.page} of {historyPagination.totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => void loadHistory(historyPagination.page + 1)}
+              disabled={historyLoading || historyPagination.page >= historyPagination.totalPages}
+              className="rounded-lg border bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Next
+            </button>
           </div>
         </section>
       </div>

@@ -131,6 +131,7 @@ export async function GET() {
     )
 
     const wasteCost = waste.reduce((sum: number, w: any) => {
+      if (w.cost !== null && w.cost !== undefined) return sum + w.cost
       const lot = inventoryLots.find((l: any) => l.itemId === w.itemId)
       return sum + w.qty * (lot?.unitCost ?? 0)
     }, 0)

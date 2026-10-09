@@ -45,27 +45,10 @@ export async function POST(req: Request) {
       where: {
         id: tenant.restaurantId,
       },
-      include: {
-        staffUsers: true,
-      },
     })
 
     if (!restaurant) {
       return NextResponse.json({ error: 'Restaurant not found.' }, { status: 404 })
-    }
-
-    const activeStaffCount = restaurant.staffUsers.filter(
-      (staff) => staff.active && !staff.isAccountPin
-    ).length
-
-    if (restaurant.plan === 'BASIC' && activeStaffCount >= 3) {
-      return NextResponse.json(
-        {
-          error:
-            'Basic plan allows 3 staff PIN users. Upgrade this restaurant to Premium for unlimited staff users.',
-        },
-        { status: 400 }
-      )
     }
 
     const username = requestedUsername || makeUsername(displayName)

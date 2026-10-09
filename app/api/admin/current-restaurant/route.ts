@@ -84,6 +84,9 @@ export async function GET() {
     const activeAccountPinCount = restaurant.staffUsers.filter(
       (staff) => staff.active && staff.isAccountPin
     ).length
+    const activeHeadChefCount = restaurant.memberships.filter(
+      (membership) => membership.role === 'OWNER' || membership.role === 'ADMIN'
+    ).length
 
     return NextResponse.json({
       currentUser: {
@@ -141,10 +144,11 @@ export async function GET() {
         plan: restaurant.plan,
         activeStaffCount,
         activeAccountPinCount,
+        activeHeadChefCount,
         totalActivePinCount: activeStaffCount + activeAccountPinCount,
-        maxStaffUsers: restaurant.plan === 'BASIC' ? 3 : null,
-        remainingStaffUsers:
-          restaurant.plan === 'BASIC' ? Math.max(0, 3 - activeStaffCount) : null,
+        maxHeadChefUsers: 2,
+        maxStaffUsers: null,
+        remainingStaffUsers: null,
       },
       templateRestaurants,
       permissions: {

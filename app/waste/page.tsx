@@ -137,7 +137,10 @@ export default function WastePage() {
 
   const wasteItems = useMemo(() => {
     return items
-      .filter((item) => item.itemType === 'L2' || item.itemType === 'L3')
+      .filter(
+        (item) =>
+          item.itemType === 'L1' || item.itemType === 'L2' || item.itemType === 'L3'
+      )
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [items])
 
@@ -215,7 +218,7 @@ export default function WastePage() {
       setSaving(true)
 
       if (!selectedItemId) {
-        setError('Choose an L2 or L3 item first.')
+        setError('Choose an L1, L2, or L3 item first.')
         return
       }
 
@@ -264,8 +267,8 @@ export default function WastePage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Waste</h1>
             <p className="mt-2 text-slate-700">
-              Record wasted L2 prep batches or L3 ingredients. Waste entries reduce inventory
-              using FIFO.
+              Record wasted dishes, prep batches, or ingredients. Waste entries reduce inventory
+              using FIFO and the saved recipe where needed.
             </p>
           </div>
 
@@ -323,7 +326,7 @@ export default function WastePage() {
           <form onSubmit={handleSubmit} className="mt-6 grid gap-5 md:grid-cols-2">
             <div className="relative md:col-span-2">
               <label className="mb-1 block text-sm font-medium text-slate-900">
-                L2 / L3 Item
+                L1 / L2 / L3 Item
               </label>
 
               <input
@@ -340,7 +343,7 @@ export default function WastePage() {
                 <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-xl border bg-white shadow-lg">
                   {filteredWasteItems.length === 0 ? (
                     <div className="px-4 py-3 text-sm text-slate-600">
-                      No L2 or L3 items found.
+                      No L1, L2, or L3 items found.
                     </div>
                   ) : (
                     filteredWasteItems.map((item) => (

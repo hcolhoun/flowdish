@@ -178,7 +178,7 @@ export default function SignupPage() {
                       <span className="pb-1 text-sm text-slate-600">/ site / month</span>
                     </span>
                     <span className="mt-1 text-xs text-slate-500">
-                      Ex VAT · Unlimited staff users
+                      Ex VAT · 2 Head Chef accounts · Unlimited staff PINs
                     </span>
 
                     <ul className="mt-5 space-y-2 border-t border-slate-200 pt-4 text-sm text-slate-700">

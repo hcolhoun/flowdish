@@ -13,7 +13,7 @@ export async function GET() {
       where: {
         restaurantId: access.restaurantId,
         itemType: {
-          in: ['L2', 'L3'],
+          in: ['L1', 'L2', 'L3'],
         },
       },
       orderBy: { createdAt: 'desc' },

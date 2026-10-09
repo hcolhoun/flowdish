@@ -50,7 +50,9 @@ type AdminData = {
     plan: 'BASIC' | 'PREMIUM'
     activeStaffCount: number
     activeAccountPinCount: number
+    activeHeadChefCount: number
     totalActivePinCount: number
+    maxHeadChefUsers: number
     maxStaffUsers: number | null
     remainingStaffUsers: number | null
   }
@@ -1305,7 +1307,8 @@ export default function AdminPage() {
                       : ` / ${data.staffLimits.maxStaffUsers}`}
                   </div>
                   <div className="mt-1 text-xs text-slate-500">
-                    Account PINs: {data.staffLimits.activeAccountPinCount}
+                    Head Chef accounts: {data.staffLimits.activeHeadChefCount} /{' '}
+                    {data.staffLimits.maxHeadChefUsers}
                   </div>
                 </div>
               </div>
@@ -2079,6 +2082,9 @@ export default function AdminPage() {
 
             <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
               <h2 className="text-xl font-semibold text-slate-900">Head Chef / Owner Members</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Every Flowdish tier includes up to two full Head Chef or Owner accounts.
+              </p>
 
               <div className="mt-5 overflow-hidden rounded-xl border">
                 <table className="w-full text-left text-sm">
@@ -2110,7 +2116,7 @@ export default function AdminPage() {
               <h2 className="text-xl font-semibold text-slate-900">Head Chef PIN Login</h2>
               <p className="mt-1 text-sm text-slate-600">
                 This gives the account user a quick PIN login with the same access as their email
-                login. It does not use one of the Basic plan staff PIN slots.
+                login. It is separate from the unlimited Staff PIN users below.
               </p>
 
               {headChefPinUsers.length > 0 ? (
@@ -2210,8 +2216,8 @@ export default function AdminPage() {
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">Staff PIN Users</h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    Staff PIN users can only access Prep and Waste. Basic includes 3 staff PIN users
-                    plus the account PIN above.
+                    Add as many Staff PIN users as the kitchen needs. They can only access Prep and
+                    Waste.
                   </p>
                 </div>
 
