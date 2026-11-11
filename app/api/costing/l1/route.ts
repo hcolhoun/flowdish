@@ -20,6 +20,13 @@ type ItemLike = {
   unitType: 'g' | 'ml' | 'each'
   sellingPrice?: number | null
   standardBatchOutput?: number | null
+  prepHandsOnMinutes?: number | null
+  prepTimeStatus?: 'MISSING' | 'ESTIMATED' | 'CONFIRMED' | 'STALE'
+  serviceBatchSize?: number | null
+  serviceHandsOnMinutes?: number | null
+  serviceElapsedMinutes?: number | null
+  serviceTimeConfidence?: number | null
+  serviceTimeStatus?: 'MISSING' | 'ESTIMATED' | 'CONFIRMED' | 'STALE'
 }
 
 function numberValue(value: unknown) {
@@ -63,6 +70,7 @@ export async function GET(req: Request) {
     }
 
     const [
+      restaurant,
       items,
       l1ToL2Rows,
       l1ToL3Rows,
@@ -70,6 +78,14 @@ export async function GET(req: Request) {
       l2ToL3Rows,
       supplierProducts,
     ] = await Promise.all([
+      prisma.restaurant.findUnique({
+        where: { id: tenant.restaurantId },
+        select: {
+          labourCostingEnabled: true,
+          blendedLabourRatePerHour: true,
+        },
+      }),
+
       prisma.item.findMany({
         where: {
           restaurantId: tenant.restaurantId,
@@ -148,6 +164,14 @@ export async function GET(req: Request) {
 
     const typedItems = items as ItemLike[]
 
+    const blendedLabourRatePerHour =
+      restaurant?.blendedLabourRatePerHour && restaurant.blendedLabourRatePerHour > 0
+        ? restaurant.blendedLabourRatePerHour
+        : null
+    const labourCostingEnabled = Boolean(
+      restaurant?.labourCostingEnabled && blendedLabourRatePerHour
+    )
+
     const l1Items = typedItems.filter((item: ItemLike) => item.itemType === 'L1')
 
     const pricesByItemId = new Map<string, SupplierPrice[]>()
@@ -223,6 +247,9 @@ export async function GET(req: Request) {
           batchCost: 0,
           costPerUnit: null,
           missingCostCount: 1,
+          batchLabourMinutes: null,
+          labourMinutesPerUnit: null,
+          missingLabourCount: 1,
           outputMissing: false,
           ingredients: [],
           prepComponents: [],
@@ -238,6 +265,18 @@ export async function GET(req: Request) {
 
       let batchCost = 0
       let missingCostCount = 0
+      let batchLabourMinutes =
+        l2Item.prepTimeStatus === 'CONFIRMED' &&
+        l2Item.prepHandsOnMinutes !== null &&
+        l2Item.prepHandsOnMinutes !== undefined
+          ? numberValue(l2Item.prepHandsOnMinutes)
+          : 0
+      let missingLabourCount =
+        l2Item.prepTimeStatus === 'CONFIRMED' &&
+        l2Item.prepHandsOnMinutes !== null &&
+        l2Item.prepHandsOnMinutes !== undefined
+          ? 0
+          : 1
       const ingredients: any[] = []
       const prepComponents: any[] = []
 
@@ -261,6 +300,18 @@ export async function GET(req: Request) {
           missingCostCount += childCost.missingCostCount
         }
 
+        const lineLabourMinutes =
+          childCost.labourMinutesPerUnit !== null &&
+          childCost.labourMinutesPerUnit !== undefined
+            ? qty * childCost.labourMinutesPerUnit
+            : null
+
+        if (lineLabourMinutes === null) {
+          missingLabourCount += Math.max(1, childCost.missingLabourCount || 0)
+        } else {
+          batchLabourMinutes += lineLabourMinutes
+        }
+
         prepComponents.push({
           itemId: childL2.id,
           sku: childL2.sku,
@@ -271,7 +322,9 @@ export async function GET(req: Request) {
           batchCost: childCost.batchCost,
           costPerUnit: childCost.costPerUnit,
           lineCost,
+          lineLabourMinutes,
           missingCostCount: childCost.missingCostCount,
+          missingLabourCount: childCost.missingLabourCount,
         })
       }
 
@@ -304,10 +357,14 @@ export async function GET(req: Request) {
       }
 
       let costPerUnit: number | null = null
+      let labourMinutesPerUnit: number | null = null
       let outputMissing = false
 
       if (standardBatchOutput && standardBatchOutput > 0) {
         costPerUnit = batchCost / standardBatchOutput
+        if (missingLabourCount === 0) {
+          labourMinutesPerUnit = batchLabourMinutes / standardBatchOutput
+        }
       } else {
         outputMissing = true
       }
@@ -325,6 +382,9 @@ export async function GET(req: Request) {
         batchCost,
         costPerUnit,
         missingCostCount,
+        batchLabourMinutes: missingLabourCount === 0 ? batchLabourMinutes : null,
+        labourMinutesPerUnit,
+        missingLabourCount,
         outputMissing,
         ingredients,
         prepComponents,
@@ -342,6 +402,8 @@ export async function GET(req: Request) {
 
       let foodCost = 0
       let missingCostCount = 0
+      let prepLabourMinutes = 0
+      let missingLabourCount = 0
       const directIngredients: any[] = []
       const prepComponents: any[] = []
 
@@ -394,6 +456,18 @@ export async function GET(req: Request) {
           missingCostCount += l2Cost.missingCostCount
         }
 
+        const lineLabourMinutes =
+          l2Cost.labourMinutesPerUnit !== null &&
+          l2Cost.labourMinutesPerUnit !== undefined
+            ? qty * l2Cost.labourMinutesPerUnit
+            : null
+
+        if (lineLabourMinutes === null) {
+          missingLabourCount += Math.max(1, l2Cost.missingLabourCount || 0)
+        } else {
+          prepLabourMinutes += lineLabourMinutes
+        }
+
         prepComponents.push({
           type: 'L2',
           itemId: l2.id,
@@ -405,8 +479,11 @@ export async function GET(req: Request) {
           batchCost: l2Cost.batchCost,
           costPerUnit: l2Cost.costPerUnit,
           lineCost,
+          lineLabourMinutes,
           missingReason,
           missingCostCount: l2Cost.missingCostCount,
+          missingLabourCount: l2Cost.missingLabourCount,
+          labourMinutesPerUnit: l2Cost.labourMinutesPerUnit,
           ingredients: l2Cost.ingredients,
           prepComponents: l2Cost.prepComponents,
         })
@@ -426,6 +503,45 @@ export async function GET(req: Request) {
           ? (foodCost / sellingPrice) * 100
           : null
 
+      const serviceBatchSize =
+        l1.serviceTimeStatus === 'CONFIRMED' &&
+        l1.serviceBatchSize !== null &&
+        l1.serviceBatchSize !== undefined &&
+        l1.serviceBatchSize > 0
+          ? l1.serviceBatchSize
+          : null
+      const serviceLabourMinutes =
+        serviceBatchSize !== null &&
+        l1.serviceHandsOnMinutes !== null &&
+        l1.serviceHandsOnMinutes !== undefined
+          ? l1.serviceHandsOnMinutes / serviceBatchSize
+          : null
+
+      if (serviceLabourMinutes === null) {
+        missingLabourCount++
+      }
+
+      const totalLabourMinutes =
+        missingLabourCount === 0 && serviceLabourMinutes !== null
+          ? prepLabourMinutes + serviceLabourMinutes
+          : null
+      const labourCost =
+        labourCostingEnabled &&
+        blendedLabourRatePerHour !== null &&
+        totalLabourMinutes !== null
+          ? (totalLabourMinutes / 60) * blendedLabourRatePerHour
+          : null
+      const contributionAfterLabour =
+        sellingPrice !== null && sellingPrice > 0 && labourCost !== null
+          ? sellingPrice - foodCost - labourCost
+          : null
+      const contributionAfterLabourPercent =
+        sellingPrice !== null &&
+        sellingPrice > 0 &&
+        contributionAfterLabour !== null
+          ? (contributionAfterLabour / sellingPrice) * 100
+          : null
+
       results.push({
         itemId: l1.id,
         sku: l1.sku,
@@ -435,6 +551,22 @@ export async function GET(req: Request) {
         grossProfit,
         grossMarginPercent,
         foodCostPercent,
+        labourCostingEnabled,
+        blendedLabourRatePerHour: labourCostingEnabled
+          ? blendedLabourRatePerHour
+          : null,
+        prepLabourMinutes: missingLabourCount === 0 ? prepLabourMinutes : null,
+        serviceLabourMinutes,
+        totalLabourMinutes,
+        labourCost,
+        contributionAfterLabour,
+        contributionAfterLabourPercent,
+        missingLabourCount,
+        serviceBatchSize,
+        serviceHandsOnMinutesPerBatch: l1.serviceHandsOnMinutes ?? null,
+        serviceElapsedMinutesPerBatch: l1.serviceElapsedMinutes ?? null,
+        serviceTimeConfidence: l1.serviceTimeConfidence ?? null,
+        serviceTimeStatus: l1.serviceTimeStatus ?? 'MISSING',
         missingCostCount,
         isEstimated: missingCostCount > 0,
         directIngredients,

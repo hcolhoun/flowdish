@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
+import { markL1ServiceTimeStale } from '@/lib/l1-service-time'
 
 type BomRowInput = {
   childId: string
@@ -101,6 +102,28 @@ export async function POST(req: Request) {
       }
     }
 
+    const existingRows = await prisma.bomL1L2.findMany({
+      where: {
+        restaurantId: tenant.restaurantId,
+        l1ItemId: parentId,
+      },
+      select: {
+        l2ItemId: true,
+        qty: true,
+      },
+    })
+    const existingSignature = JSON.stringify(
+      existingRows
+        .map((row) => ({ childId: row.l2ItemId, qty: Number(row.qty) }))
+        .sort((a, b) => a.childId.localeCompare(b.childId))
+    )
+    const nextSignature = JSON.stringify(
+      cleanRows
+        .map((row) => ({ childId: row.childId, qty: row.qty }))
+        .sort((a, b) => a.childId.localeCompare(b.childId))
+    )
+    const recipeChanged = existingSignature !== nextSignature
+
     await prisma.$transaction(async (tx: any) => {
       await tx.bomL1L2.deleteMany({
         where: {
@@ -120,6 +143,10 @@ export async function POST(req: Request) {
         })
       }
     })
+
+    if (recipeChanged) {
+      await markL1ServiceTimeStale(tenant.restaurantId, parentId)
+    }
 
     return NextResponse.json({ success: true })
   } catch (error) {

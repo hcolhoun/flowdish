@@ -271,6 +271,21 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Forecast not found' }, { status: 404 })
     }
 
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id: tenant.restaurantId },
+      select: {
+        labourCostingEnabled: true,
+        blendedLabourRatePerHour: true,
+      },
+    })
+    const blendedLabourRatePerHour =
+      restaurant?.blendedLabourRatePerHour && restaurant.blendedLabourRatePerHour > 0
+        ? restaurant.blendedLabourRatePerHour
+        : null
+    const labourCostingEnabled = Boolean(
+      restaurant?.labourCostingEnabled && blendedLabourRatePerHour
+    )
+
     const forecastEndDate = forecast.endDate
 
     const l1Plan: any[] = []
@@ -325,6 +340,28 @@ export async function GET(req: Request) {
 
       const forecastQty = line.qty
       const shortfallQty = Math.max(0, forecastQty - makeableQty)
+      const serviceBatchSize =
+        l1Item.serviceTimeStatus === 'CONFIRMED' &&
+        l1Item.serviceBatchSize !== null &&
+        l1Item.serviceBatchSize > 0
+          ? l1Item.serviceBatchSize
+          : null
+      const serviceBatches =
+        serviceBatchSize !== null ? Math.ceil(forecastQty / serviceBatchSize) : null
+      const totalServiceHandsOnMinutes =
+        serviceBatches !== null && l1Item.serviceHandsOnMinutes !== null
+          ? serviceBatches * l1Item.serviceHandsOnMinutes
+          : null
+      const totalServiceElapsedMinutes =
+        serviceBatches !== null && l1Item.serviceElapsedMinutes !== null
+          ? serviceBatches * l1Item.serviceElapsedMinutes
+          : null
+      const serviceLabourCost =
+        labourCostingEnabled &&
+        blendedLabourRatePerHour !== null &&
+        totalServiceHandsOnMinutes !== null
+          ? (totalServiceHandsOnMinutes / 60) * blendedLabourRatePerHour
+          : null
 
       l1Plan.push({
         itemId: l1Item.id,
@@ -333,6 +370,14 @@ export async function GET(req: Request) {
         forecastQty,
         makeableQty,
         shortfallQty,
+        serviceBatchSize,
+        serviceBatches,
+        serviceHandsOnMinutesPerBatch: l1Item.serviceHandsOnMinutes,
+        serviceElapsedMinutesPerBatch: l1Item.serviceElapsedMinutes,
+        serviceTimeStatus: l1Item.serviceTimeStatus,
+        totalServiceHandsOnMinutes,
+        totalServiceElapsedMinutes,
+        serviceLabourCost,
       })
 
       if (shortfallQty > 0) {
@@ -500,18 +545,51 @@ export async function GET(req: Request) {
       return a.name.localeCompare(b.name)
     })
 
-    const prepLabourSummary = {
-      totalHandsOnMinutes: l2Plan.reduce(
+    const totalPrepHandsOnMinutes = l2Plan.reduce(
         (sum, row) => sum + (row.totalPrepHandsOnMinutes ?? 0),
         0
-      ),
-      totalElapsedMinutes: l2Plan.reduce(
+      )
+    const totalPrepElapsedMinutes = l2Plan.reduce(
         (sum, row) => sum + (row.totalPrepElapsedMinutes ?? 0),
         0
-      ),
-      missingPrepTimeCount: l2Plan.filter(
+      )
+    const totalServiceHandsOnMinutes = l1Plan.reduce(
+      (sum, row) => sum + (row.totalServiceHandsOnMinutes ?? 0),
+      0
+    )
+    const totalServiceElapsedMinutes = l1Plan.reduce(
+      (sum, row) => sum + (row.totalServiceElapsedMinutes ?? 0),
+      0
+    )
+    const missingPrepTimeCount = l2Plan.filter(
         (row) => row.batchesToPrep > 0 && row.prepTimeStatus !== 'CONFIRMED'
-      ).length,
+      ).length
+    const missingServiceTimeCount = l1Plan.filter(
+      (row) => row.forecastQty > 0 && row.serviceTimeStatus !== 'CONFIRMED'
+    ).length
+    const totalKitchenHandsOnMinutes =
+      totalPrepHandsOnMinutes + totalServiceHandsOnMinutes
+    const totalLabourCost =
+      labourCostingEnabled &&
+      blendedLabourRatePerHour !== null &&
+      missingPrepTimeCount === 0 &&
+      missingServiceTimeCount === 0
+        ? (totalKitchenHandsOnMinutes / 60) * blendedLabourRatePerHour
+        : null
+
+    const prepLabourSummary = {
+      totalHandsOnMinutes: totalPrepHandsOnMinutes,
+      totalElapsedMinutes: totalPrepElapsedMinutes,
+      missingPrepTimeCount,
+      labourCostingEnabled,
+      blendedLabourRatePerHour: labourCostingEnabled
+        ? blendedLabourRatePerHour
+        : null,
+      totalServiceHandsOnMinutes,
+      totalServiceElapsedMinutes,
+      totalKitchenHandsOnMinutes,
+      totalLabourCost,
+      missingServiceTimeCount,
     }
 
     return NextResponse.json({

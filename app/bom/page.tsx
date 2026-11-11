@@ -36,6 +36,16 @@ type Item = {
   prepTimeConfidence?: number | null
   prepTimeAssumptions?: string[] | null
   prepTimeStatus?: PrepTimeStatus
+  serviceBatchSize?: number | null
+  serviceSetupMinutes?: number | null
+  serviceActiveMinutes?: number | null
+  serviceCleanupMinutes?: number | null
+  servicePassiveMinutes?: number | null
+  serviceHandsOnMinutes?: number | null
+  serviceElapsedMinutes?: number | null
+  serviceTimeConfidence?: number | null
+  serviceTimeAssumptions?: string[] | null
+  serviceTimeStatus?: PrepTimeStatus
   bestSupplierPrice?: BestSupplierPrice | null
 }
 
@@ -91,6 +101,20 @@ type L1CostingRow = {
   grossProfit: number | null
   grossMarginPercent: number | null
   foodCostPercent: number | null
+  labourCostingEnabled: boolean
+  blendedLabourRatePerHour: number | null
+  prepLabourMinutes: number | null
+  serviceLabourMinutes: number | null
+  totalLabourMinutes: number | null
+  labourCost: number | null
+  contributionAfterLabour: number | null
+  contributionAfterLabourPercent: number | null
+  missingLabourCount: number
+  serviceBatchSize: number | null
+  serviceHandsOnMinutesPerBatch: number | null
+  serviceElapsedMinutesPerBatch: number | null
+  serviceTimeConfidence: number | null
+  serviceTimeStatus: PrepTimeStatus
   missingCostCount: number
   isEstimated: boolean
 }
@@ -447,6 +471,14 @@ export default function BomPage() {
   const [prepTimeAssumptions, setPrepTimeAssumptions] = useState('')
   const [calculatingPrepTime, setCalculatingPrepTime] = useState(false)
   const [confirmingPrepTime, setConfirmingPrepTime] = useState(false)
+  const [serviceBatchSize, setServiceBatchSize] = useState('')
+  const [serviceSetupMinutes, setServiceSetupMinutes] = useState('')
+  const [serviceActiveMinutes, setServiceActiveMinutes] = useState('')
+  const [serviceCleanupMinutes, setServiceCleanupMinutes] = useState('')
+  const [servicePassiveMinutes, setServicePassiveMinutes] = useState('')
+  const [serviceTimeAssumptions, setServiceTimeAssumptions] = useState('')
+  const [calculatingServiceTime, setCalculatingServiceTime] = useState(false)
+  const [confirmingServiceTime, setConfirmingServiceTime] = useState(false)
   const [savedBomSignature, setSavedBomSignature] = useState('')
 
   const [l0ToL1Rows, setL0ToL1Rows] = useState<ChildRow[]>([])
@@ -761,6 +793,58 @@ export default function BomPage() {
     parentItem?.prepTimeAssumptions,
   ])
 
+  useEffect(() => {
+    if (!parentItem || parentItem.itemType !== 'L1') {
+      setServiceBatchSize('')
+      setServiceSetupMinutes('')
+      setServiceActiveMinutes('')
+      setServiceCleanupMinutes('')
+      setServicePassiveMinutes('')
+      setServiceTimeAssumptions('')
+      return
+    }
+
+    setServiceBatchSize(
+      parentItem.serviceBatchSize === null || parentItem.serviceBatchSize === undefined
+        ? ''
+        : String(parentItem.serviceBatchSize)
+    )
+    setServiceSetupMinutes(
+      parentItem.serviceSetupMinutes === null || parentItem.serviceSetupMinutes === undefined
+        ? ''
+        : String(parentItem.serviceSetupMinutes)
+    )
+    setServiceActiveMinutes(
+      parentItem.serviceActiveMinutes === null || parentItem.serviceActiveMinutes === undefined
+        ? ''
+        : String(parentItem.serviceActiveMinutes)
+    )
+    setServiceCleanupMinutes(
+      parentItem.serviceCleanupMinutes === null || parentItem.serviceCleanupMinutes === undefined
+        ? ''
+        : String(parentItem.serviceCleanupMinutes)
+    )
+    setServicePassiveMinutes(
+      parentItem.servicePassiveMinutes === null || parentItem.servicePassiveMinutes === undefined
+        ? ''
+        : String(parentItem.servicePassiveMinutes)
+    )
+    setServiceTimeAssumptions(
+      Array.isArray(parentItem.serviceTimeAssumptions)
+        ? parentItem.serviceTimeAssumptions.join('\n')
+        : ''
+    )
+  }, [
+    parentItem?.id,
+    parentItem?.itemType,
+    parentItem?.serviceBatchSize,
+    parentItem?.serviceSetupMinutes,
+    parentItem?.serviceActiveMinutes,
+    parentItem?.serviceCleanupMinutes,
+    parentItem?.servicePassiveMinutes,
+    parentItem?.serviceTimeAssumptions,
+  ])
+
   const l0LiveCosting = useMemo(() => {
     if (!parentItem || parentItem.itemType !== 'L0') {
       return null
@@ -768,7 +852,11 @@ export default function BomPage() {
 
     let totalMenuCogs = 0
     let totalMenuSales = 0
+    let totalMenuLabourMinutes = 0
+    let totalMenuLabourCost = 0
     let missingCostCount = 0
+    let missingLabourCount = 0
+    let labourCostingEnabled = false
 
     const rows = l0ToL1Rows.map((row) => {
       const item = getItem(row.childId)
@@ -780,6 +868,21 @@ export default function BomPage() {
         cost?.sellingPrice !== null && cost?.sellingPrice !== undefined
           ? qty * cost.sellingPrice
           : null
+      const lineLabourMinutes =
+        cost?.totalLabourMinutes !== null && cost?.totalLabourMinutes !== undefined
+          ? qty * cost.totalLabourMinutes
+          : null
+      const lineLabourCost =
+        cost?.labourCost !== null && cost?.labourCost !== undefined
+          ? qty * cost.labourCost
+          : null
+
+      if (cost?.labourCostingEnabled) {
+        labourCostingEnabled = true
+        if (lineLabourMinutes === null || lineLabourCost === null) {
+          missingLabourCount += Math.max(1, cost.missingLabourCount)
+        }
+      }
 
       if (row.childId && !cost) {
         missingCostCount++
@@ -791,6 +894,8 @@ export default function BomPage() {
 
       if (lineCogs !== null) totalMenuCogs += lineCogs
       if (lineSales !== null) totalMenuSales += lineSales
+      if (lineLabourMinutes !== null) totalMenuLabourMinutes += lineLabourMinutes
+      if (lineLabourCost !== null) totalMenuLabourCost += lineLabourCost
 
       return {
         row,
@@ -799,6 +904,8 @@ export default function BomPage() {
         cost,
         lineCogs,
         lineSales,
+        lineLabourMinutes,
+        lineLabourCost,
       }
     })
 
@@ -806,6 +913,14 @@ export default function BomPage() {
     const grossMargin =
       totalMenuSales > 0 && grossProfit !== null ? (grossProfit / totalMenuSales) * 100 : null
     const foodCostPercent = totalMenuSales > 0 ? (totalMenuCogs / totalMenuSales) * 100 : null
+    const contributionAfterLabour =
+      labourCostingEnabled && missingLabourCount === 0 && totalMenuSales > 0
+        ? totalMenuSales - totalMenuCogs - totalMenuLabourCost
+        : null
+    const contributionAfterLabourPercent =
+      contributionAfterLabour !== null && totalMenuSales > 0
+        ? (contributionAfterLabour / totalMenuSales) * 100
+        : null
 
     return {
       rows,
@@ -814,6 +929,14 @@ export default function BomPage() {
       grossProfit,
       grossMargin,
       foodCostPercent,
+      labourCostingEnabled,
+      totalMenuLabourMinutes:
+        labourCostingEnabled && missingLabourCount === 0 ? totalMenuLabourMinutes : null,
+      totalMenuLabourCost:
+        labourCostingEnabled && missingLabourCount === 0 ? totalMenuLabourCost : null,
+      contributionAfterLabour,
+      contributionAfterLabourPercent,
+      missingLabourCount,
       missingCostCount,
     }
   }, [parentItem, l0ToL1Rows, l1CostingByItemId, items])
@@ -977,6 +1100,8 @@ export default function BomPage() {
     const foodCostPercent =
       sellingPrice !== null && sellingPrice > 0 ? (totalCogs / sellingPrice) * 100 : null
 
+    const savedLabourCosting = l1CostingByItemId.get(parentItem.id) ?? null
+
     return {
       directRows,
       prepRows,
@@ -985,9 +1110,27 @@ export default function BomPage() {
       grossProfit,
       grossMargin,
       foodCostPercent,
+      labourCostingEnabled: savedLabourCosting?.labourCostingEnabled ?? false,
+      blendedLabourRatePerHour: savedLabourCosting?.blendedLabourRatePerHour ?? null,
+      prepLabourMinutes: savedLabourCosting?.prepLabourMinutes ?? null,
+      serviceLabourMinutes: savedLabourCosting?.serviceLabourMinutes ?? null,
+      totalLabourMinutes: savedLabourCosting?.totalLabourMinutes ?? null,
+      labourCost: savedLabourCosting?.labourCost ?? null,
+      contributionAfterLabour: savedLabourCosting?.contributionAfterLabour ?? null,
+      contributionAfterLabourPercent:
+        savedLabourCosting?.contributionAfterLabourPercent ?? null,
+      missingLabourCount: savedLabourCosting?.missingLabourCount ?? 0,
       missingCostCount,
     }
-  }, [parentItem, l1ToL2Rows, l1ToL3Rows, costingData, items, parentSellingPrice])
+  }, [
+    parentItem,
+    l1ToL2Rows,
+    l1ToL3Rows,
+    costingData,
+    items,
+    parentSellingPrice,
+    l1CostingByItemId,
+  ])
 
   const currentBomSignature = useMemo(
     () =>
@@ -1911,6 +2054,72 @@ export default function BomPage() {
     }
   }
 
+  async function calculateServiceTime() {
+    if (!parentItem || parentItem.itemType !== 'L1') return
+
+    try {
+      setCalculatingServiceTime(true)
+      setError('')
+      setMessage('Calculating on-the-day service time with AI...')
+
+      const res = await fetch('/api/l1-service-time', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: parentItem.id }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to calculate service time')
+
+      await Promise.all([loadItems(), loadCosting()])
+      setMessage(
+        'Service time estimated. Review the batch size, minutes, and assumptions, then confirm them.'
+      )
+    } catch (err) {
+      setMessage('')
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setCalculatingServiceTime(false)
+    }
+  }
+
+  async function confirmServiceTime() {
+    if (!parentItem || parentItem.itemType !== 'L1') return
+
+    try {
+      setConfirmingServiceTime(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/l1-service-time', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemId: parentItem.id,
+          batchSize: serviceBatchSize,
+          setupMinutes: serviceSetupMinutes,
+          activeServiceMinutes: serviceActiveMinutes,
+          cleanupMinutes: serviceCleanupMinutes,
+          passiveMinutes: servicePassiveMinutes,
+          assumptions: serviceTimeAssumptions
+            .split('\n')
+            .map((value) => value.trim())
+            .filter(Boolean),
+        }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to confirm service time')
+
+      await Promise.all([loadItems(), loadCosting()])
+      setMessage('L1 service time confirmed. Labour costing has been updated.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setConfirmingServiceTime(false)
+    }
+  }
+
   async function saveL2(buildStatus?: BuildStatus) {
     if (!parentItem) return
 
@@ -2446,7 +2655,7 @@ export default function BomPage() {
               L0 Menu Summary — {parentItem.name}
             </h2>
 
-            <div className="mt-5 grid gap-4 md:grid-cols-5">
+            <div className="mt-5 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
               <div className="rounded-xl border bg-slate-50 p-4">
                 <div className="text-xs text-slate-500">Menu Sales Value</div>
                 <div className="mt-1 text-lg font-semibold text-slate-900">
@@ -2455,31 +2664,59 @@ export default function BomPage() {
               </div>
 
               <div className="rounded-xl border bg-slate-50 p-4">
-                <div className="text-xs text-slate-500">Menu COGS</div>
+                <div className="text-xs text-slate-500">Food Cost</div>
                 <div className="mt-1 text-lg font-semibold text-slate-900">
                   {money(l0LiveCosting.totalMenuCogs)}
                 </div>
-              </div>
-
-              <div className="rounded-xl border bg-slate-50 p-4">
-                <div className="text-xs text-slate-500">Food Cost %</div>
-                <div className="mt-1 text-lg font-semibold text-slate-900">
+                <div className="mt-1 text-xs text-slate-500">
                   {percent(l0LiveCosting.foodCostPercent)}
                 </div>
               </div>
 
               <div className="rounded-xl border bg-slate-50 p-4">
-                <div className="text-xs text-slate-500">Gross Margin</div>
+                <div className="text-xs text-slate-500">Gross Profit</div>
                 <div className="mt-1 text-lg font-semibold text-slate-900">
-                  {percent(l0LiveCosting.grossMargin)}
+                  {money(l0LiveCosting.grossProfit)}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {percent(l0LiveCosting.grossMargin)} gross margin
                 </div>
               </div>
+
+              {l0LiveCosting.labourCostingEnabled ? (
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Labour</div>
+                  <div className="mt-1 text-lg font-semibold text-slate-900">
+                    {money(l0LiveCosting.totalMenuLabourCost)}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {l0LiveCosting.totalMenuLabourMinutes === null
+                      ? 'Confirm dish and prep times'
+                      : `${numberLabel(l0LiveCosting.totalMenuLabourMinutes, 1)} min`}
+                  </div>
+                </div>
+              ) : null}
+
+              {l0LiveCosting.labourCostingEnabled ? (
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Contribution After Labour</div>
+                  <div className="mt-1 text-lg font-semibold text-slate-900">
+                    {money(l0LiveCosting.contributionAfterLabour)}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {percent(l0LiveCosting.contributionAfterLabourPercent)}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="rounded-xl border bg-slate-50 p-4">
                 <div className="text-xs text-slate-500">Warnings</div>
                 <div className="mt-1 text-lg font-semibold text-slate-900">
                   {l0LiveCosting.missingCostCount === 0
-                    ? 'Complete'
+                    ? l0LiveCosting.labourCostingEnabled &&
+                      l0LiveCosting.missingLabourCount > 0
+                      ? `${l0LiveCosting.missingLabourCount} time missing`
+                      : 'Complete'
                     : `${l0LiveCosting.missingCostCount} missing`}
                 </div>
               </div>
@@ -2535,7 +2772,7 @@ export default function BomPage() {
               L1 COGS & Margin — {parentItem.name}
             </h2>
 
-            <div className="mt-5 grid gap-4 md:grid-cols-6">
+            <div className="mt-5 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
               <div className="rounded-xl border bg-slate-50 p-4">
                 <div className="text-xs text-slate-500">Selling Price</div>
                 <div className="mt-1 text-lg font-semibold text-slate-900">
@@ -2544,15 +2781,11 @@ export default function BomPage() {
               </div>
 
               <div className="rounded-xl border bg-slate-50 p-4">
-                <div className="text-xs text-slate-500">Total COGS</div>
+                <div className="text-xs text-slate-500">Food Cost</div>
                 <div className="mt-1 text-lg font-semibold text-slate-900">
                   {money(l1LiveCosting.totalCogs)}
                 </div>
-              </div>
-
-              <div className="rounded-xl border bg-slate-50 p-4">
-                <div className="text-xs text-slate-500">Food Cost %</div>
-                <div className="mt-1 text-lg font-semibold text-slate-900">
+                <div className="mt-1 text-xs text-slate-500">
                   {percent(l1LiveCosting.foodCostPercent)}
                 </div>
               </div>
@@ -2562,20 +2795,45 @@ export default function BomPage() {
                 <div className="mt-1 text-lg font-semibold text-slate-900">
                   {money(l1LiveCosting.grossProfit)}
                 </div>
-              </div>
-
-              <div className="rounded-xl border bg-slate-50 p-4">
-                <div className="text-xs text-slate-500">Gross Margin</div>
-                <div className="mt-1 text-lg font-semibold text-slate-900">
+                <div className="mt-1 text-xs text-slate-500">
                   {percent(l1LiveCosting.grossMargin)}
                 </div>
               </div>
+
+              {l1LiveCosting.labourCostingEnabled ? (
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Labour</div>
+                  <div className="mt-1 text-lg font-semibold text-slate-900">
+                    {money(l1LiveCosting.labourCost)}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {l1LiveCosting.totalLabourMinutes === null
+                      ? 'Confirm dish and prep times'
+                      : `${numberLabel(l1LiveCosting.totalLabourMinutes, 1)} min`}
+                  </div>
+                </div>
+              ) : null}
+
+              {l1LiveCosting.labourCostingEnabled ? (
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Contribution After Labour</div>
+                  <div className="mt-1 text-lg font-semibold text-slate-900">
+                    {money(l1LiveCosting.contributionAfterLabour)}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {percent(l1LiveCosting.contributionAfterLabourPercent)}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="rounded-xl border bg-slate-50 p-4">
                 <div className="text-xs text-slate-500">Warnings</div>
                 <div className="mt-1 text-lg font-semibold text-slate-900">
                   {l1LiveCosting.missingCostCount === 0
-                    ? 'Complete'
+                    ? l1LiveCosting.labourCostingEnabled &&
+                      l1LiveCosting.missingLabourCount > 0
+                      ? `${l1LiveCosting.missingLabourCount} time missing`
+                      : 'Complete'
                     : `${l1LiveCosting.missingCostCount} missing`}
                 </div>
               </div>
@@ -3456,27 +3714,43 @@ export default function BomPage() {
               </div>
             </section>
 
-            {false && parentItem ? (
+            {l1LiveCosting?.labourCostingEnabled && parentItem ? (
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div>
-                  <h2 className="text-xl font-semibold text-slate-900">L2 Prep Time</h2>
+                  <h2 className="text-xl font-semibold text-slate-900">
+                    L1 On-the-day Labour
+                  </h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    Review the AI estimate for one standard batch, correct it if needed,
-                    then confirm it.
+                    Review the AI estimate for one normal service batch. L2 production labour is
+                    costed separately and will not be counted twice.
                   </p>
                 </div>
                 <span className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
-                  {parentItem?.prepTimeStatus || 'MISSING'}
+                  {parentItem.serviceTimeStatus || 'MISSING'}
                 </span>
               </div>
 
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Portions per service batch
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="500"
+                    step="1"
+                    value={serviceBatchSize}
+                    onChange={(e) => setServiceBatchSize(e.target.value)}
+                    className="w-full rounded-xl border px-3 py-2"
+                  />
+                </div>
                 {[
-                  ['Setup minutes', prepSetupMinutes, setPrepSetupMinutes],
-                  ['Active prep minutes', prepActiveMinutes, setPrepActiveMinutes],
-                  ['Cleanup minutes', prepCleanupMinutes, setPrepCleanupMinutes],
-                  ['Passive minutes', prepPassiveMinutes, setPrepPassiveMinutes],
+                  ['Setup minutes', serviceSetupMinutes, setServiceSetupMinutes],
+                  ['Active service minutes', serviceActiveMinutes, setServiceActiveMinutes],
+                  ['Cleanup minutes', serviceCleanupMinutes, setServiceCleanupMinutes],
+                  ['Passive minutes', servicePassiveMinutes, setServicePassiveMinutes],
                 ].map(([label, value, setter]) => (
                   <div key={String(label)}>
                     <label className="mb-1 block text-sm font-medium text-slate-900">
@@ -3494,27 +3768,41 @@ export default function BomPage() {
                 ))}
               </div>
 
-              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-xl border bg-slate-50 p-4">
-                  <div className="text-xs text-slate-500">Hands-on per batch</div>
+                  <div className="text-xs text-slate-500">Service hands-on / batch</div>
                   <div className="mt-1 text-xl font-semibold text-slate-900">
                     {numberLabel(
-                      getQty(prepSetupMinutes) +
-                        getQty(prepActiveMinutes) +
-                        getQty(prepCleanupMinutes),
+                      getQty(serviceSetupMinutes) +
+                        getQty(serviceActiveMinutes) +
+                        getQty(serviceCleanupMinutes),
                       1
                     )}{' '}
                     min
                   </div>
                 </div>
                 <div className="rounded-xl border bg-slate-50 p-4">
-                  <div className="text-xs text-slate-500">Elapsed per batch</div>
+                  <div className="text-xs text-slate-500">Service hands-on / portion</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-900">
+                    {getQty(serviceBatchSize) > 0
+                      ? `${numberLabel(
+                          (getQty(serviceSetupMinutes) +
+                            getQty(serviceActiveMinutes) +
+                            getQty(serviceCleanupMinutes)) /
+                            getQty(serviceBatchSize),
+                          1
+                        )} min`
+                      : '—'}
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-slate-50 p-4">
+                  <div className="text-xs text-slate-500">Elapsed / batch</div>
                   <div className="mt-1 text-xl font-semibold text-slate-900">
                     {numberLabel(
-                      getQty(prepSetupMinutes) +
-                        getQty(prepActiveMinutes) +
-                        getQty(prepCleanupMinutes) +
-                        getQty(prepPassiveMinutes),
+                      getQty(serviceSetupMinutes) +
+                        getQty(serviceActiveMinutes) +
+                        getQty(serviceCleanupMinutes) +
+                        getQty(servicePassiveMinutes),
                       1
                     )}{' '}
                     min
@@ -3523,10 +3811,10 @@ export default function BomPage() {
                 <div className="rounded-xl border bg-slate-50 p-4">
                   <div className="text-xs text-slate-500">AI confidence</div>
                   <div className="mt-1 text-xl font-semibold text-slate-900">
-                    {parentItem?.prepTimeConfidence === null ||
-                    parentItem?.prepTimeConfidence === undefined
+                    {parentItem.serviceTimeConfidence === null ||
+                    parentItem.serviceTimeConfidence === undefined
                       ? 'N/A'
-                      : `${Math.round((parentItem?.prepTimeConfidence ?? 0) * 100)}%`}
+                      : `${Math.round((parentItem.serviceTimeConfidence ?? 0) * 100)}%`}
                   </div>
                 </div>
               </div>
@@ -3536,8 +3824,8 @@ export default function BomPage() {
                   Assumptions
                 </label>
                 <textarea
-                  value={prepTimeAssumptions}
-                  onChange={(e) => setPrepTimeAssumptions(e.target.value)}
+                  value={serviceTimeAssumptions}
+                  onChange={(e) => setServiceTimeAssumptions(e.target.value)}
                   className="h-28 w-full rounded-xl border px-3 py-2 text-sm"
                   placeholder="One assumption per line"
                 />
@@ -3546,25 +3834,31 @@ export default function BomPage() {
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   type="button"
-                  onClick={calculatePrepTime}
-                  disabled={calculatingPrepTime}
+                  onClick={calculateServiceTime}
+                  disabled={calculatingServiceTime || hasUnsavedBomChanges}
                   className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {calculatingPrepTime ? 'Calculating...' : 'Calculate Prep Time'}
+                  {calculatingServiceTime ? 'Calculating...' : 'Calculate Service Time'}
                 </button>
                 <button
                   type="button"
-                  onClick={confirmPrepTime}
+                  onClick={confirmServiceTime}
                   disabled={
-                    confirmingPrepTime ||
-                    (parentItem?.prepTimeStatus !== 'ESTIMATED' &&
-                      parentItem?.prepTimeStatus !== 'CONFIRMED')
+                    confirmingServiceTime ||
+                    (parentItem.serviceTimeStatus !== 'ESTIMATED' &&
+                      parentItem.serviceTimeStatus !== 'CONFIRMED')
                   }
                   className="rounded-xl border border-green-400 px-5 py-3 font-medium text-green-800 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {confirmingPrepTime ? 'Confirming...' : 'Confirm Prep Time'}
+                  {confirmingServiceTime ? 'Confirming...' : 'Confirm Service Time'}
                 </button>
               </div>
+
+              {hasUnsavedBomChanges ? (
+                <p className="mt-3 text-sm text-amber-700">
+                  Save the L1 BOM before calculating a new service-time estimate.
+                </p>
+              ) : null}
             </section>
             ) : null}
 

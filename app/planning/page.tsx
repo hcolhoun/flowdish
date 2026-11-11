@@ -39,6 +39,14 @@ type L1PlanRow = {
   forecastQty: number
   makeableQty: number
   shortfallQty: number
+  serviceBatchSize: number | null
+  serviceBatches: number | null
+  serviceHandsOnMinutesPerBatch: number | null
+  serviceElapsedMinutesPerBatch: number | null
+  serviceTimeStatus: 'MISSING' | 'ESTIMATED' | 'CONFIRMED' | 'STALE'
+  totalServiceHandsOnMinutes: number | null
+  totalServiceElapsedMinutes: number | null
+  serviceLabourCost: number | null
 }
 
 type IngredientAvailabilityRow = {
@@ -103,6 +111,13 @@ type PlanResponse = {
     totalHandsOnMinutes: number
     totalElapsedMinutes: number
     missingPrepTimeCount: number
+    labourCostingEnabled: boolean
+    blendedLabourRatePerHour: number | null
+    totalServiceHandsOnMinutes: number
+    totalServiceElapsedMinutes: number
+    totalKitchenHandsOnMinutes: number
+    totalLabourCost: number | null
+    missingServiceTimeCount: number
   }
 }
 
@@ -223,6 +238,17 @@ export default function PlanningPage() {
 
   function formatNumber(value: number) {
     return Number.isInteger(value) ? String(value) : value.toFixed(3)
+  }
+
+  function money(value: number | null | undefined) {
+    if (value === null || value === undefined || !Number.isFinite(value)) return '—'
+
+    return new Intl.NumberFormat('en-IE', {
+      style: 'currency',
+      currency: 'EUR',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value)
   }
 
   function durationLabel(value: number | null | undefined) {
@@ -731,13 +757,66 @@ export default function PlanningPage() {
 
         {plan ? (
           <div className="mt-8 space-y-8">
+            {plan.prepLabourSummary.labourCostingEnabled ? (
+              <section className="rounded-2xl border bg-white shadow-sm">
+                <div className="border-b px-6 py-4">
+                  <h2 className="text-xl font-semibold text-slate-900">Labour Forecast</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Confirmed L2 prep plus L1 on-the-day cooking, finishing, and plating.
+                  </p>
+                </div>
+
+                <div className="grid gap-4 px-6 py-5 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-xl border bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">Prep labour</div>
+                    <div className="mt-1 text-2xl font-semibold text-slate-900">
+                      {durationLabel(plan.prepLabourSummary.totalHandsOnMinutes)}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">Service labour</div>
+                    <div className="mt-1 text-2xl font-semibold text-slate-900">
+                      {durationLabel(plan.prepLabourSummary.totalServiceHandsOnMinutes)}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">Total hands-on labour</div>
+                    <div className="mt-1 text-2xl font-semibold text-slate-900">
+                      {durationLabel(plan.prepLabourSummary.totalKitchenHandsOnMinutes)}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">Forecast labour cost</div>
+                    <div className="mt-1 text-2xl font-semibold text-slate-900">
+                      {money(plan.prepLabourSummary.totalLabourCost)}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {money(plan.prepLabourSummary.blendedLabourRatePerHour)} / hour
+                    </div>
+                  </div>
+                </div>
+
+                {plan.prepLabourSummary.missingPrepTimeCount > 0 ||
+                plan.prepLabourSummary.missingServiceTimeCount > 0 ? (
+                  <div className="border-t border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-800">
+                    Forecast cost is withheld until all required times are confirmed:{' '}
+                    {plan.prepLabourSummary.missingPrepTimeCount} prep and{' '}
+                    {plan.prepLabourSummary.missingServiceTimeCount} service.
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
             <section className="rounded-2xl border bg-white shadow-sm">
               <div className="border-b px-6 py-4">
                 <h2 className="text-xl font-semibold text-slate-900">L1 Forecast Summary</h2>
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-left">
+                <table className="min-w-[900px] w-full text-left">
                   <thead className="bg-slate-100 text-sm">
                     <tr>
                       <th className="px-4 py-3 text-slate-800">SKU</th>
@@ -745,6 +824,12 @@ export default function PlanningPage() {
                       <th className="px-4 py-3 text-slate-800">Forecast</th>
                       <th className="px-4 py-3 text-slate-800">Makeable</th>
                       <th className="px-4 py-3 text-slate-800">Shortfall</th>
+                      {plan.prepLabourSummary.labourCostingEnabled ? (
+                        <th className="px-4 py-3 text-slate-800">Service Labour</th>
+                      ) : null}
+                      {plan.prepLabourSummary.labourCostingEnabled ? (
+                        <th className="px-4 py-3 text-slate-800">Labour Cost</th>
+                      ) : null}
                     </tr>
                   </thead>
 
@@ -762,6 +847,21 @@ export default function PlanningPage() {
                         <td className="px-4 py-3 text-slate-800">
                           {formatNumber(row.shortfallQty)}
                         </td>
+                        {plan.prepLabourSummary.labourCostingEnabled ? (
+                          <td className="px-4 py-3 text-slate-800">
+                            <div>{durationLabel(row.totalServiceHandsOnMinutes)}</div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {row.serviceTimeStatus === 'CONFIRMED'
+                                ? `${row.serviceBatches ?? 0} service batch(es)`
+                                : row.serviceTimeStatus}
+                            </div>
+                          </td>
+                        ) : null}
+                        {plan.prepLabourSummary.labourCostingEnabled ? (
+                          <td className="px-4 py-3 text-slate-800">
+                            {money(row.serviceLabourCost)}
+                          </td>
+                        ) : null}
                       </tr>
                     ))}
                   </tbody>

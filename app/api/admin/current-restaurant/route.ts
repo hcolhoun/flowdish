@@ -103,6 +103,9 @@ export async function GET() {
         isTemplate: restaurant.isTemplate,
         plan: restaurant.plan,
         subscriptionPlan: restaurant.legalAcceptances[0]?.selectedPlan ?? null,
+        labourCostingEnabled: restaurant.labourCostingEnabled,
+        blendedLabourRatePerHour: restaurant.blendedLabourRatePerHour,
+        labourRateUpdatedAt: restaurant.labourRateUpdatedAt,
         staffLoginCode: restaurant.slug || restaurant.id,
         createdAt: restaurant.createdAt,
         updatedAt: restaurant.updatedAt,
@@ -164,6 +167,86 @@ export async function GET() {
     console.error('GET /api/admin/current-restaurant failed:', error)
     return NextResponse.json(
       { error: 'Failed to load admin restaurant data.' },
+      { status: 500 }
+    )
+  }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const tenant = await requireTenant()
+
+    if (!canAdmin(tenant.role) && !isSystemOwnerEmail(tenant.email)) {
+      return NextResponse.json({ error: 'Admin access required.' }, { status: 403 })
+    }
+
+    const body = await req.json()
+    const labourCostingEnabled = Boolean(body.labourCostingEnabled)
+    const rawRate = body.blendedLabourRatePerHour
+    const blendedLabourRatePerHour =
+      rawRate === null || rawRate === undefined || rawRate === '' ? null : Number(rawRate)
+
+    if (
+      labourCostingEnabled &&
+      (
+        blendedLabourRatePerHour === null ||
+        !Number.isFinite(blendedLabourRatePerHour) ||
+        blendedLabourRatePerHour <= 0 ||
+        blendedLabourRatePerHour > 1000
+      )
+    ) {
+      return NextResponse.json(
+        { error: 'Enter a blended kitchen labour rate greater than zero.' },
+        { status: 400 }
+      )
+    }
+
+    if (
+      blendedLabourRatePerHour !== null &&
+      (
+        !Number.isFinite(blendedLabourRatePerHour) ||
+        blendedLabourRatePerHour <= 0 ||
+        blendedLabourRatePerHour > 1000
+      )
+    ) {
+      return NextResponse.json(
+        { error: 'The blended kitchen labour rate must be between €0 and €1,000 per hour.' },
+        { status: 400 }
+      )
+    }
+
+    const existing = await prisma.restaurant.findUnique({
+      where: { id: tenant.restaurantId },
+      select: { blendedLabourRatePerHour: true },
+    })
+
+    if (!existing) {
+      return NextResponse.json({ error: 'Restaurant not found.' }, { status: 404 })
+    }
+
+    const rateChanged = existing.blendedLabourRatePerHour !== blendedLabourRatePerHour
+    const restaurant = await prisma.restaurant.update({
+      where: { id: tenant.restaurantId },
+      data: {
+        labourCostingEnabled,
+        blendedLabourRatePerHour,
+        ...(rateChanged ? { labourRateUpdatedAt: new Date() } : {}),
+      },
+      select: {
+        labourCostingEnabled: true,
+        blendedLabourRatePerHour: true,
+        labourRateUpdatedAt: true,
+      },
+    })
+
+    return NextResponse.json({ success: true, restaurant })
+  } catch (error) {
+    const tenantError = tenantErrorResponse(error)
+    if (tenantError) return tenantError
+
+    console.error('PATCH /api/admin/current-restaurant failed:', error)
+    return NextResponse.json(
+      { error: 'Failed to save labour costing settings.' },
       { status: 500 }
     )
   }

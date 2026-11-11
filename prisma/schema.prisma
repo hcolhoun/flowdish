@@ -72,6 +72,9 @@ model Restaurant {
   slug       String?  @unique
   isTemplate Boolean        @default(false)
   plan       RestaurantPlan @default(BASIC)
+  labourCostingEnabled Boolean @default(false)
+  blendedLabourRatePerHour Float?
+  labourRateUpdatedAt DateTime?
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
 
@@ -166,6 +169,20 @@ model Item {
   prepTimeCalculatedAt DateTime?
   prepTimeConfirmedAt DateTime?
   prepTimeConfirmedBy String?
+  serviceBatchSize        Float?
+  serviceSetupMinutes     Float?
+  serviceActiveMinutes    Float?
+  serviceCleanupMinutes   Float?
+  servicePassiveMinutes   Float?
+  serviceHandsOnMinutes   Float?
+  serviceElapsedMinutes   Float?
+  serviceTimeConfidence   Float?
+  serviceTimeAssumptions  Json?
+  serviceTimeStatus       PrepTimeStatus @default(MISSING)
+  serviceTimeFingerprint  String?
+  serviceTimeCalculatedAt DateTime?
+  serviceTimeConfirmedAt  DateTime?
+  serviceTimeConfirmedBy  String?
   createdAt           DateTime    @default(now())
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)

@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 import { NextResponse } from 'next/server'
 import { getL2PrepTimeContext, markL2PrepTimeStale } from '@/lib/l2-prep-time'
+import { markL1ServiceTimeStale } from '@/lib/l1-service-time'
 
 function makeSkuPrefix(itemType: string) {
   if (itemType === 'L0') return 'L0'
@@ -360,8 +361,22 @@ export async function PATCH(req: Request) {
           data.standardBatchOutput !== existing.standardBatchOutput)
       )
 
+    const serviceTimeInputsChanged =
+      existing.itemType === 'L1' &&
+      (
+        ('sku' in data && data.sku !== existing.sku) ||
+        ('name' in data && data.name !== existing.name)
+      )
+
     if (prepTimeInputsChanged) {
       await markL2PrepTimeStale(tenant.restaurantId, existing.id)
+      return NextResponse.json(
+        await prisma.item.findUnique({ where: { id: existing.id } })
+      )
+    }
+
+    if (serviceTimeInputsChanged) {
+      await markL1ServiceTimeStale(tenant.restaurantId, existing.id)
       return NextResponse.json(
         await prisma.item.findUnique({ where: { id: existing.id } })
       )

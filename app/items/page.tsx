@@ -24,6 +24,11 @@ type Item = {
   prepElapsedMinutes: number | null
   prepTimeConfidence: number | null
   prepTimeStatus: PrepTimeStatus
+  serviceBatchSize: number | null
+  serviceHandsOnMinutes: number | null
+  serviceElapsedMinutes: number | null
+  serviceTimeConfidence: number | null
+  serviceTimeStatus: PrepTimeStatus
 }
 
 type CostingRow = {
@@ -35,6 +40,20 @@ type CostingRow = {
   grossProfit: number | null
   grossMarginPercent: number | null
   foodCostPercent: number | null
+  labourCostingEnabled: boolean
+  blendedLabourRatePerHour: number | null
+  prepLabourMinutes: number | null
+  serviceLabourMinutes: number | null
+  totalLabourMinutes: number | null
+  labourCost: number | null
+  contributionAfterLabour: number | null
+  contributionAfterLabourPercent: number | null
+  missingLabourCount: number
+  serviceBatchSize: number | null
+  serviceHandsOnMinutesPerBatch: number | null
+  serviceElapsedMinutesPerBatch: number | null
+  serviceTimeConfidence: number | null
+  serviceTimeStatus: PrepTimeStatus
   missingCostCount: number
   isEstimated: boolean
   directIngredients: Array<{
@@ -62,8 +81,11 @@ type CostingRow = {
     batchCost: number
     costPerUnit: number | null
     lineCost: number | null
+    lineLabourMinutes: number | null
     missingReason: string | null
     missingCostCount: number
+    missingLabourCount: number
+    labourMinutesPerUnit: number | null
     ingredients: Array<{
       itemId: string
       sku: string
@@ -672,7 +694,7 @@ export default function ItemsPage() {
                   <th className="px-4 py-3 text-slate-800">Food Cost</th>
                   <th className="px-4 py-3 text-slate-800">Gross Margin</th>
                   <th className="px-4 py-3 text-slate-800">Std Batch Output</th>
-                  <th className="px-4 py-3 text-slate-800">Prep Time</th>
+                  <th className="px-4 py-3 text-slate-800">Prep / Service Time</th>
                   <th className="px-4 py-3 text-slate-800">Actions</th>
                 </tr>
               </thead>
@@ -755,6 +777,23 @@ export default function ItemsPage() {
                                     : ` · ${Math.round(item.prepTimeConfidence * 100)}% confidence`}
                                 </div>
                               </div>
+                            ) : item.itemType === 'L1' && costing?.labourCostingEnabled ? (
+                              <div className="min-w-40">
+                                <div className="font-medium">
+                                  {minuteLabel(item.serviceHandsOnMinutes)} hands-on
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                  {item.serviceBatchSize && item.serviceBatchSize > 0
+                                    ? `${item.serviceBatchSize} portions / batch`
+                                    : 'Batch size missing'}
+                                </div>
+                                <div className="mt-1 text-xs font-medium text-slate-600">
+                                  {item.serviceTimeStatus}
+                                  {item.serviceTimeConfidence === null
+                                    ? ''
+                                    : ` · ${Math.round(item.serviceTimeConfidence * 100)}% confidence`}
+                                </div>
+                              </div>
                             ) : (
                               'N/A'
                             )}
@@ -807,7 +846,7 @@ export default function ItemsPage() {
                         {expanded && item.itemType === 'L1' && costing ? (
                           <tr className="border-t bg-slate-50">
                             <td colSpan={12} className="px-4 py-5">
-                              <div className="grid gap-4 md:grid-cols-5">
+                              <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
                                 <div className="rounded-xl border bg-white p-4">
                                   <div className="text-xs text-slate-500">Selling Price</div>
                                   <div className="mt-1 text-lg font-semibold text-slate-900">
@@ -820,11 +859,7 @@ export default function ItemsPage() {
                                   <div className="mt-1 text-lg font-semibold text-slate-900">
                                     {money(costing.foodCost)}
                                   </div>
-                                </div>
-
-                                <div className="rounded-xl border bg-white p-4">
-                                  <div className="text-xs text-slate-500">Food Cost %</div>
-                                  <div className="mt-1 text-lg font-semibold text-slate-900">
+                                  <div className="mt-1 text-xs text-slate-500">
                                     {percent(costing.foodCostPercent)}
                                   </div>
                                 </div>
@@ -834,14 +869,38 @@ export default function ItemsPage() {
                                   <div className="mt-1 text-lg font-semibold text-slate-900">
                                     {money(costing.grossProfit)}
                                   </div>
-                                </div>
-
-                                <div className="rounded-xl border bg-white p-4">
-                                  <div className="text-xs text-slate-500">Gross Margin</div>
-                                  <div className="mt-1 text-lg font-semibold text-slate-900">
+                                  <div className="mt-1 text-xs text-slate-500">
                                     {percent(costing.grossMarginPercent)}
                                   </div>
                                 </div>
+
+                                {costing.labourCostingEnabled ? (
+                                  <div className="rounded-xl border bg-white p-4">
+                                    <div className="text-xs text-slate-500">Labour</div>
+                                    <div className="mt-1 text-lg font-semibold text-slate-900">
+                                      {money(costing.labourCost)}
+                                    </div>
+                                    <div className="mt-1 text-xs text-slate-500">
+                                      {costing.totalLabourMinutes === null
+                                        ? 'Confirm dish and prep times'
+                                        : `${minuteLabel(costing.totalLabourMinutes)} total`}
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {costing.labourCostingEnabled ? (
+                                  <div className="rounded-xl border bg-white p-4">
+                                    <div className="text-xs text-slate-500">
+                                      Contribution After Labour
+                                    </div>
+                                    <div className="mt-1 text-lg font-semibold text-slate-900">
+                                      {money(costing.contributionAfterLabour)}
+                                    </div>
+                                    <div className="mt-1 text-xs text-slate-500">
+                                      {percent(costing.contributionAfterLabourPercent)}
+                                    </div>
+                                  </div>
+                                ) : null}
                               </div>
 
                               {costing.missingCostCount > 0 ? (
@@ -849,9 +908,15 @@ export default function ItemsPage() {
                                   This costing is estimated. {costing.missingCostCount} cost input(s)
                                   are missing, usually supplier prices or L2 batch output.
                                 </div>
+                              ) : costing.labourCostingEnabled && costing.missingLabourCount > 0 ? (
+                                <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                  Food costing is complete. Confirm the L1 service time and all
+                                  consumed L2 prep times to calculate labour.
+                                </div>
                               ) : (
                                 <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
-                                  Costing complete. All ingredients have prices and L2 outputs.
+                                  Costing complete. All required prices, outputs, and enabled labour
+                                  times are confirmed.
                                 </div>
                               )}
 

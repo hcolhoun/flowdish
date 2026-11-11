@@ -29,6 +29,9 @@ type Restaurant = {
   isTemplate: boolean
   plan: 'BASIC' | 'PREMIUM'
   subscriptionPlan: 'HACCP_CORE' | 'KITCHEN_PRO' | 'ENTERPRISE' | null
+  labourCostingEnabled: boolean
+  blendedLabourRatePerHour: number | null
+  labourRateUpdatedAt: string | null
   staffLoginCode: string
   createdAt: string
   updatedAt: string
@@ -352,6 +355,9 @@ export default function AdminPage() {
   const [accountPinDisplayName, setAccountPinDisplayName] = useState('')
   const [accountPin, setAccountPin] = useState('')
   const [accountPinResult, setAccountPinResult] = useState<AccountPinResult | null>(null)
+  const [labourCostingEnabled, setLabourCostingEnabled] = useState(false)
+  const [blendedLabourRate, setBlendedLabourRate] = useState('')
+  const [savingLabourSettings, setSavingLabourSettings] = useState(false)
 
   const [restaurants, setRestaurants] = useState<AdminRestaurant[]>([])
   const [templateL0s, setTemplateL0s] = useState<TemplateL0[]>([])
@@ -478,10 +484,52 @@ export default function AdminPage() {
 
       setData(json)
       setAccountPinDisplayName(json.accountPin?.displayName || json.currentUser.email || '')
+      setLabourCostingEnabled(Boolean(json.restaurant.labourCostingEnabled))
+      setBlendedLabourRate(
+        json.restaurant.blendedLabourRatePerHour === null ||
+          json.restaurant.blendedLabourRatePerHour === undefined
+          ? ''
+          : String(json.restaurant.blendedLabourRatePerHour)
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function saveLabourCostingSettings(e: React.FormEvent) {
+    e.preventDefault()
+
+    try {
+      setSavingLabourSettings(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/admin/current-restaurant', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          labourCostingEnabled,
+          blendedLabourRatePerHour: blendedLabourRate,
+        }),
+      })
+      const json = await safeJson(res)
+
+      if (!res.ok) {
+        throw new Error(json?.error || 'Failed to save labour costing settings')
+      }
+
+      await loadData()
+      setMessage(
+        labourCostingEnabled
+          ? 'Labour costing enabled. L1 service times can now be calculated in BOM Builder.'
+          : 'Labour costing disabled. Existing confirmed time estimates have been retained.'
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSavingLabourSettings(false)
     }
   }
 
@@ -1317,6 +1365,67 @@ export default function AdminPage() {
                 Staff users log in at <span className="font-mono">/staff-login</span> using
                 the staff login code, username, and 4-digit PIN. Staff sessions expire after 2 hours.
               </div>
+            </section>
+
+            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900">Labour Costing</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Optionally add direct kitchen labour to dish costing and forecast planning.
+                </p>
+              </div>
+
+              <form onSubmit={saveLabourCostingSettings} className="mt-5 space-y-5">
+                <label className="flex items-start gap-3 rounded-xl border bg-slate-50 p-4">
+                  <input
+                    type="checkbox"
+                    checked={labourCostingEnabled}
+                    onChange={(e) => setLabourCostingEnabled(e.target.checked)}
+                    className="mt-1 h-4 w-4"
+                  />
+                  <span>
+                    <span className="block font-medium text-slate-900">
+                      Enable labour costing
+                    </span>
+                    <span className="mt-1 block text-sm text-slate-600">
+                      Labour cards remain hidden throughout Flowdish until this is enabled.
+                    </span>
+                  </span>
+                </label>
+
+                {labourCostingEnabled ? (
+                  <div className="max-w-sm">
+                    <label className="mb-1 block text-sm font-medium text-slate-900">
+                      Blended kitchen labour rate per hour
+                    </label>
+                    <div className="flex items-center rounded-xl border bg-white px-3">
+                      <span className="text-slate-500">€</span>
+                      <input
+                        type="number"
+                        min="0.01"
+                        max="1000"
+                        step="0.01"
+                        value={blendedLabourRate}
+                        onChange={(e) => setBlendedLabourRate(e.target.value)}
+                        className="w-full border-0 px-2 py-2 outline-none"
+                        placeholder="e.g. 22.50"
+                      />
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Use total kitchen payroll cost divided by total paid kitchen hours.
+                      Flowdish converts this to a per-minute rate automatically.
+                    </p>
+                  </div>
+                ) : null}
+
+                <button
+                  type="submit"
+                  disabled={savingLabourSettings}
+                  className="rounded-xl bg-slate-900 px-5 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingLabourSettings ? 'Saving...' : 'Save Labour Settings'}
+                </button>
+              </form>
             </section>
 
             <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
