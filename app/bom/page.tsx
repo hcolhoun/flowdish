@@ -2112,7 +2112,7 @@ export default function BomPage() {
       if (!res.ok) throw new Error(data?.error || 'Failed to confirm service time')
 
       await Promise.all([loadItems(), loadCosting()])
-      setMessage('L1 service time confirmed. Labour costing has been updated.')
+      setMessage('L1 on-the-day time confirmed. Planning and labour costing have been updated.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -3714,16 +3714,16 @@ export default function BomPage() {
               </div>
             </section>
 
-            {l1LiveCosting?.labourCostingEnabled && parentItem ? (
+            {parentItem ? (
             <section className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">
-                    L1 On-the-day Labour
+                    L1 On-the-day Time
                   </h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    Review the AI estimate for one normal service batch. L2 production labour is
-                    costed separately and will not be counted twice.
+                    Review the AI estimate for cooking, finishing, and plating one normal service
+                    batch. L2 prep time is tracked separately and will not be counted twice.
                   </p>
                 </div>
                 <span className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
@@ -3857,6 +3857,12 @@ export default function BomPage() {
               {hasUnsavedBomChanges ? (
                 <p className="mt-3 text-sm text-amber-700">
                   Save the L1 BOM before calculating a new service-time estimate.
+                </p>
+              ) : null}
+
+              {!l1LiveCosting?.labourCostingEnabled ? (
+                <p className="mt-3 text-xs text-slate-500">
+                  Enable Labour Costing in Admin to convert confirmed time into a euro cost.
                 </p>
               ) : null}
             </section>

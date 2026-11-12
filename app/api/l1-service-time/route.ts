@@ -37,18 +37,6 @@ export async function POST(req: Request) {
       )
     }
 
-    const restaurant = await prisma.restaurant.findUnique({
-      where: { id: tenant.restaurantId },
-      select: { labourCostingEnabled: true },
-    })
-
-    if (!restaurant?.labourCostingEnabled) {
-      return NextResponse.json(
-        { error: 'Enable labour costing in Admin before calculating L1 service time.' },
-        { status: 400 }
-      )
-    }
-
     const body = await req.json()
     const itemId = String(body.itemId || '').trim()
 
