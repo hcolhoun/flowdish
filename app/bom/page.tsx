@@ -704,10 +704,14 @@ export default function BomPage() {
     return l2Items.filter((item) => item.id !== parentItem.id)
   }, [l2Items, parentItem])
 
+  const selectedParentLabel = parentItem
+    ? `${parentItem.name} [${parentItem.sku}]`
+    : ''
+
   useEffect(() => {
-    if (!parentItem || parentSearch) return
-    setParentSearch(`${parentItem.name} [${parentItem.sku}]`)
-  }, [parentItem, parentSearch])
+    if (!selectedParentLabel) return
+    setParentSearch(selectedParentLabel)
+  }, [parentId, selectedParentLabel])
 
   const l1CostingByItemId = useMemo(() => {
     return new Map(l1CostingRows.map((row) => [row.itemId, row]))
