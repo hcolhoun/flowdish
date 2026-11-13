@@ -15,6 +15,7 @@ export type AiFeature =
   | 'delivery_docket'
   | 'sales_zread'
   | 'supplier_price_import'
+  | 'recipe_import'
   | 'l2_prep_time'
   | 'l1_service_time'
   | 'waste_voice'
@@ -414,6 +415,10 @@ async function uploadTextFromFile(file: File) {
 
 export async function textFromUploadFile(file: File) {
   return (await uploadTextFromFile(file)).text
+}
+
+export async function documentTextFromUploadFile(file: File) {
+  return uploadTextFromFile(file)
 }
 
 export async function textFromAiRequest(req: Request, textKeys = ['ocrText', 'pastedText', 'text']) {

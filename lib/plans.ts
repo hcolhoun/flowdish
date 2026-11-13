@@ -42,6 +42,7 @@ export const FLOWDISH_PLANS = [
       'AI delivery docket scanning',
       'AI POS and Z-read imports',
       'AI supplier price-list imports',
+      'AI recipe imports from photos and files',
       'AI-assisted prep-time estimates',
       'Voice-assisted waste and prep entry',
       'Interactive spoken SOPs with pause and continue voice controls',

@@ -5,7 +5,7 @@ const sections = [
   {
     title: 'Where this applies',
     paragraphs: [
-      'This notice applies to Flowdish Enterprise AI features, including delivery-docket reading, supplier price-list imports, POS or Z-read imports, voice-entry interpretation, prep-time estimates, dashboard briefings and AI-assisted SOP drafting or translation. HACCP Core and Kitchen Pro do not include these AI import features.',
+      'This notice applies to Flowdish Enterprise AI features, including delivery-docket reading, supplier price-list and recipe imports, POS or Z-read imports, voice-entry interpretation, prep-time estimates, dashboard briefings and AI-assisted SOP drafting or translation. HACCP Core and Kitchen Pro do not include these AI import features.',
     ],
   },
   {

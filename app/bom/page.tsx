@@ -1,6 +1,15 @@
 'use client'
 
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Camera,
+  ChevronDown,
+  FileUp,
+  LoaderCircle,
+  Plus,
+  Sparkles,
+  Trash2,
+} from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
 
 type ItemType = 'L0' | 'L1' | 'L2' | 'L3'
@@ -65,6 +74,22 @@ type SupplierProduct = {
 type ChildRow = {
   childId: string
   qty: string
+}
+
+type RecipeImportRow = {
+  clientId: string
+  name: string
+  quantity: string
+  unitType: UnitType
+  shelfLifeDays: string
+  note: string
+}
+
+type RecipeImportDraft = {
+  recipeName: string
+  yieldPortions: string
+  ingredients: RecipeImportRow[]
+  notes: string[]
 }
 
 type PriceInfo = {
@@ -152,6 +177,73 @@ type ExpandedL2Bom = {
   l2ToL2Rows: ChildRow[]
   l2ToL3Rows: ChildRow[]
   outputRows: ChildRow[]
+}
+
+function recipeIngredientKey(name: string) {
+  return name
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function recipeImportRowId() {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function loadRecipeUploadImage(file: File) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const image = new Image()
+
+    image.onload = () => {
+      URL.revokeObjectURL(url)
+      resolve(image)
+    }
+    image.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('Could not read the recipe image.'))
+    }
+    image.src = url
+  })
+}
+
+async function prepareRecipeUpload(file: File) {
+  if (!file.type.startsWith('image/')) return file
+
+  const image = await loadRecipeUploadImage(file)
+  const maxDimension = 2200
+  const scale = Math.min(1, maxDimension / Math.max(image.width, image.height))
+  const canvas = document.createElement('canvas')
+  const context = canvas.getContext('2d')
+
+  if (!context) throw new Error('Could not prepare the recipe image.')
+
+  canvas.width = Math.max(1, Math.round(image.width * scale))
+  canvas.height = Math.max(1, Math.round(image.height * scale))
+  context.imageSmoothingEnabled = true
+  context.imageSmoothingQuality = 'high'
+  context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+  const toJpeg = (quality: number) =>
+    new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (blob) =>
+          blob ? resolve(blob) : reject(new Error('Could not prepare the recipe image.')),
+        'image/jpeg',
+        quality
+      )
+    })
+
+  let blob = await toJpeg(0.86)
+  if (blob.size > 3.8 * 1024 * 1024) blob = await toJpeg(0.68)
+
+  return new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'recipe'}.jpg`, {
+    type: 'image/jpeg',
+  })
 }
 
 function QtyInput({
@@ -457,6 +549,14 @@ export default function BomPage() {
   const [parentId, setParentId] = useState('')
   const [parentSearch, setParentSearch] = useState('')
   const [parentTypeFilter, setParentTypeFilter] = useState<'ALL' | 'L0' | 'L1' | 'L2'>('ALL')
+  const [recipeImportOpen, setRecipeImportOpen] = useState(false)
+  const [recipeImportFile, setRecipeImportFile] = useState<File | null>(null)
+  const [recipeImportDraft, setRecipeImportDraft] = useState<RecipeImportDraft | null>(null)
+  const [recipeImportReading, setRecipeImportReading] = useState(false)
+  const [recipeImportSaving, setRecipeImportSaving] = useState(false)
+  const [recipeImportError, setRecipeImportError] = useState('')
+  const recipePhotoInputRef = useRef<HTMLInputElement>(null)
+  const recipeFileInputRef = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(false)
   const [costingLoading, setCostingLoading] = useState(false)
   const [error, setError] = useState('')
@@ -659,6 +759,183 @@ export default function BomPage() {
       await Promise.all([loadItems(), loadCosting()])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
+    }
+  }
+
+  function chooseRecipeImportFile(file: File | null) {
+    setRecipeImportFile(file)
+    setRecipeImportDraft(null)
+    setRecipeImportError('')
+  }
+
+  async function readRecipeImport() {
+    if (!recipeImportFile) return
+
+    try {
+      setRecipeImportReading(true)
+      setRecipeImportError('')
+      setRecipeImportDraft(null)
+
+      const preparedFile = await prepareRecipeUpload(recipeImportFile)
+      const formData = new FormData()
+      formData.append('file', preparedFile)
+
+      const res = await fetch('/api/bom/recipe-import', {
+        method: 'POST',
+        body: formData,
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to read recipe')
+
+      const draft = data?.draft
+      const ingredients = Array.isArray(draft?.ingredients) ? draft.ingredients : []
+
+      setRecipeImportDraft({
+        recipeName: String(draft?.recipeName || ''),
+        yieldPortions: String(draft?.yieldPortions || 1),
+        ingredients: ingredients.map((ingredient: any) => ({
+          clientId: recipeImportRowId(),
+          name: String(ingredient?.name || ''),
+          quantity: String(ingredient?.quantity || ''),
+          unitType:
+            ingredient?.unitType === 'ml' || ingredient?.unitType === 'each'
+              ? ingredient.unitType
+              : 'g',
+          shelfLifeDays: String(ingredient?.shelfLifeDays || 5),
+          note: String(ingredient?.note || ''),
+        })),
+        notes: Array.isArray(draft?.notes)
+          ? draft.notes.map((note: unknown) => String(note)).filter(Boolean)
+          : [],
+      })
+    } catch (err) {
+      setRecipeImportError(err instanceof Error ? err.message : 'Failed to read recipe')
+    } finally {
+      setRecipeImportReading(false)
+    }
+  }
+
+  function updateRecipeImportRow(
+    clientId: string,
+    patch: Partial<Omit<RecipeImportRow, 'clientId'>>
+  ) {
+    setRecipeImportDraft((current) =>
+      current
+        ? {
+            ...current,
+            ingredients: current.ingredients.map((row) =>
+              row.clientId === clientId ? { ...row, ...patch } : row
+            ),
+          }
+        : current
+    )
+  }
+
+  function addRecipeImportRow() {
+    setRecipeImportDraft((current) =>
+      current
+        ? {
+            ...current,
+            ingredients: [
+              ...current.ingredients,
+              {
+                clientId: recipeImportRowId(),
+                name: '',
+                quantity: '',
+                unitType: 'g',
+                shelfLifeDays: '5',
+                note: '',
+              },
+            ],
+          }
+        : current
+    )
+  }
+
+  function removeRecipeImportRow(clientId: string) {
+    setRecipeImportDraft((current) =>
+      current
+        ? {
+            ...current,
+            ingredients: current.ingredients.filter((row) => row.clientId !== clientId),
+          }
+        : current
+    )
+  }
+
+  async function saveRecipeImport() {
+    if (!recipeImportDraft) return
+
+    const recipeName = recipeImportDraft.recipeName.trim()
+    const yieldPortions = Number(recipeImportDraft.yieldPortions)
+    const invalidIngredient = recipeImportDraft.ingredients.some(
+      (row) =>
+        !row.name.trim() ||
+        !Number.isFinite(Number(row.quantity)) ||
+        Number(row.quantity) <= 0 ||
+        !Number.isFinite(Number(row.shelfLifeDays)) ||
+        Number(row.shelfLifeDays) <= 0
+    )
+
+    if (!recipeName) {
+      setRecipeImportError('Enter a recipe name.')
+      return
+    }
+
+    if (!Number.isFinite(yieldPortions) || yieldPortions < 1) {
+      setRecipeImportError('Recipe yield must be at least 1 portion.')
+      return
+    }
+
+    if (recipeImportDraft.ingredients.length === 0 || invalidIngredient) {
+      setRecipeImportError('Review every ingredient name, quantity and shelf life before saving.')
+      return
+    }
+
+    if (!confirmDiscardBomChanges()) return
+
+    try {
+      setRecipeImportSaving(true)
+      setRecipeImportError('')
+
+      const res = await fetch('/api/bom/recipe-import', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipeName,
+          yieldPortions,
+          ingredients: recipeImportDraft.ingredients.map((row) => ({
+            name: row.name.trim(),
+            quantity: Number(row.quantity),
+            unitType: row.unitType,
+            shelfLifeDays: Number(row.shelfLifeDays),
+            note: row.note.trim() || null,
+          })),
+          notes: recipeImportDraft.notes,
+        }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to save recipe')
+
+      await Promise.all([loadItems(), loadCosting()])
+      setSavedBomSignature('')
+      setParentId(data.item.id)
+      setParentSearch(`${data.item.name} [${data.item.sku}]`)
+      setParentTypeFilter('L1')
+      setRecipeImportOpen(false)
+      setRecipeImportFile(null)
+      setRecipeImportDraft(null)
+      if (recipePhotoInputRef.current) recipePhotoInputRef.current.value = ''
+      if (recipeFileInputRef.current) recipeFileInputRef.current.value = ''
+      setMessage(
+        `Recipe saved with ${data.ingredientCount} ingredient(s). ${data.createdL3Count} new L3 item(s) created and ${data.reusedL3Count} existing L3 item(s) reused. Supplier links and prices remain blank.`
+      )
+    } catch (err) {
+      setRecipeImportError(err instanceof Error ? err.message : 'Failed to save recipe')
+    } finally {
+      setRecipeImportSaving(false)
     }
   }
 
@@ -2521,11 +2798,29 @@ export default function BomPage() {
             </p>
           </div>
 
-          {costingLoading ? (
-            <div className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-600">
-              Loading costing…
-            </div>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {costingLoading ? (
+              <div className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-600">
+                Loading costing…
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                setRecipeImportOpen((value) => !value)
+                setRecipeImportError('')
+              }}
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 font-medium text-white hover:bg-teal-800"
+              aria-expanded={recipeImportOpen}
+            >
+              <Sparkles aria-hidden="true" className="h-4 w-4" />
+              AI Recipe Import
+              <ChevronDown
+                aria-hidden="true"
+                className={`h-4 w-4 transition-transform ${recipeImportOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+          </div>
         </div>
 
         {error ? (
@@ -2536,6 +2831,253 @@ export default function BomPage() {
           <div className="sticky top-4 z-40 mt-4 whitespace-pre-wrap rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700 shadow-sm">
             {message}
           </div>
+        ) : null}
+
+        {recipeImportOpen ? (
+          <section className="mt-4 rounded-lg border bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900">Import Recipe</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Review the AI draft before creating the L1 dish and its generic L3 ingredients.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <input
+                  ref={recipePhotoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  capture="environment"
+                  onChange={(event) => chooseRecipeImportFile(event.target.files?.[0] || null)}
+                  className="hidden"
+                />
+                <input
+                  ref={recipeFileInputRef}
+                  type="file"
+                  accept=".pdf,.txt,.csv,.xlsx,.xls,image/jpeg,image/png,image/webp"
+                  onChange={(event) => chooseRecipeImportFile(event.target.files?.[0] || null)}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => recipePhotoInputRef.current?.click()}
+                  disabled={recipeImportReading || recipeImportSaving}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-lg border px-4 py-2 font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <Camera aria-hidden="true" className="h-4 w-4" />
+                  Take Photo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => recipeFileInputRef.current?.click()}
+                  disabled={recipeImportReading || recipeImportSaving}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-lg border px-4 py-2 font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <FileUp aria-hidden="true" className="h-4 w-4" />
+                  Upload File
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 text-sm text-slate-700">
+                {recipeImportFile ? (
+                  <span className="block truncate">{recipeImportFile.name}</span>
+                ) : (
+                  'No recipe selected'
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={readRecipeImport}
+                disabled={!recipeImportFile || recipeImportReading || recipeImportSaving}
+                className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {recipeImportReading ? (
+                  <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles aria-hidden="true" className="h-4 w-4" />
+                )}
+                {recipeImportReading ? 'Reading Recipe...' : 'Read Recipe'}
+              </button>
+            </div>
+
+            {recipeImportError ? (
+              <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {recipeImportError}
+              </div>
+            ) : null}
+
+            {recipeImportDraft ? (
+              <div className="mt-6 border-t pt-5">
+                <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
+                  <label className="text-sm font-medium text-slate-900">
+                    Recipe name
+                    <input
+                      value={recipeImportDraft.recipeName}
+                      onChange={(event) =>
+                        setRecipeImportDraft((current) =>
+                          current ? { ...current, recipeName: event.target.value } : current
+                        )
+                      }
+                      className="mt-1 w-full rounded-lg border px-3 py-2"
+                    />
+                  </label>
+                  <label className="text-sm font-medium text-slate-900">
+                    Recipe yield (portions)
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      step="1"
+                      value={recipeImportDraft.yieldPortions}
+                      onChange={(event) =>
+                        setRecipeImportDraft((current) =>
+                          current ? { ...current, yieldPortions: event.target.value } : current
+                        )
+                      }
+                      className="mt-1 w-full rounded-lg border px-3 py-2"
+                    />
+                  </label>
+                </div>
+
+                <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Ingredients</h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Quantities are for the full uploaded batch. Supplier and price matching is skipped.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addRecipeImportRow}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                  >
+                    <Plus aria-hidden="true" className="h-4 w-4" />
+                    Add Ingredient
+                  </button>
+                </div>
+
+                <div className="mt-3 space-y-3">
+                  {recipeImportDraft.ingredients.map((row) => {
+                    const matchingL3 = l3Items.find(
+                      (item) =>
+                        item.unitType === row.unitType &&
+                        recipeIngredientKey(item.name) === recipeIngredientKey(row.name)
+                    )
+
+                    return (
+                      <div
+                        key={row.clientId}
+                        className="grid gap-3 border-t pt-3 md:grid-cols-[minmax(180px,1fr)_120px_100px_120px_110px_44px] md:items-end"
+                      >
+                        <label className="text-xs font-medium text-slate-700">
+                          Ingredient
+                          <input
+                            value={row.name}
+                            onChange={(event) =>
+                              updateRecipeImportRow(row.clientId, { name: event.target.value })
+                            }
+                            className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                          />
+                        </label>
+                        <label className="text-xs font-medium text-slate-700">
+                          Recipe quantity
+                          <input
+                            type="number"
+                            min="0.000001"
+                            step="any"
+                            value={row.quantity}
+                            onChange={(event) =>
+                              updateRecipeImportRow(row.clientId, { quantity: event.target.value })
+                            }
+                            className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                          />
+                        </label>
+                        <label className="text-xs font-medium text-slate-700">
+                          Unit
+                          <select
+                            value={row.unitType}
+                            onChange={(event) =>
+                              updateRecipeImportRow(row.clientId, {
+                                unitType: event.target.value as UnitType,
+                              })
+                            }
+                            className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                          >
+                            <option value="g">g</option>
+                            <option value="ml">ml</option>
+                            <option value="each">each</option>
+                          </select>
+                        </label>
+                        <label className="text-xs font-medium text-slate-700">
+                          Shelf life (days)
+                          <input
+                            type="number"
+                            min="1"
+                            max="3650"
+                            step="1"
+                            value={row.shelfLifeDays}
+                            onChange={(event) =>
+                              updateRecipeImportRow(row.clientId, {
+                                shelfLifeDays: event.target.value,
+                              })
+                            }
+                            className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                          />
+                        </label>
+                        <div className="pb-2 text-xs font-medium text-slate-600">
+                          {matchingL3 ? 'Existing L3' : 'New L3'}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeRecipeImportRow(row.clientId)}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border text-slate-600 hover:bg-red-50 hover:text-red-700"
+                          title="Remove ingredient"
+                          aria-label={`Remove ${row.name || 'ingredient'}`}
+                        >
+                          <Trash2 aria-hidden="true" className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {recipeImportDraft.notes.length > 0 ? (
+                  <details className="mt-4 rounded-lg border px-4 py-3 text-sm text-slate-700">
+                    <summary className="cursor-pointer font-medium text-slate-900">
+                      Review notes ({recipeImportDraft.notes.length})
+                    </summary>
+                    <ul className="mt-3 space-y-2">
+                      {recipeImportDraft.notes.map((note, index) => (
+                        <li key={`${note}-${index}`}>{note}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+
+                <div className="mt-5 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={saveRecipeImport}
+                    disabled={recipeImportSaving || recipeImportReading}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-green-700 px-5 py-2 font-medium text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {recipeImportSaving ? (
+                      <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles aria-hidden="true" className="h-4 w-4" />
+                    )}
+                    {recipeImportSaving ? 'Saving Recipe...' : 'Save Draft Recipe'}
+                  </button>
+                  <span className="text-xs text-slate-500">
+                    Creates an unpriced L1 draft and opens it below for final BOM review.
+                  </span>
+                </div>
+              </div>
+            ) : null}
+          </section>
         ) : null}
 
         <div className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
