@@ -1,7 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ArrowLeft,
   Camera,
   ChevronDown,
   FileUp,
@@ -550,6 +552,7 @@ export default function BomPage() {
   const [parentId, setParentId] = useState('')
   const [parentSearch, setParentSearch] = useState('')
   const [parentTypeFilter, setParentTypeFilter] = useState<'ALL' | 'L0' | 'L1' | 'L2'>('ALL')
+  const [showItemFinder, setShowItemFinder] = useState(true)
   const [recipeImportOpen, setRecipeImportOpen] = useState(false)
   const [recipeImportFile, setRecipeImportFile] = useState<File | null>(null)
   const [recipeImportDraft, setRecipeImportDraft] = useState<RecipeImportDraft | null>(null)
@@ -949,8 +952,15 @@ export default function BomPage() {
 
     const params = new URLSearchParams(window.location.search)
     const parentIdFromUrl = params.get('parentId')
+    const openRecipeImport = params.get('import') === 'recipe'
+
+    if (openRecipeImport) {
+      setRecipeImportOpen(true)
+      setShowItemFinder(false)
+    }
 
     if (parentIdFromUrl) {
+      setShowItemFinder(false)
       setParentId(parentIdFromUrl)
     }
   }, [parentId])
@@ -2799,9 +2809,16 @@ export default function BomPage() {
       <div className="mx-auto max-w-7xl">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold text-slate-900">BOM Builder</h1>
+            <Link
+              href="/items"
+              className="mb-3 inline-flex items-center gap-2 text-sm font-medium text-teal-700 hover:text-teal-800"
+            >
+              <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+              Back to My Items
+            </Link>
+            <h1 className="text-3xl font-semibold text-slate-900">Build Item</h1>
             <p className="mt-2 text-slate-800">
-              Build L0 menus, L1 dishes, and nested L2 prep items from one place.
+              Build and cost L0 menus, L1 dishes, and nested L2 prep items.
             </p>
           </div>
 
@@ -3079,7 +3096,7 @@ export default function BomPage() {
                     {recipeImportSaving ? 'Saving Recipe...' : 'Save Draft Recipe'}
                   </button>
                   <span className="text-xs text-slate-500">
-                    Creates an unpriced L1 draft and opens it below for final BOM review.
+                    Creates an unpriced L1 draft and opens it here for final review.
                   </span>
                 </div>
               </div>
@@ -3087,6 +3104,7 @@ export default function BomPage() {
           </section>
         ) : null}
 
+        {showItemFinder ? (
         <div className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <div className="grid gap-4 md:grid-cols-[1fr_180px]">
             <label className="text-sm font-medium text-slate-900">
@@ -3164,6 +3182,7 @@ export default function BomPage() {
             </div>
           ) : null}
         </div>
+        ) : null}
 
         {loading ? <div className="mt-6 text-sm text-slate-700">Loading BOM…</div> : null}
 

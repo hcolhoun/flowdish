@@ -235,7 +235,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       item: copied,
-      bomBuilderUrl: `/bom?parentId=${copied.id}`,
+      bomBuilderUrl: `/items/build?parentId=${copied.id}`,
     })
   } catch (error) {
     const tenantError = tenantErrorResponse(error)

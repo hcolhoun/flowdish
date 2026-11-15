@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Sparkles } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
 
 type ItemType = 'L0' | 'L1' | 'L2' | 'L3'
@@ -385,7 +386,7 @@ export default function ItemsPage() {
       }
 
       if (buildAfterSave && itemType !== 'L3') {
-        router.push(`/bom?parentId=${encodeURIComponent(data.id)}`)
+        router.push(`/items/build?parentId=${encodeURIComponent(data.id)}`)
         return
       }
 
@@ -469,7 +470,7 @@ export default function ItemsPage() {
         throw new Error(data.error || 'Failed to copy item')
       }
 
-      setMessage(`Copied to ${data.item.name} [${data.item.sku}]. Open it in BOM Builder to make changes.`)
+      setMessage(`Copied to ${data.item.name} [${data.item.sku}]. Use Build to make changes.`)
       setTypeFilter(data.item.itemType)
       setSearch(data.item.sku)
       scrollToMessage()
@@ -489,18 +490,27 @@ export default function ItemsPage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">My Items</h1>
             <p className="mt-2 text-slate-800">
-              Create and view L0 menus, L1 dishes, L2 prep items, and L3 bought ingredients.
+              Create, build, and cost L0 menus, L1 dishes, L2 prep items, and L3 ingredients.
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={refreshCosting}
-            disabled={costingLoading}
-            className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {costingLoading ? 'Refreshing costing…' : 'Refresh L1 Costing'}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/items/build?import=recipe"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"
+            >
+              <Sparkles aria-hidden="true" className="h-4 w-4" />
+              AI Recipe Import
+            </Link>
+            <button
+              type="button"
+              onClick={refreshCosting}
+              disabled={costingLoading}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {costingLoading ? 'Refreshing costing…' : 'Refresh L1 Costing'}
+            </button>
+          </div>
         </div>
 
         <div ref={messageRef}>
@@ -625,10 +635,10 @@ export default function ItemsPage() {
           {(itemType === 'L0' || itemType === 'L1' || itemType === 'L2') ? (
             <div className="md:col-span-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               {itemType === 'L0'
-                ? 'L0 menus are built in BOM Builder by adding L1 dishes.'
+                ? 'Build this L0 menu by adding its L1 dishes.'
                 : itemType === 'L1'
-                  ? 'L1 selling price is now handled in BOM Builder when costing the dish.'
-                  : 'L2 standard batch output is now handled in BOM Builder when building the prep item.'}
+                  ? 'Selling price and recipe costing are handled when you build this L1 dish.'
+                  : 'Standard batch output is handled when you build this L2 prep item.'}
             </div>
           ) : null}
         </form>
@@ -667,7 +677,7 @@ export default function ItemsPage() {
         <div className="mt-4 flex flex-col gap-3 rounded-xl border bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-slate-700">
             L2 prep times are estimated in batches of five. Review and confirm each estimate in
-            BOM Builder before the item is complete.
+            the item&apos;s Build workspace before it is complete.
           </div>
           <button
             type="button"
@@ -802,10 +812,10 @@ export default function ItemsPage() {
                             <div className="flex flex-wrap gap-2">
                               {item.itemType === 'L0' || item.itemType === 'L1' || item.itemType === 'L2' ? (
                                 <Link
-                                  href={`/bom?parentId=${item.id}`}
+                                  href={`/items/build?parentId=${item.id}`}
                                   className="rounded-lg border border-blue-300 px-3 py-1 text-sm text-blue-700 hover:bg-blue-50"
                                 >
-                                  Build BOM
+                                  {item.buildStatus === 'BUILT' ? 'Edit Build' : 'Build'}
                                 </Link>
                               ) : null}
 
@@ -1049,8 +1059,8 @@ export default function ItemsPage() {
         </div>
 
         <div className="mt-4 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700">
-          L0 menus are built from L1 dishes in BOM Builder. L1 food cost uses direct L1 → L3 rows
-          plus L1 → L2 prep components expanded through L2 → L3.
+          L0 menus are built from L1 dishes. L1 food cost uses direct L1 → L3 rows plus L1 → L2
+          prep components expanded through L2 → L3.
         </div>
       </div>
     </main>

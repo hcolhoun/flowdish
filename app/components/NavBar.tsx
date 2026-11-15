@@ -10,7 +10,6 @@ import {
   ClipboardCheck,
   ClipboardList,
   CookingPot,
-  GitBranch,
   LayoutDashboard,
   PackageSearch,
   ShieldCheck,
@@ -51,13 +50,12 @@ type NavLink = {
 
 const fullLinks: NavLink[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/items', label: 'My Items', icon: Boxes },
-  { href: '/bom', label: 'BOM', icon: GitBranch },
   { href: '/suppliers', label: 'Supplier Products', icon: PackageSearch },
+  { href: '/items', label: 'My Items', icon: Boxes },
   { href: '/sops', label: 'SOPs', icon: ClipboardList },
+  { href: '/planning', label: 'Planning', icon: CalendarRange },
   { href: '/deliveries', label: 'Deliveries', icon: Truck },
   { href: '/inventory', label: 'Inventory', icon: Boxes },
-  { href: '/planning', label: 'Planning', icon: CalendarRange },
   { href: '/prep', label: 'Record Prep', icon: CookingPot },
   { href: '/sales', label: 'Sales', icon: ChartNoAxesCombined },
   { href: '/waste', label: 'Waste', icon: Trash2 },
@@ -198,6 +196,7 @@ export default function NavBar() {
               {links.map((link) => {
                 const Icon = link.icon
                 const active =
+                  (link.href === '/items' && pathname === '/bom') ||
                   pathname === link.href ||
                   (link.href !== '/' && pathname.startsWith(`${link.href}/`))
 
