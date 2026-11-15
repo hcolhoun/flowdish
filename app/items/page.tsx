@@ -3,8 +3,9 @@
 import Link from 'next/link'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Sparkles } from 'lucide-react'
+import { FilterX, Sparkles } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
+import SortableTableHeader from '@/app/components/SortableTableHeader'
 
 type ItemType = 'L0' | 'L1' | 'L2' | 'L3'
 type UnitType = 'g' | 'ml' | 'each'
@@ -103,6 +104,57 @@ type CostingRow = {
   }>
 }
 
+type ItemSortKey =
+  | 'sku'
+  | 'name'
+  | 'itemType'
+  | 'buildStatus'
+  | 'unitType'
+  | 'shelfLifeDays'
+  | 'sellingPrice'
+  | 'foodCost'
+  | 'grossMarginPercent'
+  | 'standardBatchOutput'
+  | 'prepTime'
+
+type SortDirection = 'asc' | 'desc'
+
+const ITEM_LIST_PREFERENCES_KEY = 'flowdish:item-list-preferences:v1'
+const ITEM_SORT_KEYS: ItemSortKey[] = [
+  'sku',
+  'name',
+  'itemType',
+  'buildStatus',
+  'unitType',
+  'shelfLifeDays',
+  'sellingPrice',
+  'foodCost',
+  'grossMarginPercent',
+  'standardBatchOutput',
+  'prepTime',
+]
+const itemCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' })
+
+function compareItemValues(
+  first: string | number | null | undefined,
+  second: string | number | null | undefined,
+  direction: SortDirection
+) {
+  const firstMissing = first === null || first === undefined || first === ''
+  const secondMissing = second === null || second === undefined || second === ''
+
+  if (firstMissing && secondMissing) return 0
+  if (firstMissing) return 1
+  if (secondMissing) return -1
+
+  const comparison =
+    typeof first === 'number' && typeof second === 'number'
+      ? first - second
+      : itemCollator.compare(String(first), String(second))
+
+  return direction === 'asc' ? comparison : -comparison
+}
+
 function slugifyName(name: string) {
   return name
     .trim()
@@ -133,6 +185,9 @@ export default function ItemsPage() {
 
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<'ALL' | ItemType>('ALL')
+  const [sortKey, setSortKey] = useState<ItemSortKey | null>(null)
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
+  const [listPreferencesLoaded, setListPreferencesLoaded] = useState(false)
 
   const [loading, setLoading] = useState(false)
   const [costingLoading, setCostingLoading] = useState(false)
@@ -148,7 +203,7 @@ export default function ItemsPage() {
   const filteredItems = useMemo(() => {
     const q = search.trim().toLowerCase()
 
-    return items.filter((item) => {
+    const matchingItems = items.filter((item) => {
       const matchesType = typeFilter === 'ALL' || item.itemType === typeFilter
       const matchesSearch =
         !q ||
@@ -157,7 +212,89 @@ export default function ItemsPage() {
 
       return matchesType && matchesSearch
     })
-  }, [items, search, typeFilter])
+
+    if (!sortKey) return matchingItems
+
+    return [...matchingItems].sort((first, second) => {
+      const firstCosting = costingByItemId.get(first.id)
+      const secondCosting = costingByItemId.get(second.id)
+
+      if (sortKey === 'sku') {
+        return compareItemValues(first.sku, second.sku, sortDirection)
+      }
+      if (sortKey === 'name') {
+        return compareItemValues(first.name, second.name, sortDirection)
+      }
+      if (sortKey === 'itemType') {
+        return compareItemValues(first.itemType, second.itemType, sortDirection)
+      }
+      if (sortKey === 'buildStatus') {
+        return compareItemValues(first.buildStatus, second.buildStatus, sortDirection)
+      }
+      if (sortKey === 'unitType') {
+        return compareItemValues(
+          first.itemType === 'L0' || first.itemType === 'L1' ? null : first.unitType,
+          second.itemType === 'L0' || second.itemType === 'L1' ? null : second.unitType,
+          sortDirection
+        )
+      }
+      if (sortKey === 'shelfLifeDays') {
+        return compareItemValues(first.shelfLifeDays, second.shelfLifeDays, sortDirection)
+      }
+      if (sortKey === 'sellingPrice') {
+        return compareItemValues(first.sellingPrice, second.sellingPrice, sortDirection)
+      }
+      if (sortKey === 'foodCost') {
+        return compareItemValues(firstCosting?.foodCost, secondCosting?.foodCost, sortDirection)
+      }
+      if (sortKey === 'grossMarginPercent') {
+        return compareItemValues(
+          firstCosting?.grossMarginPercent,
+          secondCosting?.grossMarginPercent,
+          sortDirection
+        )
+      }
+      if (sortKey === 'standardBatchOutput') {
+        return compareItemValues(
+          first.standardBatchOutput,
+          second.standardBatchOutput,
+          sortDirection
+        )
+      }
+
+      const firstPrepTime =
+        first.itemType === 'L2'
+          ? first.prepHandsOnMinutes
+          : first.itemType === 'L1'
+            ? first.serviceHandsOnMinutes
+            : null
+      const secondPrepTime =
+        second.itemType === 'L2'
+          ? second.prepHandsOnMinutes
+          : second.itemType === 'L1'
+            ? second.serviceHandsOnMinutes
+            : null
+
+      return compareItemValues(firstPrepTime, secondPrepTime, sortDirection)
+    })
+  }, [costingByItemId, items, search, sortDirection, sortKey, typeFilter])
+
+  function handleItemSort(nextSortKey: ItemSortKey) {
+    if (sortKey === nextSortKey) {
+      setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+
+    setSortKey(nextSortKey)
+    setSortDirection('asc')
+  }
+
+  function clearItemFilters() {
+    setSearch('')
+    setTypeFilter('ALL')
+    setSortKey(null)
+    setSortDirection('asc')
+  }
 
   async function safeJson(res: Response) {
     const text = await res.text()
@@ -316,6 +453,47 @@ export default function ItemsPage() {
   useEffect(() => {
     loadData()
   }, [])
+
+  useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem(ITEM_LIST_PREFERENCES_KEY)
+      if (!stored) return
+
+      const preferences = JSON.parse(stored) as Record<string, unknown>
+      if (typeof preferences.search === 'string') setSearch(preferences.search)
+      if (
+        preferences.typeFilter === 'ALL' ||
+        preferences.typeFilter === 'L0' ||
+        preferences.typeFilter === 'L1' ||
+        preferences.typeFilter === 'L2' ||
+        preferences.typeFilter === 'L3'
+      ) {
+        setTypeFilter(preferences.typeFilter)
+      }
+      if (
+        typeof preferences.sortKey === 'string' &&
+        ITEM_SORT_KEYS.includes(preferences.sortKey as ItemSortKey)
+      ) {
+        setSortKey(preferences.sortKey as ItemSortKey)
+      }
+      if (preferences.sortDirection === 'asc' || preferences.sortDirection === 'desc') {
+        setSortDirection(preferences.sortDirection)
+      }
+    } catch {
+      window.sessionStorage.removeItem(ITEM_LIST_PREFERENCES_KEY)
+    } finally {
+      setListPreferencesLoaded(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!listPreferencesLoaded) return
+
+    window.sessionStorage.setItem(
+      ITEM_LIST_PREFERENCES_KEY,
+      JSON.stringify({ search, typeFilter, sortKey, sortDirection })
+    )
+  }, [listPreferencesLoaded, search, sortDirection, sortKey, typeFilter])
 
   function updateSuggestedSku(nextType: ItemType, nextName: string, force = false) {
     if (nextType === 'L3') return
@@ -690,22 +868,94 @@ export default function ItemsPage() {
         </div>
 
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
+          <div className="flex items-center justify-between gap-3 border-b px-6 py-4">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">My Items List</h2>
+              <p className="mt-1 text-sm text-slate-700">
+                Showing {filteredItems.length} of {items.length} items.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={clearItemFilters}
+              disabled={!search && typeFilter === 'ALL' && sortKey === null}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <FilterX aria-hidden="true" className="h-4 w-4" />
+              Clear filters
+            </button>
+          </div>
           <div className="max-h-[70vh] overflow-auto">
             <table className="min-w-[1200px] w-full text-left">
               <thead className="sticky top-0 z-20 bg-slate-100 text-sm shadow-[0_1px_0_0_rgba(148,163,184,0.55)]">
                 <tr>
-                  <th className="px-4 py-3 text-slate-800">SKU</th>
-                  <th className="px-4 py-3 text-slate-800">Name</th>
-                  <th className="px-4 py-3 text-slate-800">Type</th>
-                  <th className="px-4 py-3 text-slate-800">Build</th>
-                  <th className="px-4 py-3 text-slate-800">Unit</th>
-                  <th className="px-4 py-3 text-slate-800">Shelf Life</th>
-                  <th className="px-4 py-3 text-slate-800">Selling Price</th>
-                  <th className="px-4 py-3 text-slate-800">Food Cost</th>
-                  <th className="px-4 py-3 text-slate-800">Gross Margin</th>
-                  <th className="px-4 py-3 text-slate-800">Std Batch Output</th>
-                  <th className="px-4 py-3 text-slate-800">Prep / Service Time</th>
+                  <SortableTableHeader
+                    label="SKU"
+                    active={sortKey === 'sku'}
+                    direction={sortDirection}
+                    onSort={() => handleItemSort('sku')}
+                  />
+                  <SortableTableHeader
+                    label="Name"
+                    active={sortKey === 'name'}
+                    direction={sortDirection}
+                    onSort={() => handleItemSort('name')}
+                  />
                   <th className="px-4 py-3 text-slate-800">Actions</th>
+                  <SortableTableHeader
+                    label="Type"
+                    active={sortKey === 'itemType'}
+                    direction={sortDirection}
+                    onSort={() => handleItemSort('itemType')}
+                  />
+                  <SortableTableHeader
+                    label="Build"
+                    active={sortKey === 'buildStatus'}
+                    direction={sortDirection}
+                    onSort={() => handleItemSort('buildStatus')}
+                  />
+                  <SortableTableHeader
+                    label="Unit"
+                    active={sortKey === 'unitType'}
+                    direction={sortDirection}
+                    onSort={() => handleItemSort('unitType')}
+                  />
+                  <SortableTableHeader
+                    label="Shelf Life"
+                    active={sortKey === 'shelfLifeDays'}
+                    direction={sortDirection}
+                    onSort={() => handleItemSort('shelfLifeDays')}
+                  />
+                  <SortableTableHeader
+                    label="Selling Price"
+                    active={sortKey === 'sellingPrice'}
+                    direction={sortDirection}
+                    onSort={() => handleItemSort('sellingPrice')}
+                  />
+                  <SortableTableHeader
+                    label="Food Cost"
+                    active={sortKey === 'foodCost'}
+                    direction={sortDirection}
+                    onSort={() => handleItemSort('foodCost')}
+                  />
+                  <SortableTableHeader
+                    label="Gross Margin"
+                    active={sortKey === 'grossMarginPercent'}
+                    direction={sortDirection}
+                    onSort={() => handleItemSort('grossMarginPercent')}
+                  />
+                  <SortableTableHeader
+                    label="Std Batch Output"
+                    active={sortKey === 'standardBatchOutput'}
+                    direction={sortDirection}
+                    onSort={() => handleItemSort('standardBatchOutput')}
+                  />
+                  <SortableTableHeader
+                    label="Prep / Service Time"
+                    active={sortKey === 'prepTime'}
+                    direction={sortDirection}
+                    onSort={() => handleItemSort('prepTime')}
+                  />
                 </tr>
               </thead>
 
@@ -726,6 +976,51 @@ export default function ItemsPage() {
                         <tr className="border-t">
                           <td className="px-4 py-3 text-slate-800">{item.sku}</td>
                           <td className="px-4 py-3 text-slate-800">{item.name}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-2">
+                              {item.itemType === 'L0' ||
+                              item.itemType === 'L1' ||
+                              item.itemType === 'L2' ? (
+                                <Link
+                                  href={`/items/build?parentId=${item.id}`}
+                                  className="rounded-lg border border-blue-300 px-3 py-1 text-sm text-blue-700 hover:bg-blue-50"
+                                >
+                                  {item.buildStatus === 'BUILT' ? 'Edit Build' : 'Build'}
+                                </Link>
+                              ) : null}
+
+                              {item.itemType === 'L1' ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedCostingId(expanded ? null : item.id)
+                                  }
+                                  className="rounded-lg border px-3 py-1 text-sm text-slate-800 hover:bg-slate-50"
+                                >
+                                  {expanded ? 'Hide Costing' : 'View Costing'}
+                                </button>
+                              ) : null}
+
+                              {item.itemType === 'L1' || item.itemType === 'L2' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => copyItem(item)}
+                                  disabled={copyingItemId === item.id}
+                                  className="rounded-lg border border-slate-300 px-3 py-1 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {copyingItemId === item.id ? 'Copying...' : 'Copy to New'}
+                                </button>
+                              ) : null}
+
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(item.id, `${item.name} [${item.sku}]`)}
+                                className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
                           <td className="px-4 py-3 text-slate-800">{item.itemType}</td>
                           <td className="px-4 py-3">{buildStatusBadge(item)}</td>
                           <td className="px-4 py-3 text-slate-800">
@@ -807,49 +1102,6 @@ export default function ItemsPage() {
                             ) : (
                               'N/A'
                             )}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex flex-wrap gap-2">
-                              {item.itemType === 'L0' || item.itemType === 'L1' || item.itemType === 'L2' ? (
-                                <Link
-                                  href={`/items/build?parentId=${item.id}`}
-                                  className="rounded-lg border border-blue-300 px-3 py-1 text-sm text-blue-700 hover:bg-blue-50"
-                                >
-                                  {item.buildStatus === 'BUILT' ? 'Edit Build' : 'Build'}
-                                </Link>
-                              ) : null}
-
-                              {item.itemType === 'L1' ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setExpandedCostingId(expanded ? null : item.id)
-                                  }
-                                  className="rounded-lg border px-3 py-1 text-sm text-slate-800 hover:bg-slate-50"
-                                >
-                                  {expanded ? 'Hide Costing' : 'View Costing'}
-                                </button>
-                              ) : null}
-
-                              {item.itemType === 'L1' || item.itemType === 'L2' ? (
-                                <button
-                                  type="button"
-                                  onClick={() => copyItem(item)}
-                                  disabled={copyingItemId === item.id}
-                                  className="rounded-lg border border-slate-300 px-3 py-1 text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  {copyingItemId === item.id ? 'Copying...' : 'Copy to New'}
-                                </button>
-                              ) : null}
-
-                              <button
-                                type="button"
-                                onClick={() => handleDelete(item.id, `${item.name} [${item.sku}]`)}
-                                className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-                              >
-                                Delete
-                              </button>
-                            </div>
                           </td>
                         </tr>
 

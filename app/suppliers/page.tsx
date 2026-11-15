@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { FilterX } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
 import ImageRedactionEditor, {
   type ImageRedactionEditorHandle,
 } from '@/app/components/ImageRedactionEditor'
+import SortableTableHeader from '@/app/components/SortableTableHeader'
 import { sanitiseDocumentForAi } from '@/lib/document-privacy'
 
 type UnitType = 'g' | 'ml' | 'each'
@@ -127,6 +129,51 @@ type ImportImpactResponse = {
   affectedL1s: ImportImpactRow[]
 }
 
+type SupplierSortKey =
+  | 'name'
+  | 'supplierSku'
+  | 'packSize'
+  | 'weight'
+  | 'packPrice'
+  | 'unitPrice'
+  | 'linkedItem'
+  | 'createdAt'
+
+type SortDirection = 'asc' | 'desc'
+
+const SUPPLIER_CATALOGUE_PREFERENCES_KEY = 'flowdish:supplier-catalogue-preferences:v1'
+const SUPPLIER_SORT_KEYS: SupplierSortKey[] = [
+  'name',
+  'supplierSku',
+  'packSize',
+  'weight',
+  'packPrice',
+  'unitPrice',
+  'linkedItem',
+  'createdAt',
+]
+const catalogueCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' })
+
+function compareCatalogueValues(
+  first: string | number | null | undefined,
+  second: string | number | null | undefined,
+  direction: SortDirection
+) {
+  const firstMissing = first === null || first === undefined || first === ''
+  const secondMissing = second === null || second === undefined || second === ''
+
+  if (firstMissing && secondMissing) return 0
+  if (firstMissing) return 1
+  if (secondMissing) return -1
+
+  const comparison =
+    typeof first === 'number' && typeof second === 'number'
+      ? first - second
+      : catalogueCollator.compare(String(first), String(second))
+
+  return direction === 'asc' ? comparison : -comparison
+}
+
 function toInputValue(value: string | number | null | undefined) {
   if (value === null || value === undefined) return ''
   return String(value)
@@ -187,6 +234,9 @@ export default function SuppliersPage() {
   const [search, setSearch] = useState('')
   const [supplierFilter, setSupplierFilter] = useState('ALL')
   const [linkFilter, setLinkFilter] = useState('ALL')
+  const [sortKey, setSortKey] = useState<SupplierSortKey | null>(null)
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
+  const [cataloguePreferencesLoaded, setCataloguePreferencesLoaded] = useState(false)
 
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -293,6 +343,55 @@ export default function SuppliersPage() {
     loadProducts()
   }, [])
 
+  useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem(SUPPLIER_CATALOGUE_PREFERENCES_KEY)
+      if (!stored) return
+
+      const preferences = JSON.parse(stored) as Record<string, unknown>
+      if (typeof preferences.search === 'string') setSearch(preferences.search)
+      if (typeof preferences.supplierFilter === 'string') {
+        setSupplierFilter(preferences.supplierFilter)
+      }
+      if (
+        preferences.linkFilter === 'ALL' ||
+        preferences.linkFilter === 'LINKED' ||
+        preferences.linkFilter === 'UNLINKED'
+      ) {
+        setLinkFilter(preferences.linkFilter)
+      }
+      if (
+        typeof preferences.sortKey === 'string' &&
+        SUPPLIER_SORT_KEYS.includes(preferences.sortKey as SupplierSortKey)
+      ) {
+        setSortKey(preferences.sortKey as SupplierSortKey)
+      }
+      if (preferences.sortDirection === 'asc' || preferences.sortDirection === 'desc') {
+        setSortDirection(preferences.sortDirection)
+      }
+    } catch {
+      window.sessionStorage.removeItem(SUPPLIER_CATALOGUE_PREFERENCES_KEY)
+    } finally {
+      setCataloguePreferencesLoaded(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!cataloguePreferencesLoaded) return
+
+    window.sessionStorage.setItem(
+      SUPPLIER_CATALOGUE_PREFERENCES_KEY,
+      JSON.stringify({ search, supplierFilter, linkFilter, sortKey, sortDirection })
+    )
+  }, [
+    cataloguePreferencesLoaded,
+    linkFilter,
+    search,
+    sortDirection,
+    sortKey,
+    supplierFilter,
+  ])
+
   const suppliers = useMemo(() => {
     return Array.from(new Set(products.map((p) => p.supplier))).sort()
   }, [products])
@@ -300,7 +399,7 @@ export default function SuppliersPage() {
   const filteredProducts = useMemo(() => {
     const q = search.toLowerCase().trim()
 
-    return products.filter((product) => {
+    const matchingProducts = products.filter((product) => {
       const matchesSearch =
         !q ||
         product.name.toLowerCase().includes(q) ||
@@ -317,9 +416,73 @@ export default function SuppliersPage() {
 
       return matchesSearch && matchesSupplier && matchesLink
     })
-  }, [products, search, supplierFilter, linkFilter])
+
+    if (!sortKey) return matchingProducts
+
+    return [...matchingProducts].sort((first, second) => {
+      if (sortKey === 'name') {
+        const nameComparison = compareCatalogueValues(first.name, second.name, sortDirection)
+        return (
+          nameComparison ||
+          compareCatalogueValues(first.supplier, second.supplier, sortDirection)
+        )
+      }
+
+      if (sortKey === 'supplierSku') {
+        return compareCatalogueValues(first.supplierSku, second.supplierSku, sortDirection)
+      }
+
+      if (sortKey === 'packSize') {
+        return compareCatalogueValues(first.packSize, second.packSize, sortDirection)
+      }
+
+      if (sortKey === 'weight') {
+        return compareCatalogueValues(first.weight, second.weight, sortDirection)
+      }
+
+      if (sortKey === 'packPrice') {
+        return compareCatalogueValues(first.packPrice, second.packPrice, sortDirection)
+      }
+
+      if (sortKey === 'unitPrice') {
+        return compareCatalogueValues(first.unitPrice, second.unitPrice, sortDirection)
+      }
+
+      if (sortKey === 'linkedItem') {
+        return compareCatalogueValues(
+          first.linkedItem ? `${first.linkedItem.name} ${first.linkedItem.sku}` : null,
+          second.linkedItem ? `${second.linkedItem.name} ${second.linkedItem.sku}` : null,
+          sortDirection
+        )
+      }
+
+      return compareCatalogueValues(
+        new Date(first.createdAt).getTime(),
+        new Date(second.createdAt).getTime(),
+        sortDirection
+      )
+    })
+  }, [products, search, supplierFilter, linkFilter, sortKey, sortDirection])
 
   const visibleProducts = filteredProducts.slice(0, 200)
+
+  function handleCatalogueSort(nextSortKey: SupplierSortKey) {
+    if (sortKey === nextSortKey) {
+      setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+
+    setSortKey(nextSortKey)
+    setSortDirection('asc')
+  }
+
+  function clearCatalogueFilters() {
+    setSearch('')
+    setSupplierFilter('ALL')
+    setLinkFilter('ALL')
+    setSortKey(null)
+    setSortDirection('asc')
+  }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     setError('')
@@ -1517,25 +1680,78 @@ async function handlePriceOnlySave() {
         </section>
 
         <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <div className="border-b px-6 py-4">
-            <h2 className="text-xl font-semibold text-slate-900">Product Catalogue</h2>
-            <p className="mt-1 text-sm text-slate-700">
-              Showing {visibleProducts.length} of {filteredProducts.length} filtered products.
-            </p>
+          <div className="flex items-start justify-between gap-3 border-b px-6 py-4">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Product Catalogue</h2>
+              <p className="mt-1 text-sm text-slate-700">
+                Showing {visibleProducts.length} of {filteredProducts.length} filtered products.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={clearCatalogueFilters}
+              disabled={
+                !search && supplierFilter === 'ALL' && linkFilter === 'ALL' && sortKey === null
+              }
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <FilterX aria-hidden="true" className="h-4 w-4" />
+              Clear filters
+            </button>
           </div>
 
           <div className="max-h-[75vh] overflow-auto">
             <table className="min-w-[1500px] w-full text-left">
-              <thead className="bg-slate-100 text-sm">
+              <thead className="sticky top-0 z-20 bg-slate-100 text-sm shadow-[0_1px_0_0_rgba(148,163,184,0.55)]">
                 <tr>
-                  <th className="px-4 py-3 text-slate-800">Supplier Product</th>
-                  <th className="px-4 py-3 text-slate-800">SKU</th>
-                  <th className="px-4 py-3 text-slate-800">Pack</th>
-                  <th className="px-4 py-3 text-slate-800">Weight</th>
-                  <th className="px-4 py-3 text-slate-800">Pack Price</th>
-                  <th className="px-4 py-3 text-slate-800">Unit Price</th>
-                  <th className="px-4 py-3 text-slate-800">Linked L3</th>
-                  <th className="px-4 py-3 text-slate-800">Updated</th>
+                  <SortableTableHeader
+                    label="Supplier Product"
+                    active={sortKey === 'name'}
+                    direction={sortDirection}
+                    onSort={() => handleCatalogueSort('name')}
+                  />
+                  <SortableTableHeader
+                    label="SKU"
+                    active={sortKey === 'supplierSku'}
+                    direction={sortDirection}
+                    onSort={() => handleCatalogueSort('supplierSku')}
+                  />
+                  <SortableTableHeader
+                    label="Pack"
+                    active={sortKey === 'packSize'}
+                    direction={sortDirection}
+                    onSort={() => handleCatalogueSort('packSize')}
+                  />
+                  <SortableTableHeader
+                    label="Weight"
+                    active={sortKey === 'weight'}
+                    direction={sortDirection}
+                    onSort={() => handleCatalogueSort('weight')}
+                  />
+                  <SortableTableHeader
+                    label="Pack Price"
+                    active={sortKey === 'packPrice'}
+                    direction={sortDirection}
+                    onSort={() => handleCatalogueSort('packPrice')}
+                  />
+                  <SortableTableHeader
+                    label="Unit Price"
+                    active={sortKey === 'unitPrice'}
+                    direction={sortDirection}
+                    onSort={() => handleCatalogueSort('unitPrice')}
+                  />
+                  <SortableTableHeader
+                    label="Linked L3"
+                    active={sortKey === 'linkedItem'}
+                    direction={sortDirection}
+                    onSort={() => handleCatalogueSort('linkedItem')}
+                  />
+                  <SortableTableHeader
+                    label="Updated"
+                    active={sortKey === 'createdAt'}
+                    direction={sortDirection}
+                    onSort={() => handleCatalogueSort('createdAt')}
+                  />
                   <th className="sticky right-0 z-20 bg-slate-100 px-4 py-3 text-slate-800 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.5)]">
                     Actions
                   </th>
