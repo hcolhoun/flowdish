@@ -9,6 +9,7 @@ import {
   Plus,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
 
@@ -973,6 +974,12 @@ export default function BomPage() {
         if (!query) return true
         return item.name.toLowerCase().includes(query) || item.sku.toLowerCase().includes(query)
       })
+      .sort(
+        (a, b) =>
+          a.name.localeCompare(b.name, 'en', { sensitivity: 'base', numeric: true }) ||
+          a.itemType.localeCompare(b.itemType) ||
+          a.sku.localeCompare(b.sku, 'en', { sensitivity: 'base', numeric: true })
+      )
       .slice(0, 50)
   }, [items, parentSearch, parentTypeFilter])
 
@@ -3084,12 +3091,25 @@ export default function BomPage() {
           <div className="grid gap-4 md:grid-cols-[1fr_180px]">
             <label className="text-sm font-medium text-slate-900">
               Find item to build
-              <input
-                value={parentSearch}
-                onChange={(e) => setParentSearch(e.target.value)}
-                className="mt-1 w-full rounded-xl border px-3 py-2"
-                placeholder="Type a name or SKU..."
-              />
+              <div className="relative mt-1">
+                <input
+                  value={parentSearch}
+                  onChange={(e) => setParentSearch(e.target.value)}
+                  className="w-full rounded-xl border py-2 pl-3 pr-11"
+                  placeholder="Type a name or SKU..."
+                />
+                {parentSearch ? (
+                  <button
+                    type="button"
+                    onClick={() => setParentSearch('')}
+                    className="absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                    aria-label="Clear item search"
+                    title="Clear item search"
+                  >
+                    <X aria-hidden="true" className="h-4 w-4" />
+                  </button>
+                ) : null}
+              </div>
             </label>
 
             <label className="text-sm font-medium text-slate-900">
@@ -3121,7 +3141,7 @@ export default function BomPage() {
                     }
                   }}
                   className={`flex w-full items-center justify-between gap-3 border-b px-4 py-3 text-left text-sm last:border-b-0 ${
-                    parentId === item.id ? 'bg-teal-50' : 'hover:bg-slate-50'
+                    parentId === item.id ? 'bg-slate-100' : 'hover:bg-slate-100'
                   }`}
                 >
                   <span className="min-w-0">
