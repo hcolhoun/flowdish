@@ -88,10 +88,22 @@ type RecipeImportRow = {
   note: string
 }
 
+type RecipeImportComponent = {
+  clientId: string
+  name: string
+  batchOutputQuantity: string
+  outputUnitType: UnitType
+  quantityPerPortion: string
+  shelfLifeDays: string
+  note: string
+  ingredients: RecipeImportRow[]
+}
+
 type RecipeImportDraft = {
   recipeName: string
   yieldPortions: string
-  ingredients: RecipeImportRow[]
+  directIngredients: RecipeImportRow[]
+  components: RecipeImportComponent[]
   notes: string[]
 }
 
@@ -195,6 +207,20 @@ function recipeImportRowId() {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function recipeImportRowFromDraft(ingredient: any): RecipeImportRow {
+  return {
+    clientId: recipeImportRowId(),
+    name: String(ingredient?.name || ''),
+    quantity: String(ingredient?.quantity || ''),
+    unitType:
+      ingredient?.unitType === 'ml' || ingredient?.unitType === 'each'
+        ? ingredient.unitType
+        : 'g',
+    shelfLifeDays: String(ingredient?.shelfLifeDays || 5),
+    note: String(ingredient?.note || ''),
+  }
 }
 
 function loadRecipeUploadImage(file: File) {
@@ -793,21 +819,31 @@ export default function BomPage() {
       if (!res.ok) throw new Error(data?.error || 'Failed to read recipe')
 
       const draft = data?.draft
-      const ingredients = Array.isArray(draft?.ingredients) ? draft.ingredients : []
+      const directIngredients = Array.isArray(draft?.directIngredients)
+        ? draft.directIngredients
+        : Array.isArray(draft?.ingredients)
+          ? draft.ingredients
+          : []
+      const components = Array.isArray(draft?.components) ? draft.components : []
 
       setRecipeImportDraft({
         recipeName: String(draft?.recipeName || ''),
         yieldPortions: String(draft?.yieldPortions || 1),
-        ingredients: ingredients.map((ingredient: any) => ({
+        directIngredients: directIngredients.map(recipeImportRowFromDraft),
+        components: components.map((component: any) => ({
           clientId: recipeImportRowId(),
-          name: String(ingredient?.name || ''),
-          quantity: String(ingredient?.quantity || ''),
-          unitType:
-            ingredient?.unitType === 'ml' || ingredient?.unitType === 'each'
-              ? ingredient.unitType
-              : 'g',
-          shelfLifeDays: String(ingredient?.shelfLifeDays || 5),
-          note: String(ingredient?.note || ''),
+          name: String(component?.name || ''),
+          batchOutputQuantity: String(component?.batchOutputQuantity || draft?.yieldPortions || 1),
+          outputUnitType:
+            component?.outputUnitType === 'g' || component?.outputUnitType === 'ml'
+              ? component.outputUnitType
+              : 'each',
+          quantityPerPortion: String(component?.quantityPerPortion || 1),
+          shelfLifeDays: String(component?.shelfLifeDays || 3),
+          note: String(component?.note || ''),
+          ingredients: Array.isArray(component?.ingredients)
+            ? component.ingredients.map(recipeImportRowFromDraft)
+            : [],
         })),
         notes: Array.isArray(draft?.notes)
           ? draft.notes.map((note: unknown) => String(note)).filter(Boolean)
@@ -822,47 +858,134 @@ export default function BomPage() {
 
   function updateRecipeImportRow(
     clientId: string,
-    patch: Partial<Omit<RecipeImportRow, 'clientId'>>
+    patch: Partial<Omit<RecipeImportRow, 'clientId'>>,
+    componentId?: string
   ) {
     setRecipeImportDraft((current) =>
       current
         ? {
             ...current,
-            ingredients: current.ingredients.map((row) =>
-              row.clientId === clientId ? { ...row, ...patch } : row
+            directIngredients: componentId
+              ? current.directIngredients
+              : current.directIngredients.map((row) =>
+                  row.clientId === clientId ? { ...row, ...patch } : row
+                ),
+            components: componentId
+              ? current.components.map((component) =>
+                  component.clientId === componentId
+                    ? {
+                        ...component,
+                        ingredients: component.ingredients.map((row) =>
+                          row.clientId === clientId ? { ...row, ...patch } : row
+                        ),
+                      }
+                    : component
+                )
+              : current.components,
+          }
+        : current
+    )
+  }
+
+  function addRecipeImportRow(componentId?: string) {
+    const nextRow: RecipeImportRow = {
+      clientId: recipeImportRowId(),
+      name: '',
+      quantity: '',
+      unitType: 'g',
+      shelfLifeDays: '5',
+      note: '',
+    }
+
+    setRecipeImportDraft((current) =>
+      current
+        ? {
+            ...current,
+            directIngredients: componentId
+              ? current.directIngredients
+              : [...current.directIngredients, nextRow],
+            components: componentId
+              ? current.components.map((component) =>
+                  component.clientId === componentId
+                    ? { ...component, ingredients: [...component.ingredients, nextRow] }
+                    : component
+                )
+              : current.components,
+          }
+        : current
+    )
+  }
+
+  function removeRecipeImportRow(clientId: string, componentId?: string) {
+    setRecipeImportDraft((current) =>
+      current
+        ? {
+            ...current,
+            directIngredients: componentId
+              ? current.directIngredients
+              : current.directIngredients.filter((row) => row.clientId !== clientId),
+            components: componentId
+              ? current.components.map((component) =>
+                  component.clientId === componentId
+                    ? {
+                        ...component,
+                        ingredients: component.ingredients.filter(
+                          (row) => row.clientId !== clientId
+                        ),
+                      }
+                    : component
+                )
+              : current.components,
+          }
+        : current
+    )
+  }
+
+  function updateRecipeImportComponent(
+    clientId: string,
+    patch: Partial<Omit<RecipeImportComponent, 'clientId' | 'ingredients'>>
+  ) {
+    setRecipeImportDraft((current) =>
+      current
+        ? {
+            ...current,
+            components: current.components.map((component) =>
+              component.clientId === clientId ? { ...component, ...patch } : component
             ),
           }
         : current
     )
   }
 
-  function addRecipeImportRow() {
-    setRecipeImportDraft((current) =>
-      current
-        ? {
-            ...current,
-            ingredients: [
-              ...current.ingredients,
-              {
-                clientId: recipeImportRowId(),
-                name: '',
-                quantity: '',
-                unitType: 'g',
-                shelfLifeDays: '5',
-                note: '',
-              },
-            ],
-          }
-        : current
-    )
+  function addRecipeImportComponent() {
+    setRecipeImportDraft((current) => {
+      if (!current) return current
+
+      return {
+        ...current,
+        components: [
+          ...current.components,
+          {
+            clientId: recipeImportRowId(),
+            name: '',
+            batchOutputQuantity: current.yieldPortions || '1',
+            outputUnitType: 'each',
+            quantityPerPortion: '1',
+            shelfLifeDays: '3',
+            note: '',
+            ingredients: [],
+          },
+        ],
+      }
+    })
   }
 
-  function removeRecipeImportRow(clientId: string) {
+  function removeRecipeImportComponent(clientId: string) {
     setRecipeImportDraft((current) =>
       current
         ? {
             ...current,
-            ingredients: current.ingredients.filter((row) => row.clientId !== clientId),
+            components: current.components.filter((component) => component.clientId !== clientId),
           }
         : current
     )
@@ -873,13 +996,27 @@ export default function BomPage() {
 
     const recipeName = recipeImportDraft.recipeName.trim()
     const yieldPortions = Number(recipeImportDraft.yieldPortions)
-    const invalidIngredient = recipeImportDraft.ingredients.some(
+    const allIngredients = [
+      ...recipeImportDraft.directIngredients,
+      ...recipeImportDraft.components.flatMap((component) => component.ingredients),
+    ]
+    const invalidIngredient = allIngredients.some(
       (row) =>
         !row.name.trim() ||
         !Number.isFinite(Number(row.quantity)) ||
         Number(row.quantity) <= 0 ||
         !Number.isFinite(Number(row.shelfLifeDays)) ||
         Number(row.shelfLifeDays) <= 0
+    )
+    const invalidComponent = recipeImportDraft.components.some(
+      (component) =>
+        !component.name.trim() ||
+        !Number.isFinite(Number(component.batchOutputQuantity)) ||
+        Number(component.batchOutputQuantity) <= 0 ||
+        !Number.isFinite(Number(component.quantityPerPortion)) ||
+        Number(component.quantityPerPortion) <= 0 ||
+        !Number.isFinite(Number(component.shelfLifeDays)) ||
+        Number(component.shelfLifeDays) <= 0
     )
 
     if (!recipeName) {
@@ -892,8 +1029,18 @@ export default function BomPage() {
       return
     }
 
-    if (recipeImportDraft.ingredients.length === 0 || invalidIngredient) {
-      setRecipeImportError('Review every ingredient name, quantity and shelf life before saving.')
+    if (
+      recipeImportDraft.components.length === 0 &&
+      recipeImportDraft.directIngredients.length === 0
+    ) {
+      setRecipeImportError('Add at least one prepared component or direct ingredient.')
+      return
+    }
+
+    if (invalidComponent || invalidIngredient) {
+      setRecipeImportError(
+        'Review every component and ingredient name, quantity, output and shelf life before saving.'
+      )
       return
     }
 
@@ -909,12 +1056,27 @@ export default function BomPage() {
         body: JSON.stringify({
           recipeName,
           yieldPortions,
-          ingredients: recipeImportDraft.ingredients.map((row) => ({
+          directIngredients: recipeImportDraft.directIngredients.map((row) => ({
             name: row.name.trim(),
             quantity: Number(row.quantity),
             unitType: row.unitType,
             shelfLifeDays: Number(row.shelfLifeDays),
             note: row.note.trim() || null,
+          })),
+          components: recipeImportDraft.components.map((component) => ({
+            name: component.name.trim(),
+            batchOutputQuantity: Number(component.batchOutputQuantity),
+            outputUnitType: component.outputUnitType,
+            quantityPerPortion: Number(component.quantityPerPortion),
+            shelfLifeDays: Number(component.shelfLifeDays),
+            note: component.note.trim() || null,
+            ingredients: component.ingredients.map((row) => ({
+              name: row.name.trim(),
+              quantity: Number(row.quantity),
+              unitType: row.unitType,
+              shelfLifeDays: Number(row.shelfLifeDays),
+              note: row.note.trim() || null,
+            })),
           })),
           notes: recipeImportDraft.notes,
         }),
@@ -934,7 +1096,7 @@ export default function BomPage() {
       if (recipePhotoInputRef.current) recipePhotoInputRef.current.value = ''
       if (recipeFileInputRef.current) recipeFileInputRef.current.value = ''
       setMessage(
-        `Recipe saved with ${data.ingredientCount} ingredient(s). ${data.createdL3Count} new L3 item(s) created and ${data.reusedL3Count} existing L3 item(s) reused. Supplier links and prices remain blank.`
+        `Recipe saved with ${data.componentCount} L2 component(s) and ${data.ingredientCount} ingredient row(s). ${data.createdL2Count} new L2 and ${data.createdL3Count} new L3 item(s) created. Supplier links and prices remain blank.`
       )
     } catch (err) {
       setRecipeImportError(err instanceof Error ? err.message : 'Failed to save recipe')
@@ -2804,6 +2966,115 @@ export default function BomPage() {
     )
   }
 
+  function renderRecipeImportIngredients(rows: RecipeImportRow[], componentId?: string) {
+    if (rows.length === 0) {
+      return (
+        <div className="mt-3 text-sm text-slate-500">
+          No measurable bought ingredients in this section.
+        </div>
+      )
+    }
+
+    return (
+      <div className="mt-3 space-y-3">
+        {rows.map((row) => {
+          const matchingL3 = l3Items.find(
+            (item) =>
+              item.unitType === row.unitType &&
+              recipeIngredientKey(item.name) === recipeIngredientKey(row.name)
+          )
+
+          return (
+            <div
+              key={row.clientId}
+              className="grid gap-3 border-t pt-3 md:grid-cols-[minmax(180px,1fr)_120px_100px_120px_110px_44px] md:items-end"
+            >
+              <label className="text-xs font-medium text-slate-700">
+                Ingredient
+                <input
+                  value={row.name}
+                  onChange={(event) =>
+                    updateRecipeImportRow(
+                      row.clientId,
+                      { name: event.target.value },
+                      componentId
+                    )
+                  }
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                />
+              </label>
+              <label className="text-xs font-medium text-slate-700">
+                Batch quantity
+                <input
+                  type="number"
+                  min="0.000001"
+                  step="any"
+                  value={row.quantity}
+                  onChange={(event) =>
+                    updateRecipeImportRow(
+                      row.clientId,
+                      { quantity: event.target.value },
+                      componentId
+                    )
+                  }
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                />
+              </label>
+              <label className="text-xs font-medium text-slate-700">
+                Unit
+                <select
+                  value={row.unitType}
+                  onChange={(event) =>
+                    updateRecipeImportRow(
+                      row.clientId,
+                      { unitType: event.target.value as UnitType },
+                      componentId
+                    )
+                  }
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                >
+                  <option value="g">g</option>
+                  <option value="ml">ml</option>
+                  <option value="each">each</option>
+                </select>
+              </label>
+              <label className="text-xs font-medium text-slate-700">
+                Shelf life (days)
+                <input
+                  type="number"
+                  min="1"
+                  max="3650"
+                  step="1"
+                  value={row.shelfLifeDays}
+                  onChange={(event) =>
+                    updateRecipeImportRow(
+                      row.clientId,
+                      { shelfLifeDays: event.target.value },
+                      componentId
+                    )
+                  }
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                />
+              </label>
+              <div className="pb-2 text-xs font-medium text-slate-600">
+                {matchingL3 ? 'Existing L3' : 'New L3'}
+              </div>
+              <button
+                type="button"
+                onClick={() => removeRecipeImportRow(row.clientId, componentId)}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border text-slate-600 hover:bg-red-50 hover:text-red-700"
+                title="Remove ingredient"
+                aria-label={`Remove ${row.name || 'ingredient'}`}
+              >
+                <Trash2 aria-hidden="true" className="h-4 w-4" />
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-7xl">
@@ -2863,7 +3134,7 @@ export default function BomPage() {
               <div>
                 <h2 className="text-xl font-semibold text-slate-900">Import Recipe</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  Review the AI draft before creating the L1 dish and its generic L3 ingredients.
+                  Review the L1 dish, its L2 prep components, and generic L3 ingredients before saving.
                 </p>
               </div>
 
@@ -2968,105 +3239,184 @@ export default function BomPage() {
 
                 <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h3 className="font-semibold text-slate-900">Ingredients</h3>
+                    <h3 className="font-semibold text-slate-900">Prepared components (L2)</h3>
                     <p className="mt-1 text-xs text-slate-500">
-                      Quantities are for the full uploaded batch. Supplier and price matching is skipped.
+                      Ingredients stay inside the sauce, garnish, protein, or other prep item where they are used.
                     </p>
                   </div>
                   <button
                     type="button"
-                    onClick={addRecipeImportRow}
+                    onClick={addRecipeImportComponent}
                     className="inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
                   >
                     <Plus aria-hidden="true" className="h-4 w-4" />
-                    Add Ingredient
+                    Add Component
                   </button>
                 </div>
 
-                <div className="mt-3 space-y-3">
-                  {recipeImportDraft.ingredients.map((row) => {
-                    const matchingL3 = l3Items.find(
+                <div className="mt-3 space-y-5">
+                  {recipeImportDraft.components.length === 0 ? (
+                    <div className="border-t pt-3 text-sm text-slate-500">
+                      No separate prep components detected.
+                    </div>
+                  ) : null}
+                  {recipeImportDraft.components.map((component, componentIndex) => {
+                    const matchingL2 = l2Items.find(
                       (item) =>
-                        item.unitType === row.unitType &&
-                        recipeIngredientKey(item.name) === recipeIngredientKey(row.name)
+                        item.unitType === component.outputUnitType &&
+                        recipeIngredientKey(item.name) === recipeIngredientKey(component.name)
                     )
 
                     return (
                       <div
-                        key={row.clientId}
-                        className="grid gap-3 border-t pt-3 md:grid-cols-[minmax(180px,1fr)_120px_100px_120px_110px_44px] md:items-end"
+                        key={component.clientId}
+                        className="border-t pt-4"
                       >
-                        <label className="text-xs font-medium text-slate-700">
-                          Ingredient
-                          <input
-                            value={row.name}
-                            onChange={(event) =>
-                              updateRecipeImportRow(row.clientId, { name: event.target.value })
-                            }
-                            className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
-                          />
-                        </label>
-                        <label className="text-xs font-medium text-slate-700">
-                          Recipe quantity
-                          <input
-                            type="number"
-                            min="0.000001"
-                            step="any"
-                            value={row.quantity}
-                            onChange={(event) =>
-                              updateRecipeImportRow(row.clientId, { quantity: event.target.value })
-                            }
-                            className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
-                          />
-                        </label>
-                        <label className="text-xs font-medium text-slate-700">
-                          Unit
-                          <select
-                            value={row.unitType}
-                            onChange={(event) =>
-                              updateRecipeImportRow(row.clientId, {
-                                unitType: event.target.value as UnitType,
-                              })
-                            }
-                            className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-semibold text-slate-900">
+                            L2 component {componentIndex + 1}
+                            <span className="ml-2 text-xs font-medium text-slate-500">
+                              {matchingL2 ? 'Existing L2 - saved build retained' : 'New L2'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeRecipeImportComponent(component.clientId)}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border text-slate-600 hover:bg-red-50 hover:text-red-700"
+                            title="Remove component"
+                            aria-label={`Remove ${component.name || 'component'}`}
                           >
-                            <option value="g">g</option>
-                            <option value="ml">ml</option>
-                            <option value="each">each</option>
-                          </select>
-                        </label>
-                        <label className="text-xs font-medium text-slate-700">
-                          Shelf life (days)
-                          <input
-                            type="number"
-                            min="1"
-                            max="3650"
-                            step="1"
-                            value={row.shelfLifeDays}
-                            onChange={(event) =>
-                              updateRecipeImportRow(row.clientId, {
-                                shelfLifeDays: event.target.value,
-                              })
-                            }
-                            className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
-                          />
-                        </label>
-                        <div className="pb-2 text-xs font-medium text-slate-600">
-                          {matchingL3 ? 'Existing L3' : 'New L3'}
+                            <Trash2 aria-hidden="true" className="h-4 w-4" />
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => removeRecipeImportRow(row.clientId)}
-                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border text-slate-600 hover:bg-red-50 hover:text-red-700"
-                          title="Remove ingredient"
-                          aria-label={`Remove ${row.name || 'ingredient'}`}
-                        >
-                          <Trash2 aria-hidden="true" className="h-4 w-4" />
-                        </button>
+
+                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(180px,1fr)_130px_100px_130px_120px]">
+                          <label className="text-xs font-medium text-slate-700">
+                            Component name
+                            <input
+                              value={component.name}
+                              onChange={(event) =>
+                                updateRecipeImportComponent(component.clientId, {
+                                  name: event.target.value,
+                                })
+                              }
+                              className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                            />
+                          </label>
+                          <label className="text-xs font-medium text-slate-700">
+                            Batch output
+                            <input
+                              type="number"
+                              min="0.000001"
+                              step="any"
+                              value={component.batchOutputQuantity}
+                              onChange={(event) =>
+                                updateRecipeImportComponent(component.clientId, {
+                                  batchOutputQuantity: event.target.value,
+                                })
+                              }
+                              className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                            />
+                          </label>
+                          <label className="text-xs font-medium text-slate-700">
+                            Unit
+                            <select
+                              value={component.outputUnitType}
+                              onChange={(event) =>
+                                updateRecipeImportComponent(component.clientId, {
+                                  outputUnitType: event.target.value as UnitType,
+                                })
+                              }
+                              className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                            >
+                              <option value="g">g</option>
+                              <option value="ml">ml</option>
+                              <option value="each">each</option>
+                            </select>
+                          </label>
+                          <label className="text-xs font-medium text-slate-700">
+                            Used / dish
+                            <input
+                              type="number"
+                              min="0.000001"
+                              step="any"
+                              value={component.quantityPerPortion}
+                              onChange={(event) =>
+                                updateRecipeImportComponent(component.clientId, {
+                                  quantityPerPortion: event.target.value,
+                                })
+                              }
+                              className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                            />
+                          </label>
+                          <label className="text-xs font-medium text-slate-700">
+                            Shelf life (days)
+                            <input
+                              type="number"
+                              min="1"
+                              max="3650"
+                              step="1"
+                              value={component.shelfLifeDays}
+                              onChange={(event) =>
+                                updateRecipeImportComponent(component.clientId, {
+                                  shelfLifeDays: event.target.value,
+                                })
+                              }
+                              className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                            />
+                          </label>
+                        </div>
+
+                        {component.note ? (
+                          <p className="mt-2 text-xs text-slate-500">{component.note}</p>
+                        ) : null}
+
+                        <details className="mt-3 rounded-lg border px-4 py-3">
+                          <summary className="cursor-pointer text-sm font-medium text-slate-900">
+                            Ingredients ({component.ingredients.length})
+                          </summary>
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => addRecipeImportRow(component.clientId)}
+                              className="inline-flex min-h-9 items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                            >
+                              <Plus aria-hidden="true" className="h-4 w-4" />
+                              Add Ingredient
+                            </button>
+                          </div>
+                          {renderRecipeImportIngredients(
+                            component.ingredients,
+                            component.clientId
+                          )}
+                        </details>
                       </div>
                     )
                   })}
                 </div>
+
+                <details
+                  open={recipeImportDraft.directIngredients.length > 0}
+                  className="mt-6 rounded-lg border px-4 py-3"
+                >
+                  <summary className="cursor-pointer font-medium text-slate-900">
+                    Direct dish ingredients ({recipeImportDraft.directIngredients.length})
+                  </summary>
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs text-slate-500">
+                      Only ingredients added directly to the final L1 dish belong here.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => addRecipeImportRow()}
+                      className="inline-flex min-h-9 items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                    >
+                      <Plus aria-hidden="true" className="h-4 w-4" />
+                      Add Ingredient
+                    </button>
+                  </div>
+                  {renderRecipeImportIngredients(recipeImportDraft.directIngredients)}
+                </details>
 
                 {recipeImportDraft.notes.length > 0 ? (
                   <details className="mt-4 rounded-lg border px-4 py-3 text-sm text-slate-700">
@@ -3096,7 +3446,7 @@ export default function BomPage() {
                     {recipeImportSaving ? 'Saving Recipe...' : 'Save Draft Recipe'}
                   </button>
                   <span className="text-xs text-slate-500">
-                    Creates an unpriced L1 draft and opens it here for final review.
+                    Creates the unpriced L1, its L2 prep components, and generic L3 ingredients.
                   </span>
                 </div>
               </div>
