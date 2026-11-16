@@ -378,8 +378,6 @@ export async function buildItemDeletionPlan(
 }
 
 export async function executeItemDeletion(db: DbClient, plan: ItemDeletionPlan) {
-  const restaurantId = plan.item.id ? undefined : undefined
-  void restaurantId
   const rootId = plan.item.id
   const itemIdsToDelete = [...plan.deleteL2Ids, ...plan.deleteL3Ids]
 

@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { FilterX, Sparkles } from 'lucide-react'
+import { ChevronDown, FilterX, Sparkles, Trash2 } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
 import SortableTableHeader from '@/app/components/SortableTableHeader'
 
@@ -104,6 +104,18 @@ type CostingRow = {
   }>
 }
 
+type ItemDeletionPlan = {
+  canDelete: boolean
+  blockingRecords: Record<string, number>
+  menuLinksRemoved: number
+  directL2Count: number
+  directL3Count: number
+  deletedL2Count: number
+  deletedL3Count: number
+  preservedL2Count: number
+  preservedL3Count: number
+}
+
 type ItemSortKey =
   | 'sku'
   | 'name'
@@ -193,6 +205,8 @@ export default function ItemsPage() {
   const [costingLoading, setCostingLoading] = useState(false)
   const [bulkCalculatingPrepTime, setBulkCalculatingPrepTime] = useState(false)
   const [copyingItemId, setCopyingItemId] = useState<string | null>(null)
+  const [deletingItemId, setDeletingItemId] = useState<string | null>(null)
+  const [deleteMenuItemId, setDeleteMenuItemId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -583,31 +597,102 @@ export default function ItemsPage() {
     }
   }
 
-  async function handleDelete(id: string, label: string) {
+  async function finishItemDeletion(id: string, message: string) {
+    if (expandedCostingId === id) setExpandedCostingId(null)
+    setDeleteMenuItemId(null)
+    setMessage(message)
+    scrollToMessage()
+    await loadData()
+  }
+
+  function deletionBlockerMessage(plan: ItemDeletionPlan) {
+    const labels: Record<string, string> = {
+      deliveries: 'deliveries',
+      inventoryLots: 'inventory lots',
+      prepBatches: 'prep entries',
+      sales: 'sales',
+      salesModifierAdjustments: 'sales adjustments',
+      wastes: 'waste entries',
+      forecastLines: 'forecast entries',
+      supplierProducts: 'supplier product links',
+    }
+    const blockers = Object.entries(plan.blockingRecords)
+      .filter(([, count]) => count > 0)
+      .map(([key, count]) => `${count} ${labels[key] || key}`)
+
+    return blockers.length > 0
+      ? `This L1 cannot be permanently deleted because it has ${blockers.join(', ')}. Its audit history has been preserved.`
+      : 'This L1 cannot be permanently deleted because it has protected activity history.'
+  }
+
+  async function handleL1Delete(item: Item, mode: 'recipe' | 'item_only') {
+    setError('')
+    setMessage('')
+    setDeleteMenuItemId(null)
+
+    try {
+      setDeletingItemId(item.id)
+      const previewRes = await fetch(
+        `/api/items/delete-preview?id=${encodeURIComponent(item.id)}&mode=${mode}`,
+        { cache: 'no-store' }
+      )
+      const plan = (await safeJson(previewRes)) as ItemDeletionPlan & { error?: string }
+
+      if (!previewRes.ok) throw new Error(plan.error || 'Failed to prepare delete warning')
+      if (!plan.canDelete) throw new Error(deletionBlockerMessage(plan))
+
+      const preservedCount = plan.preservedL2Count + plan.preservedL3Count
+      const warning =
+        mode === 'recipe'
+          ? `Delete entire recipe: ${item.name} [${item.sku}]?\n\nThis permanently deletes:\n- the L1 dish, its BOM and SOP\n- ${plan.deletedL2Count} unshared L2 component(s)\n- ${plan.deletedL3Count} unshared L3 ingredient(s)\n\n${preservedCount} shared, linked or previously used child item(s) will be kept.${plan.menuLinksRemoved > 0 ? `\n${plan.menuLinksRemoved} L0 menu link(s) will be removed.` : ''}\n\nThis cannot be undone.`
+          : `Delete only this L1: ${item.name} [${item.sku}]?\n\nThe L1, its BOM and SOP will be deleted. All attached L2 and L3 items will remain in My Items.${plan.menuLinksRemoved > 0 ? `\n${plan.menuLinksRemoved} L0 menu link(s) will be removed.` : ''}\n\nThis cannot be undone.`
+
+      if (!window.confirm(warning)) return
+
+      const res = await fetch(
+        `/api/items?id=${encodeURIComponent(item.id)}&mode=${mode}`,
+        { method: 'DELETE' }
+      )
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data.error || 'Failed to delete recipe')
+
+      await finishItemDeletion(
+        item.id,
+        mode === 'recipe'
+          ? `Recipe deleted. ${data.deletedL2Count} L2 and ${data.deletedL3Count} L3 item(s) removed; ${data.preservedL2Count + data.preservedL3Count} shared or used item(s) kept.`
+          : 'L1 deleted. Its L2 and L3 items were kept.'
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+      scrollToMessage()
+    } finally {
+      setDeletingItemId(null)
+    }
+  }
+
+  async function handleDelete(item: Item) {
     setError('')
     setMessage('')
 
-    const confirmed = window.confirm(`Delete item: ${label}?`)
+    const confirmed = window.confirm(`Delete item: ${item.name} [${item.sku}]?`)
     if (!confirmed) return
 
     try {
-      const res = await fetch(`/api/items?id=${id}`, { method: 'DELETE' })
+      setDeletingItemId(item.id)
+      const res = await fetch(`/api/items?id=${item.id}`, { method: 'DELETE' })
       const data = await safeJson(res)
 
       if (!res.ok) {
         throw new Error(data.error || 'Failed to delete item')
       }
 
-      if (expandedCostingId === id) {
-        setExpandedCostingId(null)
-      }
-
-      setMessage('Item deleted.')
-      scrollToMessage()
-      await loadData()
+      await finishItemDeletion(item.id, 'Item deleted.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
       scrollToMessage()
+    } finally {
+      setDeletingItemId(null)
     }
   }
 
@@ -1012,13 +1097,63 @@ export default function ItemsPage() {
                                 </button>
                               ) : null}
 
-                              <button
-                                type="button"
-                                onClick={() => handleDelete(item.id, `${item.name} [${item.sku}]`)}
-                                className="rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-                              >
-                                Delete
-                              </button>
+                              {item.itemType === 'L1' ? (
+                                <div className="relative inline-flex">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleL1Delete(item, 'recipe')}
+                                    disabled={deletingItemId === item.id}
+                                    className="inline-flex items-center gap-1.5 rounded-l-lg border border-r-0 border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+                                    {deletingItemId === item.id ? 'Checking...' : 'Delete recipe'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setDeleteMenuItemId((current) =>
+                                        current === item.id ? null : item.id
+                                      )
+                                    }
+                                    disabled={deletingItemId === item.id}
+                                    className="inline-flex items-center justify-center rounded-r-lg border border-red-300 px-2 py-1 text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    aria-label={`More delete options for ${item.name}`}
+                                    aria-expanded={deleteMenuItemId === item.id}
+                                    title="More delete options"
+                                  >
+                                    <ChevronDown aria-hidden="true" className="h-4 w-4" />
+                                  </button>
+
+                                  {deleteMenuItemId === item.id ? (
+                                    <div className="absolute left-0 top-full z-50 mt-1 w-64 overflow-hidden rounded-lg border bg-white py-1 shadow-lg">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleL1Delete(item, 'recipe')}
+                                        className="block w-full px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-50"
+                                      >
+                                        Delete recipe + unused items
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleL1Delete(item, 'item_only')}
+                                        className="block w-full px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-50"
+                                      >
+                                        Delete L1 only
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDelete(item)}
+                                  disabled={deletingItemId === item.id}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+                                  {deletingItemId === item.id ? 'Deleting...' : 'Delete'}
+                                </button>
+                              )}
                             </div>
                           </td>
                           <td className="px-4 py-3 text-slate-800">{item.itemType}</td>

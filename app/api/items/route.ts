@@ -3,6 +3,11 @@ import { canWrite, requireTenant, tenantErrorResponse } from '@/lib/tenant'
 import { NextResponse } from 'next/server'
 import { getL2PrepTimeContext, markL2PrepTimeStale } from '@/lib/l2-prep-time'
 import { markL1ServiceTimeStale } from '@/lib/l1-service-time'
+import {
+  buildItemDeletionPlan,
+  executeItemDeletion,
+  type ItemDeleteMode,
+} from '@/lib/item-deletion'
 
 function makeSkuPrefix(itemType: string) {
   if (itemType === 'L0') return 'L0'
@@ -141,6 +146,7 @@ export async function DELETE(req: Request) {
 
     const { searchParams } = new URL(req.url)
     const id = searchParams.get('id')
+    const mode = searchParams.get('mode') as ItemDeleteMode | null
 
     if (!id) {
       return NextResponse.json({ error: 'Missing item id' }, { status: 400 })
@@ -155,6 +161,48 @@ export async function DELETE(req: Request) {
 
     if (!item) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+    }
+
+    if (mode === 'recipe' || mode === 'item_only') {
+      if (item.itemType !== 'L1') {
+        return NextResponse.json(
+          { error: 'Recipe deletion is available for L1 dishes only.' },
+          { status: 400 }
+        )
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        const plan = await buildItemDeletionPlan(tx, tenant.restaurantId, id, mode)
+        if (!plan) return { status: 'missing' as const }
+        if (!plan.canDelete) return { status: 'blocked' as const, plan }
+
+        await executeItemDeletion(tx, plan)
+        return { status: 'deleted' as const, plan }
+      })
+
+      if (result.status === 'missing') {
+        return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+      }
+
+      if (result.status === 'blocked') {
+        return NextResponse.json(
+          {
+            error:
+              'This L1 has stock or activity history and cannot be permanently deleted. Its audit records have been preserved.',
+            plan: result.plan,
+          },
+          { status: 409 }
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        mode,
+        deletedL2Count: result.plan.deletedL2Count,
+        deletedL3Count: result.plan.deletedL3Count,
+        preservedL2Count: result.plan.preservedL2Count,
+        preservedL3Count: result.plan.preservedL3Count,
+      })
     }
 
     const [
@@ -174,8 +222,11 @@ export async function DELETE(req: Request) {
       inventoryLots,
       prepBatches,
       sales,
+      salesModifierAdjustments,
       wastes,
       forecastLines,
+      sopDocuments,
+      supplierProducts,
     ] = await Promise.all([
       prisma.bomL0L1.count({ where: { restaurantId: tenant.restaurantId, l0ItemId: id } }),
       prisma.bomL0L1.count({ where: { restaurantId: tenant.restaurantId, l1ItemId: id } }),
@@ -193,8 +244,15 @@ export async function DELETE(req: Request) {
       prisma.inventoryLot.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
       prisma.prepBatch.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
       prisma.sale.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
+      prisma.salesModifierAdjustment.count({
+        where: { restaurantId: tenant.restaurantId, itemId: id },
+      }),
       prisma.waste.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
       prisma.forecastLine.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
+      prisma.sopDocument.count({ where: { restaurantId: tenant.restaurantId, itemId: id } }),
+      prisma.supplierProduct.count({
+        where: { restaurantId: tenant.restaurantId, linkedItemId: id },
+      }),
     ])
 
     const usageCount =
@@ -214,8 +272,11 @@ export async function DELETE(req: Request) {
       inventoryLots +
       prepBatches +
       sales +
+      salesModifierAdjustments +
       wastes +
-      forecastLines
+      forecastLines +
+      sopDocuments +
+      supplierProducts
 
     if (usageCount > 0) {
       return NextResponse.json(
