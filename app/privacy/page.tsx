@@ -4,6 +4,7 @@ const sections = [
   {
     title: 'Who We Are',
     body: [
+      'Flowdish is the registered business name under which the Flowdish service is provided. Privacy and data-protection enquiries can be sent to privacy@flowdish.ie.',
       'Flowdish provides kitchen operations software for restaurants, including stock control, prep records, HACCP records, supplier product management, delivery records, sales imports, planning, waste logs, SOPs, cold storage records, and admin tools.',
       'For customer account information and platform operation, Flowdish is the data controller. For restaurant operational records entered by a restaurant, the restaurant is normally the controller and Flowdish acts as a processor providing the software service.',
     ],
@@ -85,14 +86,13 @@ export default function PrivacyPage() {
         <div className="rounded-2xl border bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-sm font-medium text-slate-500">Last updated: 2 October 2026</p>
+              <p className="text-sm font-medium text-slate-500">Last updated: 24 November 2026</p>
               <h1 className="mt-2 text-3xl font-semibold text-slate-900">
                 Flowdish Privacy Statement
               </h1>
               <p className="mt-3 text-sm leading-6 text-slate-700">
                 This statement explains how Flowdish handles personal data and restaurant
-                operational data. It is a practical privacy notice for customers and users, and
-                should be reviewed against the final legal company details before public launch.
+                operational data. It is a practical privacy notice for customers and users.
               </p>
             </div>
 
@@ -124,7 +124,7 @@ export default function PrivacyPage() {
               <a className="font-medium underline" href="mailto:privacy@flowdish.ie">
                 privacy@flowdish.ie
               </a>
-              . Replace this with the final company privacy contact if different.
+              .
             </p>
             <div className="mt-3 flex flex-wrap gap-4 text-sm">
               <Link className="font-medium underline" href="/data-processing">

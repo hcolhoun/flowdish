@@ -131,6 +131,11 @@ type ItemSortKey =
 
 type SortDirection = 'asc' | 'desc'
 
+type BulkPrepTimeReport = {
+  kind: 'success' | 'warning' | 'error'
+  text: string
+}
+
 const ITEM_LIST_PREFERENCES_KEY = 'flowdish:item-list-preferences:v1'
 const ITEM_SORT_KEYS: ItemSortKey[] = [
   'sku',
@@ -204,6 +209,7 @@ export default function ItemsPage() {
   const [loading, setLoading] = useState(false)
   const [costingLoading, setCostingLoading] = useState(false)
   const [bulkCalculatingPrepTime, setBulkCalculatingPrepTime] = useState(false)
+  const [bulkPrepTimeReport, setBulkPrepTimeReport] = useState<BulkPrepTimeReport | null>(null)
   const [copyingItemId, setCopyingItemId] = useState<string | null>(null)
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null)
   const [deleteMenuItemId, setDeleteMenuItemId] = useState<string | null>(null)
@@ -407,7 +413,8 @@ export default function ItemsPage() {
     try {
       setBulkCalculatingPrepTime(true)
       setError('')
-      setMessage('Calculating up to five missing L2 prep times...')
+      setMessage('')
+      setBulkPrepTimeReport(null)
 
       const res = await fetch('/api/l2-prep-time/bulk', { method: 'POST' })
       const data = await safeJson(res)
@@ -415,12 +422,48 @@ export default function ItemsPage() {
       if (!res.ok) throw new Error(data?.error || 'Failed to calculate prep times')
 
       await loadItems()
-      setMessage(
-        `${data.calculated} L2 prep time(s) estimated. ${data.remaining} still need calculation or confirmation.`
-      )
+      const attempted = Number(data.attempted) || 0
+      const calculated = Number(data.calculated) || 0
+      const failed = Array.isArray(data.failed) ? data.failed.length : 0
+      const remaining = Number(data.remaining) || 0
+      const awaitingBatchOutput = Number(data.awaitingBatchOutput) || 0
+
+      if (attempted === 0 && awaitingBatchOutput === 0) {
+        setBulkPrepTimeReport({
+          kind: 'success',
+          text: 'No L2 prep times are left to calculate.',
+        })
+        return
+      }
+
+      if (attempted === 0) {
+        setBulkPrepTimeReport({
+          kind: 'warning',
+          text: `No prep times were estimated. ${awaitingBatchOutput} L2${awaitingBatchOutput === 1 ? '' : 's'} need a standard batch output first.`,
+        })
+        return
+      }
+
+      const report = [
+        `${calculated} L2 prep time${calculated === 1 ? '' : 's'} estimated.`,
+        failed > 0 ? `${failed} could not be estimated.` : '',
+        remaining > 0 ? `${remaining} remain for the next batch.` : 'No calculable L2s remain.',
+        awaitingBatchOutput > 0
+          ? `${awaitingBatchOutput} need a standard batch output first.`
+          : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+
+      setBulkPrepTimeReport({
+        kind: failed > 0 || awaitingBatchOutput > 0 ? 'warning' : 'success',
+        text: report,
+      })
     } catch (err) {
       setMessage('')
-      setError(err instanceof Error ? err.message : 'Unknown error')
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+      setError(errorMessage)
+      setBulkPrepTimeReport({ kind: 'error', text: errorMessage })
     } finally {
       setBulkCalculatingPrepTime(false)
     }
@@ -937,19 +980,36 @@ export default function ItemsPage() {
           </div>
         </section>
 
-        <div className="mt-4 flex flex-col gap-3 rounded-xl border bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-sm text-slate-700">
-            L2 prep times are estimated in batches of five. Review and confirm each estimate in
-            the item&apos;s Build workspace before it is complete.
+        <div className="mt-4 rounded-xl border bg-white px-4 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-slate-700">
+              L2 prep times are estimated in batches of five. Review and confirm each estimate in
+              the item&apos;s Build workspace before it is complete.
+            </div>
+            <button
+              type="button"
+              onClick={calculateMissingPrepTimes}
+              disabled={bulkCalculatingPrepTime}
+              className="shrink-0 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {bulkCalculatingPrepTime ? 'Calculating...' : 'Calculate Missing L2 Prep Times'}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={calculateMissingPrepTimes}
-            disabled={bulkCalculatingPrepTime}
-            className="shrink-0 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {bulkCalculatingPrepTime ? 'Calculating...' : 'Calculate Missing L2 Prep Times'}
-          </button>
+
+          {bulkPrepTimeReport ? (
+            <div
+              aria-live="polite"
+              className={`mt-3 rounded-lg border px-3 py-2 text-sm ${
+                bulkPrepTimeReport.kind === 'error'
+                  ? 'border-red-200 bg-red-50 text-red-700'
+                  : bulkPrepTimeReport.kind === 'warning'
+                    ? 'border-amber-200 bg-amber-50 text-amber-800'
+                    : 'border-green-200 bg-green-50 text-green-700'
+              }`}
+            >
+              {bulkPrepTimeReport.text}
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">

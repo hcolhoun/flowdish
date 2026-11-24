@@ -52,6 +52,27 @@ export async function POST() {
         prepTimeStatus: {
           in: ['MISSING', 'STALE'],
         },
+        standardBatchOutput: {
+          gt: 0,
+        },
+      },
+    })
+
+    const awaitingBatchOutput = await prisma.item.count({
+      where: {
+        restaurantId: tenant.restaurantId,
+        itemType: 'L2',
+        prepTimeStatus: {
+          in: ['MISSING', 'STALE'],
+        },
+        OR: [
+          { standardBatchOutput: null },
+          {
+            standardBatchOutput: {
+              lte: 0,
+            },
+          },
+        ],
       },
     })
 
@@ -60,6 +81,7 @@ export async function POST() {
       calculated: calculated.length,
       failed,
       remaining,
+      awaitingBatchOutput,
     })
   } catch (error) {
     const tenantError = tenantErrorResponse(error)
