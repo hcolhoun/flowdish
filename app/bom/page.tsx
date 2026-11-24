@@ -287,7 +287,7 @@ function QtyInput({
   placeholder: string
 }) {
   return (
-    <div className="flex rounded-xl border bg-white">
+    <div className="flex min-w-0 w-full rounded-xl border bg-white">
       <input
         type="text"
         inputMode="decimal"
@@ -316,7 +316,7 @@ function L1Picker({
     <select
       value={selectedId}
       onChange={(e) => onSelect(e.target.value)}
-      className="rounded-xl border px-3 py-2"
+      className="min-w-0 w-full rounded-xl border px-3 py-2"
     >
       <option value="">Select L1 dish</option>
       {l1Items.map((item) => (
@@ -341,7 +341,7 @@ function L2Picker({
     <select
       value={selectedId}
       onChange={(e) => onSelect(e.target.value)}
-      className="rounded-xl border px-3 py-2"
+      className="min-w-0 w-full rounded-xl border px-3 py-2"
     >
       <option value="">Select L2</option>
       {l2Items.map((item) => (
@@ -3076,7 +3076,7 @@ export default function BomPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8">
+    <main className="min-h-screen bg-slate-50 p-4 sm:p-8">
       <div className="mx-auto max-w-7xl">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -3778,7 +3778,7 @@ export default function BomPage() {
 
         {parentItem?.itemType === 'L0' ? (
           <div className="mt-8 space-y-8">
-            <section className="rounded-2xl border bg-white p-6 shadow-sm">
+            <section className="min-w-0 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">L0 → L1</h2>
@@ -3813,15 +3813,17 @@ export default function BomPage() {
                   const expandedCosting = row.childId ? expandedL1Costing(row.childId) : null
 
                   return (
-                    <div key={index} className="rounded-2xl border bg-white p-4">
-                      <div className="grid gap-3 xl:grid-cols-[minmax(240px,1fr)_160px_140px_140px_150px_110px_100px]">
-                        <L1Picker
-                          selectedId={row.childId}
-                          l1Items={l1Items}
-                          onSelect={(id) =>
-                            updateRow(l0ToL1Rows, setL0ToL1Rows, index, 'childId', id)
-                          }
-                        />
+                    <div key={index} className="min-w-0 rounded-2xl border bg-white p-3 sm:p-4">
+                      <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(220px,1fr)_150px_130px_130px_140px_auto_auto]">
+                        <div className="min-w-0">
+                          <L1Picker
+                            selectedId={row.childId}
+                            l1Items={l1Items}
+                            onSelect={(id) =>
+                              updateRow(l0ToL1Rows, setL0ToL1Rows, index, 'childId', id)
+                            }
+                          />
+                        </div>
 
                         <QtyInput
                           value={row.qty}
@@ -4487,8 +4489,8 @@ export default function BomPage() {
 
         {parentItem?.itemType === 'L1' ? (
           <div className="mt-8 space-y-8">
-            <section className="rounded-2xl border bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between">
+            <section className="min-w-0 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">L1 → L2</h2>
                   <p className="mt-1 text-sm text-slate-600">
@@ -4505,8 +4507,7 @@ export default function BomPage() {
                 </button>
               </div>
 
-              <div className="mt-4 overflow-x-auto pb-2">
-                <div className="min-w-[1050px] space-y-3">
+              <div className="mt-4 space-y-3">
                   {l1ToL2Rows.map((row, index) => {
                   const item = getItem(row.childId)
                   const cost = getL2Cost(row.childId)
@@ -4519,14 +4520,16 @@ export default function BomPage() {
 
                   return (
                     <Fragment key={index}>
-                      <div className="grid gap-3 md:grid-cols-[1fr_220px_150px_150px_100px_110px]">
-                        <L2Picker
-                          selectedId={row.childId}
-                          l2Items={l2Items}
-                          onSelect={(id) =>
-                            updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'childId', id)
-                          }
-                        />
+                      <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(200px,1fr)_minmax(150px,190px)_130px_110px_auto_auto]">
+                        <div className="min-w-0 sm:col-span-2 xl:col-span-1">
+                          <L2Picker
+                            selectedId={row.childId}
+                            l2Items={l2Items}
+                            onSelect={(id) =>
+                              updateRow(l1ToL2Rows, setL1ToL2Rows, index, 'childId', id)
+                            }
+                          />
+                        </div>
 
                         <QtyInput
                           value={row.qty}
@@ -4576,7 +4579,6 @@ export default function BomPage() {
                     </Fragment>
                   )
                   })}
-                </div>
               </div>
             </section>
 
