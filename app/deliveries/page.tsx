@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus } from 'lucide-react'
+import { ChevronDown, Plus } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
 import ImageRedactionEditor, {
   type ImageRedactionEditorHandle,
@@ -216,8 +216,10 @@ export default function DeliveriesPage() {
   const [supplierProducts, setSupplierProducts] = useState<SupplierProduct[]>([])
 
   const [itemId, setItemId] = useState('')
+  const [selectedSupplierProductId, setSelectedSupplierProductId] = useState('')
   const [itemSearch, setItemSearch] = useState('')
   const [itemDropdownOpen, setItemDropdownOpen] = useState(false)
+  const [manualEntryOpen, setManualEntryOpen] = useState(false)
 
   const [deliveredAt, setDeliveredAt] = useState('')
   const [qty, setQty] = useState('')
@@ -231,7 +233,6 @@ export default function DeliveriesPage() {
   const [latestSupplierProduct, setLatestSupplierProduct] =
     useState<LatestSupplierProduct | null>(null)
   const [priceManuallyEdited, setPriceManuallyEdited] = useState(false)
-  const [supplierManuallyEdited, setSupplierManuallyEdited] = useState(false)
 
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null)
   const [editingDelivery, setEditingDelivery] = useState<EditingDelivery | null>(null)
@@ -248,7 +249,6 @@ export default function DeliveriesPage() {
 
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
-  const [loadingPrice, setLoadingPrice] = useState(false)
 
   const itemPickerRef = useRef<HTMLDivElement | null>(null)
   const docketPhotoInputRef = useRef<HTMLInputElement | null>(null)
@@ -256,6 +256,9 @@ export default function DeliveriesPage() {
   const docketRedactionRefs = useRef<Record<string, ImageRedactionEditorHandle | null>>({})
 
   const selectedItem = items.find((item) => item.id === itemId)
+  const selectedSupplierProduct = supplierProducts.find(
+    (product) => product.id === selectedSupplierProductId
+  )
 
   const supplierProductsByItemId = useMemo(() => {
     const map = new Map<string, SupplierProduct[]>()
@@ -296,35 +299,35 @@ export default function DeliveriesPage() {
     return map
   }, [supplierProducts, items])
 
-  const filteredItems = useMemo(() => {
+  const filteredSupplierProducts = useMemo(() => {
     const query = itemSearch.trim().toLowerCase()
+    const linkedProducts = supplierProducts.filter(
+      (product) => product.linkedItemId && product.linkedItem?.itemType === 'L3'
+    )
 
-    if (!query) return items.slice(0, 50)
+    const matchingProducts = !query
+      ? linkedProducts
+      : linkedProducts.filter((product) => {
+          const haystack = [
+            product.name,
+            product.supplier,
+            product.supplierSku,
+            product.packSize,
+            product.weight,
+            product.linkedItem?.name,
+            product.linkedItem?.sku,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
 
-    return items
-      .filter((item) => {
-        const linkedProducts = supplierProductsByItemId.get(item.id) ?? []
+          return haystack.includes(query)
+        })
 
-        const supplierHaystack = linkedProducts
-          .map((product) =>
-            [
-              product.supplier,
-              product.supplierSku,
-              product.name,
-              product.packSize,
-              product.weight,
-            ]
-              .filter(Boolean)
-              .join(' ')
-          )
-          .join(' ')
-
-        const haystack = `${item.name} ${item.sku} ${supplierHaystack}`.toLowerCase()
-
-        return haystack.includes(query)
-      })
+    return [...matchingProducts]
+      .sort((first, second) => first.name.localeCompare(second.name, 'en', { numeric: true }))
       .slice(0, 50)
-  }, [items, itemSearch, supplierProductsByItemId])
+  }, [itemSearch, supplierProducts])
 
   const calculatedUnitCost =
     Number(qty) > 0 && Number(totalCost) > 0 ? Number(totalCost) / Number(qty) : null
@@ -535,11 +538,6 @@ export default function DeliveriesPage() {
     return parts.join(' · ')
   }
 
-  function bestSupplierProductForItem(item: Item) {
-    const products = supplierProductsByItemId.get(item.id) ?? []
-    return products[0] ?? null
-  }
-
   async function loadData() {
     try {
       setError('')
@@ -606,50 +604,26 @@ export default function DeliveriesPage() {
     setTotalCost(calculated.toFixed(2))
   }, [qty, latestSupplierProduct?.unitPrice, priceManuallyEdited])
 
-  async function loadLatestSupplierPrice(nextItemId: string) {
-    try {
-      setLoadingPrice(true)
-      setLatestSupplierProduct(null)
+  function selectSupplierProduct(product: SupplierProduct) {
+    if (!product.linkedItemId || !product.linkedItem) return
 
-      const res = await fetch(`/api/supplier-products/latest?itemId=${nextItemId}`, {
-        cache: 'no-store',
-      })
+    setSelectedSupplierProductId(product.id)
+    setItemId(product.linkedItemId)
+    setItemSearch(
+      `${product.name}${product.supplierSku ? ` [${product.supplierSku}]` : ''} · ${product.supplier}`
+    )
+    setItemDropdownOpen(false)
+    setPriceManuallyEdited(false)
+    setLatestSupplierProduct(product)
+    setSupplier(product.supplier)
 
-      const data = await safeJson(res)
-
-      if (!res.ok) {
-        throw new Error(data?.error || 'Failed to load latest supplier price')
-      }
-
-      const product = data.supplierProduct as LatestSupplierProduct | null
-      setLatestSupplierProduct(product)
-
-      if (product) {
-        if (!supplierManuallyEdited) {
-          setSupplier(product.supplier)
-        }
-
-        if (!priceManuallyEdited && qty && Number(qty) > 0 && product.unitPrice) {
-          setTotalCost((Number(qty) * product.unitPrice).toFixed(2))
-        }
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
-    } finally {
-      setLoadingPrice(false)
+    if (qty && Number(qty) > 0 && product.unitPrice) {
+      setTotalCost((Number(qty) * product.unitPrice).toFixed(2))
     }
   }
 
-  function selectItem(item: Item) {
-    setItemId(item.id)
-    setItemSearch(`${item.name} [${item.sku}]`)
-    setItemDropdownOpen(false)
-    setPriceManuallyEdited(false)
-    setSupplierManuallyEdited(false)
-    loadLatestSupplierPrice(item.id)
-  }
-
   function clearSelectedItem() {
+    setSelectedSupplierProductId('')
     setItemId('')
     setItemSearch('')
     setItemDropdownOpen(false)
@@ -657,7 +631,6 @@ export default function DeliveriesPage() {
     setSupplier('')
     setTotalCost('')
     setPriceManuallyEdited(false)
-    setSupplierManuallyEdited(false)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -694,6 +667,7 @@ export default function DeliveriesPage() {
       }
 
       setItemId('')
+      setSelectedSupplierProductId('')
       setItemSearch('')
       setDeliveredAt(todayInputValue())
       setQty('')
@@ -705,7 +679,6 @@ export default function DeliveriesPage() {
       setBatchCode('')
       setLatestSupplierProduct(null)
       setPriceManuallyEdited(false)
-      setSupplierManuallyEdited(false)
       setMessage('Delivery saved.')
       await loadData()
     } catch (err) {
@@ -2133,24 +2106,49 @@ export default function DeliveriesPage() {
           className="mt-8 grid gap-4 rounded-2xl border bg-white p-6 shadow-sm md:grid-cols-2"
         >
           <div className="md:col-span-2">
-            <h2 className="text-xl font-semibold text-slate-900">Manual Delivery Entry</h2>
+            <button
+              type="button"
+              onClick={() => setManualEntryOpen((current) => !current)}
+              aria-expanded={manualEntryOpen}
+              className="flex w-full items-center justify-between gap-4 text-left"
+            >
+              <span>
+                <span className="block text-xl font-semibold text-slate-900">
+                  Manual Delivery Entry
+                </span>
+                <span className="mt-1 block text-sm text-slate-600">
+                  Add a delivery without uploading a docket.
+                </span>
+              </span>
+              <ChevronDown
+                aria-hidden="true"
+                className={`h-5 w-5 shrink-0 text-slate-500 transition-transform ${
+                  manualEntryOpen ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
           </div>
 
+          {manualEntryOpen ? (
+          <>
           <div ref={itemPickerRef} className="relative">
-            <label className="mb-1 block text-sm font-medium text-slate-900">L3 Item</label>
+            <label className="mb-1 block text-sm font-medium text-slate-900">
+              Supplier Product
+            </label>
 
             <div className="flex gap-2">
               <input
                 value={itemSearch}
                 onChange={(e) => {
                   setItemSearch(e.target.value)
+                  setSelectedSupplierProductId('')
                   setItemId('')
                   setLatestSupplierProduct(null)
                   setItemDropdownOpen(true)
                 }}
                 onFocus={() => setItemDropdownOpen(true)}
                 className="w-full rounded-xl border px-3 py-2"
-                placeholder="Search by item, SKU, supplier, pack, or weight..."
+                placeholder="Search product, supplier, SKU, pack, or linked L3..."
                 autoComplete="off"
                 required
               />
@@ -2170,62 +2168,51 @@ export default function DeliveriesPage() {
 
             {itemDropdownOpen ? (
               <div className="absolute z-20 mt-2 max-h-96 w-full overflow-y-auto rounded-xl border bg-white shadow-lg">
-                {filteredItems.length === 0 ? (
+                {filteredSupplierProducts.length === 0 ? (
                   <div className="px-4 py-3 text-sm text-slate-600">
-                    No matching L3 items found.
+                    No matching linked supplier products found.
                   </div>
                 ) : (
-                  filteredItems.map((item) => {
-                    const bestProduct = bestSupplierProductForItem(item)
-                    const allProducts = supplierProductsByItemId.get(item.id) ?? []
-
-                    return (
+                  filteredSupplierProducts.map((product) => (
                       <button
-                        key={item.id}
+                        key={product.id}
                         type="button"
-                        onClick={() => selectItem(item)}
+                        onClick={() => selectSupplierProduct(product)}
                         className="block w-full border-b px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
-                            <div className="font-medium text-slate-900">{item.name}</div>
+                            <div className="font-medium text-slate-900">{product.name}</div>
                             <div className="text-xs text-slate-500">
-                              Flowdish SKU {item.sku} · Unit {item.unitType}
+                              {product.supplier}
+                              {product.supplierSku ? ` · SKU ${product.supplierSku}` : ''}
                             </div>
-
                             <div className="mt-1 text-xs text-slate-700">
-                              {packSummary(bestProduct)}
+                              {product.packSize || 'Pack'}
+                              {product.weight ? ` · ${product.weight}` : ''}
                             </div>
-
-                            {allProducts.length > 1 ? (
-                              <div className="mt-1 text-xs text-slate-500">
-                                {allProducts.length} supplier pack options linked. Showing cheapest
-                                unit price.
-                              </div>
-                            ) : null}
+                            <div className="mt-1 text-xs text-teal-700">
+                              L3: {product.linkedItem?.name} [{product.linkedItem?.sku}]
+                            </div>
                           </div>
 
                           <div className="shrink-0 rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-                            {bestProduct?.unitPrice
-                              ? `${money(bestProduct.unitPrice, 5)} / ${item.unitType}`
+                            {product.unitPrice
+                              ? `${money(product.unitPrice, 5)} / ${product.linkedItem?.unitType}`
                               : 'No price'}
                           </div>
                         </div>
                       </button>
-                    )
-                  })
+                    ))
                 )}
               </div>
             ) : null}
 
-            {selectedItem ? (
+            {selectedItem && selectedSupplierProduct ? (
               <p className="mt-2 text-sm text-slate-700">
-                Selected: {selectedItem.name} [{selectedItem.sku}]
+                Selected: {selectedSupplierProduct.name} · linked to {selectedItem.name} [
+                {selectedItem.sku}]
               </p>
-            ) : null}
-
-            {loadingPrice ? (
-              <p className="mt-2 text-sm text-slate-600">Loading latest supplier price…</p>
             ) : null}
 
             {selectedItem && latestSupplierProduct ? (
@@ -2237,10 +2224,6 @@ export default function DeliveriesPage() {
                     Unit price: {formatUnitPrice(latestSupplierProduct.unitPrice, selectedItem.unitType)}
                   </div>
                 ) : null}
-              </div>
-            ) : selectedItem && !loadingPrice ? (
-              <div className="mt-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                No linked supplier price found. Enter supplier and total cost manually.
               </div>
             ) : null}
           </div>
@@ -2283,7 +2266,6 @@ export default function DeliveriesPage() {
               value={supplier}
               onChange={(e) => {
                 setSupplier(e.target.value)
-                setSupplierManuallyEdited(true)
               }}
               className="w-full rounded-xl border px-3 py-2"
             />
@@ -2395,6 +2377,8 @@ export default function DeliveriesPage() {
               Save Delivery
             </button>
           </div>
+          </>
+          ) : null}
         </form>
 
         <div className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">

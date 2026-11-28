@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronDown, FilterX, Sparkles, Trash2 } from 'lucide-react'
+import { ChevronDown, FilterX, Link2, Sparkles, Trash2 } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
 import SortableTableHeader from '@/app/components/SortableTableHeader'
 
@@ -801,6 +801,13 @@ export default function ItemsPage() {
           </div>
 
           <div className="flex flex-wrap gap-2">
+            <Link
+              href="/suppliers?linkFilter=UNLINKED#product-catalogue"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-teal-700 px-4 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50"
+            >
+              <Link2 aria-hidden="true" className="h-4 w-4" />
+              Pair Unmatched L3s
+            </Link>
             <Link
               href="/items/build?import=recipe"
               className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"

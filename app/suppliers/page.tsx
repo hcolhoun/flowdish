@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FilterX } from 'lucide-react'
+import { ChevronDown, FilterX, Link2 } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
 import ImageRedactionEditor, {
   type ImageRedactionEditorHandle,
@@ -141,7 +141,7 @@ type SupplierSortKey =
 
 type SortDirection = 'asc' | 'desc'
 
-const SUPPLIER_CATALOGUE_PREFERENCES_KEY = 'flowdish:supplier-catalogue-preferences:v1'
+const SUPPLIER_CATALOGUE_PREFERENCES_KEY = 'flowdish:supplier-catalogue-preferences:v2'
 const SUPPLIER_SORT_KEYS: SupplierSortKey[] = [
   'name',
   'supplierSku',
@@ -219,6 +219,7 @@ export default function SuppliersPage() {
   const [preview, setPreview] = useState<ImportRow[]>([])
   const [rejectedRows, setRejectedRows] = useState<ImportRow[]>([])
   const [products, setProducts] = useState<SupplierProduct[]>([])
+  const [l3Items, setL3Items] = useState<Item[]>([])
 
   const [manualProduct, setManualProduct] = useState<ManualSupplierProduct>({
     supplier: '',
@@ -230,11 +231,12 @@ export default function SuppliersPage() {
     unitPrice: '',
     createLinkedL3: true,
   })
+  const [manualProductOpen, setManualProductOpen] = useState(false)
 
   const [search, setSearch] = useState('')
   const [supplierFilter, setSupplierFilter] = useState('ALL')
   const [linkFilter, setLinkFilter] = useState('ALL')
-  const [sortKey, setSortKey] = useState<SupplierSortKey | null>(null)
+  const [sortKey, setSortKey] = useState<SupplierSortKey | null>('name')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [cataloguePreferencesLoaded, setCataloguePreferencesLoaded] = useState(false)
 
@@ -249,6 +251,9 @@ export default function SuppliersPage() {
 
   const [editingL3Id, setEditingL3Id] = useState<string | null>(null)
   const [editingL3, setEditingL3] = useState<EditingL3 | null>(null)
+  const [pairingProductId, setPairingProductId] = useState<string | null>(null)
+  const [pairingItemId, setPairingItemId] = useState('')
+  const [savingPair, setSavingPair] = useState(false)
 
   const [impactReport, setImpactReport] = useState<ImportImpactResponse | null>(null)
   const [loadingImpact, setLoadingImpact] = useState(false)
@@ -300,12 +305,21 @@ export default function SuppliersPage() {
       setLoading(true)
       setError('')
 
-      const res = await fetch('/api/supplier-products', { cache: 'no-store' })
-      const data = await safeJson(res)
+      const [res, itemsRes] = await Promise.all([
+        fetch('/api/supplier-products', { cache: 'no-store' }),
+        fetch('/api/items', { cache: 'no-store' }),
+      ])
+      const [data, itemsData] = await Promise.all([safeJson(res), safeJson(itemsRes)])
 
       if (!res.ok) throw new Error(data?.error || 'Failed to load supplier products')
+      if (!itemsRes.ok) throw new Error(itemsData?.error || 'Failed to load L3 items')
 
       setProducts(data)
+      setL3Items(
+        itemsData
+          .filter((item: Item) => item.itemType === 'L3')
+          .sort((first: Item, second: Item) => catalogueCollator.compare(first.name, second.name))
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -346,28 +360,36 @@ export default function SuppliersPage() {
   useEffect(() => {
     try {
       const stored = window.sessionStorage.getItem(SUPPLIER_CATALOGUE_PREFERENCES_KEY)
-      if (!stored) return
+      if (stored) {
+        const preferences = JSON.parse(stored) as Record<string, unknown>
+        if (typeof preferences.search === 'string') setSearch(preferences.search)
+        if (typeof preferences.supplierFilter === 'string') {
+          setSupplierFilter(preferences.supplierFilter)
+        }
+        if (
+          preferences.linkFilter === 'ALL' ||
+          preferences.linkFilter === 'LINKED' ||
+          preferences.linkFilter === 'UNLINKED'
+        ) {
+          setLinkFilter(preferences.linkFilter)
+        }
+        if (
+          typeof preferences.sortKey === 'string' &&
+          SUPPLIER_SORT_KEYS.includes(preferences.sortKey as SupplierSortKey)
+        ) {
+          setSortKey(preferences.sortKey as SupplierSortKey)
+        }
+        if (preferences.sortDirection === 'asc' || preferences.sortDirection === 'desc') {
+          setSortDirection(preferences.sortDirection)
+        }
+      }
 
-      const preferences = JSON.parse(stored) as Record<string, unknown>
-      if (typeof preferences.search === 'string') setSearch(preferences.search)
-      if (typeof preferences.supplierFilter === 'string') {
-        setSupplierFilter(preferences.supplierFilter)
-      }
-      if (
-        preferences.linkFilter === 'ALL' ||
-        preferences.linkFilter === 'LINKED' ||
-        preferences.linkFilter === 'UNLINKED'
-      ) {
-        setLinkFilter(preferences.linkFilter)
-      }
-      if (
-        typeof preferences.sortKey === 'string' &&
-        SUPPLIER_SORT_KEYS.includes(preferences.sortKey as SupplierSortKey)
-      ) {
-        setSortKey(preferences.sortKey as SupplierSortKey)
-      }
-      if (preferences.sortDirection === 'asc' || preferences.sortDirection === 'desc') {
-        setSortDirection(preferences.sortDirection)
+      const requestedLinkFilter = new URLSearchParams(window.location.search).get('linkFilter')
+      if (requestedLinkFilter === 'UNLINKED' || requestedLinkFilter === 'LINKED') {
+        setLinkFilter(requestedLinkFilter)
+        window.setTimeout(() => {
+          document.getElementById('product-catalogue')?.scrollIntoView({ behavior: 'smooth' })
+        }, 100)
       }
     } catch {
       window.sessionStorage.removeItem(SUPPLIER_CATALOGUE_PREFERENCES_KEY)
@@ -417,7 +439,11 @@ export default function SuppliersPage() {
       return matchesSearch && matchesSupplier && matchesLink
     })
 
-    if (!sortKey) return matchingProducts
+    if (!sortKey) {
+      return [...matchingProducts].sort((first, second) =>
+        catalogueCollator.compare(first.name, second.name)
+      )
+    }
 
     return [...matchingProducts].sort((first, second) => {
       if (sortKey === 'name') {
@@ -464,7 +490,7 @@ export default function SuppliersPage() {
     })
   }, [products, search, supplierFilter, linkFilter, sortKey, sortDirection])
 
-  const visibleProducts = filteredProducts.slice(0, 200)
+  const visibleProducts = filteredProducts
 
   function handleCatalogueSort(nextSortKey: SupplierSortKey) {
     if (sortKey === nextSortKey) {
@@ -480,8 +506,41 @@ export default function SuppliersPage() {
     setSearch('')
     setSupplierFilter('ALL')
     setLinkFilter('ALL')
-    setSortKey(null)
+    setSortKey('name')
     setSortDirection('asc')
+  }
+
+  async function saveProductPair(productId: string) {
+    if (!pairingItemId) {
+      setError('Choose an L3 ingredient before saving the pair.')
+      return
+    }
+
+    try {
+      setSavingPair(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/supplier-products/auto-link', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: productId, linkedItemId: pairingItemId }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to pair supplier product')
+
+      setProducts((current) =>
+        current.map((product) => (product.id === data.id ? data : product))
+      )
+      setPairingProductId(null)
+      setPairingItemId('')
+      setMessage(`Paired ${data.name} with ${data.linkedItem?.name || 'the selected L3'}.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSavingPair(false)
+    }
   }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1201,11 +1260,29 @@ async function handlePriceOnlySave() {
         </section>
 
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-900">Manually Add Supplier Product</h2>
-          <p className="mt-1 text-sm text-slate-700">
-            Use this for one-off products, missing supplier lines, or corrections without uploading a price file.
-          </p>
+          <button
+            type="button"
+            onClick={() => setManualProductOpen((current) => !current)}
+            aria-expanded={manualProductOpen}
+            className="flex w-full items-center justify-between gap-4 text-left"
+          >
+            <span>
+              <span className="block text-xl font-semibold text-slate-900">
+                Manually Add Supplier Product
+              </span>
+              <span className="mt-1 block text-sm text-slate-700">
+                Use for a one-off product or correction.
+              </span>
+            </span>
+            <ChevronDown
+              aria-hidden="true"
+              className={`h-5 w-5 shrink-0 text-slate-500 transition-transform ${
+                manualProductOpen ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
 
+          {manualProductOpen ? (
           <form onSubmit={handleManualAddProduct} className="mt-5 grid gap-4 md:grid-cols-3">
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-900">Supplier</label>
@@ -1341,9 +1418,13 @@ async function handlePriceOnlySave() {
               </button>
             </div>
           </form>
+          ) : null}
         </section>
 
-        <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
+        <section
+          id="product-catalogue"
+          className="mt-8 scroll-mt-6 overflow-hidden rounded-2xl border bg-white shadow-sm"
+        >
           <div className="border-b px-6 py-4">
             <h2 className="text-xl font-semibold text-slate-900">Import Preview</h2>
             <p className="mt-1 text-sm text-slate-700">
@@ -1691,7 +1772,11 @@ async function handlePriceOnlySave() {
               type="button"
               onClick={clearCatalogueFilters}
               disabled={
-                !search && supplierFilter === 'ALL' && linkFilter === 'ALL' && sortKey === null
+                !search &&
+                supplierFilter === 'ALL' &&
+                linkFilter === 'ALL' &&
+                sortKey === 'name' &&
+                sortDirection === 'asc'
               }
               className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -1955,8 +2040,55 @@ async function handlePriceOnlySave() {
                                 </div>
                               </div>
                             )
+                          ) : pairingProductId === product.id ? (
+                            <div className="min-w-64 space-y-2">
+                              <select
+                                value={pairingItemId}
+                                onChange={(event) => setPairingItemId(event.target.value)}
+                                className="w-full rounded-lg border px-2 py-1.5 text-sm text-slate-900"
+                                autoFocus
+                              >
+                                <option value="">Choose an L3 ingredient...</option>
+                                {l3Items.map((item) => (
+                                  <option key={item.id} value={item.id}>
+                                    {item.name} [{item.sku}] · {item.unitType}
+                                  </option>
+                                ))}
+                              </select>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => saveProductPair(product.id)}
+                                  disabled={!pairingItemId || savingPair}
+                                  className="rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {savingPair ? 'Saving...' : 'Save pair'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPairingProductId(null)
+                                    setPairingItemId('')
+                                  }}
+                                  disabled={savingPair}
+                                  className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
                           ) : (
-                            <span className="text-red-700">Not linked</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPairingProductId(product.id)
+                                setPairingItemId('')
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-teal-300 px-3 py-1.5 text-sm font-medium text-teal-700 hover:bg-teal-50"
+                            >
+                              <Link2 aria-hidden="true" className="h-4 w-4" />
+                              Pair L3
+                            </button>
                           )}
                         </td>
 

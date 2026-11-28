@@ -1273,6 +1273,36 @@ export default function AdminPage() {
   }
 
   const coldStorageIngestUrl = 'https://www.flowdish.ie/api/cold-storage/readings/ingest'
+  const adminJumpOptions = data
+    ? [
+        { id: 'admin-restaurant', label: 'Current Restaurant' },
+        { id: 'admin-labour', label: 'Labour Costing' },
+        { id: 'admin-support', label: 'Support Ticket' },
+        ...(!data.currentUser.isSystemOwner &&
+        data.permissions.canManageRestaurantMembers &&
+        (data.restaurant.subscriptionPlan === 'ENTERPRISE' ||
+          (aiUsage?.totalDocumentPages ?? 0) > 0)
+          ? [{ id: 'admin-ai-documents', label: 'AI Document Usage' }]
+          : []),
+        ...(data.currentUser.isSystemOwner
+          ? [
+              { id: 'admin-ai-usage', label: 'AI Usage' },
+              { id: 'admin-cold-storage', label: 'Cold Storage Monitors' },
+            ]
+          : []),
+        { id: 'admin-members', label: 'Head Chef / Owner Members' },
+        { id: 'admin-head-chef-pin', label: 'Head Chef PIN Login' },
+        { id: 'admin-staff-pin', label: 'Staff PIN Users' },
+        { id: 'admin-vat', label: 'Delivery VAT Report' },
+        { id: 'admin-credits', label: 'Supplier Credits & Follow-ups' },
+        ...(data.permissions.canCreateRestaurants
+          ? [
+              { id: 'admin-create-restaurant', label: 'Create Restaurant' },
+              { id: 'admin-load-menus', label: 'Load Template Menus' },
+            ]
+          : []),
+      ]
+    : []
 
   return (
     <main className="min-h-screen bg-slate-50 p-8">
@@ -1324,8 +1354,41 @@ export default function AdminPage() {
         ) : null}
 
         {data ? (
+          <div className="sticky top-4 z-30 mt-6 flex justify-end">
+            <label className="rounded-xl border bg-white px-3 py-2 text-sm shadow-sm">
+              <span className="mr-2 font-medium text-slate-700">Jump to</span>
+              <select
+                defaultValue=""
+                onChange={(event) => {
+                  const targetId = event.target.value
+                  if (!targetId) return
+                  document.getElementById(targetId)?.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start',
+                  })
+                  event.target.value = ''
+                }}
+                className="bg-white text-slate-900 outline-none"
+              >
+                <option value="" disabled>
+                  Choose section
+                </option>
+                {adminJumpOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
+
+        {data ? (
           <>
-            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+            <section
+              id="admin-restaurant"
+              className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+            >
               <h2 className="text-xl font-semibold text-slate-900">Current Restaurant</h2>
 
               <div className="mt-5 grid gap-4 md:grid-cols-4">
@@ -1367,7 +1430,10 @@ export default function AdminPage() {
               </div>
             </section>
 
-            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+            <section
+              id="admin-labour"
+              className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+            >
               <div>
                 <h2 className="text-xl font-semibold text-slate-900">Labour Costing</h2>
                 <p className="mt-1 text-sm text-slate-600">
@@ -1428,7 +1494,10 @@ export default function AdminPage() {
               </form>
             </section>
 
-            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+            <section
+              id="admin-support"
+              className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+            >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">Support Ticket</h2>
@@ -1709,7 +1778,10 @@ export default function AdminPage() {
             !data.currentUser.isSystemOwner &&
             (data.restaurant.subscriptionPlan === 'ENTERPRISE' ||
               (aiUsage?.totalDocumentPages ?? 0) > 0) ? (
-              <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+              <section
+                id="admin-ai-documents"
+                className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+              >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-xl font-semibold text-slate-900">AI Document Usage</h2>
@@ -1808,7 +1880,10 @@ export default function AdminPage() {
             ) : null}
 
             {data.currentUser.isSystemOwner ? (
-              <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+              <section
+                id="admin-ai-usage"
+                className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+              >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-xl font-semibold text-slate-900">AI Usage</h2>
@@ -1981,7 +2056,10 @@ export default function AdminPage() {
             ) : null}
 
             {data.currentUser.isSystemOwner ? (
-              <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+              <section
+                id="admin-cold-storage"
+                className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+              >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-xl font-semibold text-slate-900">
@@ -2189,7 +2267,10 @@ export default function AdminPage() {
               </section>
             ) : null}
 
-            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+            <section
+              id="admin-members"
+              className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+            >
               <h2 className="text-xl font-semibold text-slate-900">Head Chef / Owner Members</h2>
               <p className="mt-1 text-sm text-slate-600">
                 Every Flowdish tier includes up to two full Head Chef or Owner accounts.
@@ -2221,7 +2302,10 @@ export default function AdminPage() {
               </div>
             </section>
 
-            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+            <section
+              id="admin-head-chef-pin"
+              className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+            >
               <h2 className="text-xl font-semibold text-slate-900">Head Chef PIN Login</h2>
               <p className="mt-1 text-sm text-slate-600">
                 This gives the account user a quick PIN login with the same access as their email
@@ -2320,7 +2404,10 @@ export default function AdminPage() {
               ) : null}
             </section>
 
-            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+            <section
+              id="admin-staff-pin"
+              className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+            >
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">Staff PIN Users</h2>
@@ -2559,7 +2646,10 @@ export default function AdminPage() {
               ) : null}
             </section>
 
-            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+            <section
+              id="admin-vat"
+              className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+            >
               <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">Delivery VAT Report</h2>
@@ -2684,7 +2774,10 @@ export default function AdminPage() {
               </div>
             </section>
 
-            <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+            <section
+              id="admin-credits"
+              className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+            >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">
@@ -3005,7 +3098,10 @@ export default function AdminPage() {
 
             {data.permissions.canCreateRestaurants ? (
               <>
-                <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+                <section
+                  id="admin-create-restaurant"
+                  className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+                >
                   <h2 className="text-xl font-semibold text-slate-900">
                     System Owner: Create Restaurant
                   </h2>
@@ -3084,7 +3180,10 @@ export default function AdminPage() {
                   ) : null}
                 </section>
 
-                <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
+                <section
+                  id="admin-load-menus"
+                  className="mt-8 scroll-mt-24 rounded-2xl border bg-white p-6 shadow-sm"
+                >
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div>
                       <h2 className="text-xl font-semibold text-slate-900">
