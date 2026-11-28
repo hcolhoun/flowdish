@@ -802,7 +802,7 @@ export default function ItemsPage() {
 
           <div className="flex flex-wrap gap-2">
             <Link
-              href="/suppliers?linkFilter=UNLINKED#product-catalogue"
+              href="/suppliers?pair=unmatched-l3#unmatched-l3-pairing"
               className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-teal-700 px-4 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50"
             >
               <Link2 aria-hidden="true" className="h-4 w-4" />

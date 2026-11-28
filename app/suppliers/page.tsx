@@ -253,6 +253,10 @@ export default function SuppliersPage() {
   const [editingL3, setEditingL3] = useState<EditingL3 | null>(null)
   const [pairingProductId, setPairingProductId] = useState<string | null>(null)
   const [pairingItemId, setPairingItemId] = useState('')
+  const [unmatchedPairingOpen, setUnmatchedPairingOpen] = useState(false)
+  const [unmatchedL3ItemId, setUnmatchedL3ItemId] = useState<string | null>(null)
+  const [pairProductSearch, setPairProductSearch] = useState('')
+  const [selectedPairProductId, setSelectedPairProductId] = useState('')
   const [savingPair, setSavingPair] = useState(false)
 
   const [impactReport, setImpactReport] = useState<ImportImpactResponse | null>(null)
@@ -384,7 +388,20 @@ export default function SuppliersPage() {
         }
       }
 
-      const requestedLinkFilter = new URLSearchParams(window.location.search).get('linkFilter')
+      const searchParams = new URLSearchParams(window.location.search)
+      const requestedPairing = searchParams.get('pair')
+      const requestedLinkFilter = searchParams.get('linkFilter')
+
+      if (requestedPairing === 'unmatched-l3') {
+        setUnmatchedPairingOpen(true)
+        setSearch('')
+        setSupplierFilter('ALL')
+        setLinkFilter('ALL')
+        window.setTimeout(() => {
+          document.getElementById('unmatched-l3-pairing')?.scrollIntoView({ behavior: 'smooth' })
+        }, 100)
+      }
+
       if (requestedLinkFilter === 'UNLINKED' || requestedLinkFilter === 'LINKED') {
         setLinkFilter(requestedLinkFilter)
         window.setTimeout(() => {
@@ -417,6 +434,42 @@ export default function SuppliersPage() {
   const suppliers = useMemo(() => {
     return Array.from(new Set(products.map((p) => p.supplier))).sort()
   }, [products])
+
+  const unmatchedL3Items = useMemo(() => {
+    const linkedItemIds = new Set(
+      products.map((product) => product.linkedItemId).filter((id): id is string => Boolean(id))
+    )
+
+    return l3Items.filter((item) => !linkedItemIds.has(item.id))
+  }, [l3Items, products])
+
+  const pairProductOptions = useMemo(() => {
+    const query = pairProductSearch.trim().toLowerCase()
+    const matchingProducts = query
+      ? products.filter((product) =>
+          [
+            product.name,
+            product.supplier,
+            product.supplierSku,
+            product.packSize,
+            product.weight,
+            product.linkedItem?.name,
+            product.linkedItem?.sku,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .includes(query)
+        )
+      : products
+
+    return [...matchingProducts]
+      .sort((first, second) => {
+        const nameComparison = catalogueCollator.compare(first.name, second.name)
+        return nameComparison || catalogueCollator.compare(first.supplier, second.supplier)
+      })
+      .slice(0, 100)
+  }, [pairProductSearch, products])
 
   const filteredProducts = useMemo(() => {
     const q = search.toLowerCase().trim()
@@ -536,6 +589,48 @@ export default function SuppliersPage() {
       setPairingProductId(null)
       setPairingItemId('')
       setMessage(`Paired ${data.name} with ${data.linkedItem?.name || 'the selected L3'}.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setSavingPair(false)
+    }
+  }
+
+  async function saveUnmatchedL3Pair() {
+    if (!unmatchedL3ItemId || !selectedPairProductId) {
+      setError('Choose a supplier product before saving the pair.')
+      return
+    }
+
+    const targetItem = l3Items.find((item) => item.id === unmatchedL3ItemId)
+    const selectedProduct = products.find((product) => product.id === selectedPairProductId)
+
+    try {
+      setSavingPair(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/supplier-products/auto-link', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: selectedPairProductId,
+          linkedItemId: unmatchedL3ItemId,
+        }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to pair L3 ingredient')
+
+      setProducts((current) =>
+        current.map((product) => (product.id === data.id ? data : product))
+      )
+      setUnmatchedL3ItemId(null)
+      setPairProductSearch('')
+      setSelectedPairProductId('')
+      setMessage(
+        `Paired ${targetItem?.name || 'L3 ingredient'} with ${selectedProduct?.name || 'the supplier product'}.`
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -1113,6 +1208,152 @@ async function handlePriceOnlySave() {
             Saving supplier products and linked L3s. Do not refresh this page.
           </div>
         ) : null}
+
+        <section
+          id="unmatched-l3-pairing"
+          className="mt-8 scroll-mt-6 rounded-2xl border bg-white p-6 shadow-sm"
+        >
+          <button
+            type="button"
+            onClick={() => setUnmatchedPairingOpen((current) => !current)}
+            aria-expanded={unmatchedPairingOpen}
+            className="flex w-full items-center justify-between gap-4 text-left"
+          >
+            <span>
+              <span className="block text-xl font-semibold text-slate-900">
+                Pair Unmatched L3 Ingredients
+              </span>
+              <span className="mt-1 block text-sm text-slate-700">
+                {unmatchedL3Items.length} L3 ingredient
+                {unmatchedL3Items.length === 1 ? '' : 's'} without a supplier price link.
+              </span>
+            </span>
+            <ChevronDown
+              aria-hidden="true"
+              className={`h-5 w-5 shrink-0 text-slate-500 transition-transform ${
+                unmatchedPairingOpen ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
+
+          {unmatchedPairingOpen ? (
+            <div className="mt-5">
+              <p className="text-sm text-slate-600">
+                Choose the supplier product that represents each imported ingredient. If it is
+                currently linked elsewhere, its price link will move to this L3; its supplier SKU,
+                pack and price remain unchanged.
+              </p>
+
+              {unmatchedL3Items.length === 0 ? (
+                <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+                  All L3 ingredients have a supplier price link.
+                </div>
+              ) : (
+                <div className="mt-4 max-h-[65vh] divide-y overflow-y-auto border-y">
+                  {unmatchedL3Items.map((item) => {
+                    const isPairing = unmatchedL3ItemId === item.id
+                    const selectedProduct = products.find(
+                      (product) => product.id === selectedPairProductId
+                    )
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="grid gap-3 py-4 lg:grid-cols-[minmax(220px,1fr)_minmax(420px,2fr)] lg:items-start"
+                      >
+                        <div>
+                          <div className="font-medium text-slate-900">{item.name}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {item.sku} · {item.unitType}
+                          </div>
+                        </div>
+
+                        {isPairing ? (
+                          <div className="space-y-2">
+                            <input
+                              value={pairProductSearch}
+                              onChange={(event) => {
+                                setPairProductSearch(event.target.value)
+                                setSelectedPairProductId('')
+                              }}
+                              placeholder="Search supplier product, SKU or supplier..."
+                              className="w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                              autoFocus
+                            />
+                            <select
+                              value={selectedPairProductId}
+                              onChange={(event) => setSelectedPairProductId(event.target.value)}
+                              className="w-full rounded-lg border px-3 py-2 text-sm text-slate-900"
+                            >
+                              <option value="">Choose supplier product...</option>
+                              {pairProductOptions.map((product) => (
+                                <option key={product.id} value={product.id}>
+                                  {product.name} · {product.supplier}
+                                  {product.supplierSku ? ` · ${product.supplierSku}` : ''}
+                                  {product.linkedItem
+                                    ? ` · currently ${product.linkedItem.name}`
+                                    : ' · unlinked'}
+                                </option>
+                              ))}
+                            </select>
+
+                            {selectedProduct ? (
+                              <div className="text-xs text-slate-600">
+                                {selectedProduct.packSize || 'Pack'}
+                                {selectedProduct.weight ? ` · ${selectedProduct.weight}` : ''}
+                                {selectedProduct.unitPrice !== null
+                                  ? ` · ${unitPriceLabel(selectedProduct)}`
+                                  : ' · No unit price'}
+                              </div>
+                            ) : null}
+
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={saveUnmatchedL3Pair}
+                                disabled={!selectedPairProductId || savingPair}
+                                className="rounded-lg bg-teal-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {savingPair ? 'Saving...' : 'Save pair'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUnmatchedL3ItemId(null)
+                                  setPairProductSearch('')
+                                  setSelectedPairProductId('')
+                                }}
+                                disabled={savingPair}
+                                className="rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="lg:text-right">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setUnmatchedL3ItemId(item.id)
+                                setPairProductSearch(item.name)
+                                setSelectedPairProductId('')
+                              }}
+                              className="inline-flex items-center gap-2 rounded-lg border border-teal-300 px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50"
+                            >
+                              <Link2 aria-hidden="true" className="h-4 w-4" />
+                              Choose supplier product
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </section>
 
         <section className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-900">Upload Price List</h2>
