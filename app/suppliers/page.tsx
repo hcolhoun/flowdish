@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, FilterX, Link2 } from 'lucide-react'
+import { ChevronDown, FilterX, Link2, Sparkles } from 'lucide-react'
 import CopyableError from '@/app/components/CopyableError'
 import ImageRedactionEditor, {
   type ImageRedactionEditorHandle,
@@ -141,6 +141,13 @@ type SupplierSortKey =
 
 type SortDirection = 'asc' | 'desc'
 
+type PairSuggestion = {
+  itemId: string
+  productId: string
+  confidence: number
+  reason: string
+}
+
 const SUPPLIER_CATALOGUE_PREFERENCES_KEY = 'flowdish:supplier-catalogue-preferences:v2'
 const SUPPLIER_SORT_KEYS: SupplierSortKey[] = [
   'name',
@@ -258,6 +265,12 @@ export default function SuppliersPage() {
   const [pairProductSearch, setPairProductSearch] = useState('')
   const [selectedPairProductId, setSelectedPairProductId] = useState('')
   const [savingPair, setSavingPair] = useState(false)
+  const [pairSuggestions, setPairSuggestions] = useState<PairSuggestion[]>([])
+  const [selectedSuggestionProductIds, setSelectedSuggestionProductIds] = useState<string[]>([])
+  const [expandedSuggestionItemIds, setExpandedSuggestionItemIds] = useState<string[]>([])
+  const [generatingPairSuggestions, setGeneratingPairSuggestions] = useState(false)
+  const [applyingPairSuggestions, setApplyingPairSuggestions] = useState(false)
+  const [pairSuggestionReport, setPairSuggestionReport] = useState('')
 
   const [impactReport, setImpactReport] = useState<ImportImpactResponse | null>(null)
   const [loadingImpact, setLoadingImpact] = useState(false)
@@ -287,17 +300,15 @@ export default function SuppliersPage() {
     if (product.unitPrice === null || product.unitPrice === undefined) return ''
 
     const text = `${product.weight || ''} ${product.packSize || ''}`.toLowerCase()
+    const linkedUnitType = 'linkedItem' in product ? product.linkedItem?.unitType : null
+    const hasWeightUnit = /(?:^|[^a-z])(?:kg|g)(?:$|[^a-z])/.test(text)
+    const hasVolumeUnit = /(?:^|[^a-z])(?:ltr|litre|l|ml)(?:$|[^a-z])/.test(text)
 
-    if (text.includes('kg') || text.includes('g')) {
+    if (linkedUnitType === 'g' || hasWeightUnit) {
       return `${money(product.unitPrice, 6)} / g`
     }
 
-    if (
-      text.includes('ltr') ||
-      text.includes('litre') ||
-      text.includes('l') ||
-      text.includes('ml')
-    ) {
+    if (linkedUnitType === 'ml' || hasVolumeUnit) {
       return `${money(product.unitPrice, 6)} / ml`
     }
 
@@ -471,6 +482,34 @@ export default function SuppliersPage() {
       .slice(0, 100)
   }, [pairProductSearch, products])
 
+  const pairSuggestionsByItemId = useMemo(() => {
+    const productById = new Map(products.map((product) => [product.id, product]))
+    const grouped = new Map<string, PairSuggestion[]>()
+
+    for (const suggestion of pairSuggestions) {
+      const current = grouped.get(suggestion.itemId) || []
+      current.push(suggestion)
+      grouped.set(suggestion.itemId, current)
+    }
+
+    for (const suggestions of grouped.values()) {
+      suggestions.sort((first, second) => {
+        const firstPrice = productById.get(first.productId)?.unitPrice
+        const secondPrice = productById.get(second.productId)?.unitPrice
+        const firstHasPrice = typeof firstPrice === 'number' && firstPrice > 0
+        const secondHasPrice = typeof secondPrice === 'number' && secondPrice > 0
+
+        if (firstHasPrice && secondHasPrice && firstPrice !== secondPrice) {
+          return Number(firstPrice) - Number(secondPrice)
+        }
+        if (firstHasPrice !== secondHasPrice) return firstHasPrice ? -1 : 1
+        return second.confidence - first.confidence
+      })
+    }
+
+    return grouped
+  }, [pairSuggestions, products])
+
   const filteredProducts = useMemo(() => {
     const q = search.toLowerCase().trim()
 
@@ -628,6 +667,18 @@ export default function SuppliersPage() {
       setUnmatchedL3ItemId(null)
       setPairProductSearch('')
       setSelectedPairProductId('')
+      setPairSuggestions((current) =>
+        current.filter((suggestion) => suggestion.itemId !== unmatchedL3ItemId)
+      )
+      setSelectedSuggestionProductIds((current) =>
+        current.filter(
+          (productId) =>
+            !pairSuggestions.some(
+              (suggestion) =>
+                suggestion.itemId === unmatchedL3ItemId && suggestion.productId === productId
+            )
+        )
+      )
       setMessage(
         `Paired ${targetItem?.name || 'L3 ingredient'} with ${selectedProduct?.name || 'the supplier product'}.`
       )
@@ -635,6 +686,98 @@ export default function SuppliersPage() {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setSavingPair(false)
+    }
+  }
+
+  async function generatePairSuggestions() {
+    try {
+      setGeneratingPairSuggestions(true)
+      setError('')
+      setMessage('')
+      setPairSuggestionReport('')
+
+      const res = await fetch('/api/supplier-products/pair-suggestions', {
+        method: 'POST',
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to suggest supplier product pairs')
+
+      const suggestions = Array.isArray(data.suggestions)
+        ? (data.suggestions as PairSuggestion[])
+        : []
+      const highConfidenceProductIds = suggestions
+        .filter((suggestion) => suggestion.confidence >= 0.85)
+        .map((suggestion) => suggestion.productId)
+
+      setPairSuggestions(suggestions)
+      setSelectedSuggestionProductIds(highConfidenceProductIds)
+      setExpandedSuggestionItemIds([])
+      setPairSuggestionReport(
+        suggestions.length === 0
+          ? `No reliable matches were found for ${Number(data.attempted) || 0} unmatched L3 ingredients.`
+          : `${suggestions.length} product match${suggestions.length === 1 ? '' : 'es'} found. ${highConfidenceProductIds.length} high-confidence match${highConfidenceProductIds.length === 1 ? '' : 'es'} selected for review.${Number(data.noCandidates) > 0 ? ` ${Number(data.noCandidates)} ingredients had no close catalogue candidate.` : ''}`
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setGeneratingPairSuggestions(false)
+    }
+  }
+
+  async function applySelectedPairSuggestions() {
+    const selectedIds = new Set(selectedSuggestionProductIds)
+    const pairs = pairSuggestions
+      .filter((suggestion) => selectedIds.has(suggestion.productId))
+      .map((suggestion) => ({
+        itemId: suggestion.itemId,
+        productId: suggestion.productId,
+      }))
+
+    if (pairs.length === 0) {
+      setError('Select at least one suggested pair to apply.')
+      return
+    }
+
+    try {
+      setApplyingPairSuggestions(true)
+      setError('')
+      setMessage('')
+
+      const res = await fetch('/api/supplier-products/pair-suggestions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pairs }),
+      })
+      const data = await safeJson(res)
+
+      if (!res.ok) throw new Error(data?.error || 'Failed to apply supplier product pairs')
+
+      const updatedProducts: SupplierProduct[] = Array.isArray(data.updatedProducts)
+        ? data.updatedProducts
+        : []
+      const updatedById = new Map<string, SupplierProduct>(
+        updatedProducts.map((product) => [product.id, product])
+      )
+      setProducts((current) =>
+        current.map((product) => updatedById.get(product.id) || product)
+      )
+      const appliedItemIds = new Set(pairs.map((pair) => pair.itemId))
+      setPairSuggestions((current) =>
+        current.filter((suggestion) => !appliedItemIds.has(suggestion.itemId))
+      )
+      setSelectedSuggestionProductIds([])
+      setExpandedSuggestionItemIds((current) =>
+        current.filter((itemId) => !appliedItemIds.has(itemId))
+      )
+      setPairSuggestionReport('')
+      setMessage(
+        `${Number(data.updatedCount) || pairs.length} supplier product link${pairs.length === 1 ? '' : 's'} applied across ${appliedItemIds.size} L3 ingredient${appliedItemIds.size === 1 ? '' : 's'}.`
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setApplyingPairSuggestions(false)
     }
   }
 
@@ -1176,7 +1319,7 @@ async function handlePriceOnlySave() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-8">
-      <div className="mx-auto max-w-7xl">
+      <div className="mx-auto flex max-w-7xl flex-col">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Supplier Products</h1>
@@ -1211,7 +1354,7 @@ async function handlePriceOnlySave() {
 
         <section
           id="unmatched-l3-pairing"
-          className="mt-8 scroll-mt-6 rounded-2xl border bg-white p-6 shadow-sm"
+          className="order-last mt-8 scroll-mt-6 rounded-2xl border bg-white p-6 shadow-sm"
         >
           <button
             type="button"
@@ -1239,10 +1382,67 @@ async function handlePriceOnlySave() {
           {unmatchedPairingOpen ? (
             <div className="mt-5">
               <p className="text-sm text-slate-600">
-                Choose the supplier product that represents each imported ingredient. If it is
-                currently linked elsewhere, its price link will move to this L3; its supplier SKU,
-                pack and price remain unchanged.
+                Review matching products from any supplier, ordered by base-unit price. If a
+                product is currently linked elsewhere, its price link will move to this L3; its
+                supplier SKU, pack and price remain unchanged.
               </p>
+
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={generatePairSuggestions}
+                  disabled={
+                    generatingPairSuggestions ||
+                    applyingPairSuggestions ||
+                    unmatchedL3Items.length === 0
+                  }
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Sparkles aria-hidden="true" className="h-4 w-4" />
+                  {generatingPairSuggestions ? 'Finding matches...' : 'Suggest matches with AI'}
+                </button>
+
+                {pairSuggestions.length > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={applySelectedPairSuggestions}
+                      disabled={
+                        applyingPairSuggestions || selectedSuggestionProductIds.length === 0
+                      }
+                      className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {applyingPairSuggestions
+                        ? 'Applying...'
+                        : `Apply selected (${selectedSuggestionProductIds.length})`}
+                    </button>
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={
+                          pairSuggestions.length > 0 &&
+                          selectedSuggestionProductIds.length === pairSuggestions.length
+                        }
+                        onChange={(event) =>
+                          setSelectedSuggestionProductIds(
+                            event.target.checked
+                              ? pairSuggestions.map((suggestion) => suggestion.productId)
+                              : []
+                          )
+                        }
+                        className="h-4 w-4"
+                      />
+                      Select all suggestions
+                    </label>
+                  </>
+                ) : null}
+              </div>
+
+              {pairSuggestionReport ? (
+                <div className="mt-3 text-sm text-slate-700" aria-live="polite">
+                  {pairSuggestionReport} Nothing is saved until you apply the selected pairs.
+                </div>
+              ) : null}
 
               {unmatchedL3Items.length === 0 ? (
                 <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
@@ -1252,6 +1452,12 @@ async function handlePriceOnlySave() {
                 <div className="mt-4 max-h-[65vh] divide-y overflow-y-auto border-y">
                   {unmatchedL3Items.map((item) => {
                     const isPairing = unmatchedL3ItemId === item.id
+                    const suggestions = pairSuggestionsByItemId.get(item.id) || []
+                    const suggestionsExpanded = expandedSuggestionItemIds.includes(item.id)
+                    const visibleSuggestions = suggestionsExpanded
+                      ? suggestions
+                      : suggestions.slice(0, 3)
+                    const hiddenSuggestionCount = suggestions.length - visibleSuggestions.length
                     const selectedProduct = products.find(
                       (product) => product.id === selectedPairProductId
                     )
@@ -1327,6 +1533,114 @@ async function handlePriceOnlySave() {
                                 className="rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                               >
                                 Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : suggestions.length > 0 ? (
+                          <div className="space-y-2">
+                            <div className="text-xs text-slate-500">
+                              {suggestions.length} match{suggestions.length === 1 ? '' : 'es'} ·
+                              cheapest first
+                            </div>
+
+                            {visibleSuggestions.map((suggestion, index) => {
+                              const suggestedProduct = products.find(
+                                (product) => product.id === suggestion.productId
+                              )
+                              if (!suggestedProduct) return null
+
+                              const suggestionSelected =
+                                selectedSuggestionProductIds.includes(suggestion.productId)
+
+                              return (
+                                <label
+                                  key={suggestion.productId}
+                                  className="grid cursor-pointer gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-start"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={suggestionSelected}
+                                    onChange={(event) =>
+                                      setSelectedSuggestionProductIds((current) =>
+                                        event.target.checked
+                                          ? Array.from(
+                                              new Set([...current, suggestion.productId])
+                                            )
+                                          : current.filter(
+                                              (productId) => productId !== suggestion.productId
+                                            )
+                                      )
+                                    }
+                                    className="mt-1 h-4 w-4 shrink-0"
+                                  />
+                                  <span className="min-w-0">
+                                    <span className="block font-medium text-slate-900">
+                                      {index + 1}. {suggestedProduct.name}
+                                    </span>
+                                    <span className="mt-0.5 block text-xs text-slate-600">
+                                      {suggestedProduct.supplier}
+                                      {suggestedProduct.supplierSku
+                                        ? ` · SKU ${suggestedProduct.supplierSku}`
+                                        : ''}
+                                      {suggestedProduct.packSize
+                                        ? ` · ${suggestedProduct.packSize}`
+                                        : ''}
+                                      {suggestedProduct.weight
+                                        ? ` · ${suggestedProduct.weight}`
+                                        : ''}
+                                    </span>
+                                    <span className="mt-1 block text-xs text-slate-500">
+                                      {Math.round(suggestion.confidence * 100)}% match ·{' '}
+                                      {suggestion.reason}
+                                    </span>
+                                  </span>
+                                  <span className="text-sm font-semibold text-teal-800 sm:text-right">
+                                    {typeof suggestedProduct.unitPrice === 'number' &&
+                                    suggestedProduct.unitPrice > 0
+                                      ? unitPriceLabel(suggestedProduct)
+                                      : 'No unit price'}
+                                  </span>
+                                </label>
+                              )
+                            })}
+
+                            <div className="flex flex-wrap items-center gap-3 pt-1">
+                              {hiddenSuggestionCount > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedSuggestionItemIds((current) => [
+                                      ...current,
+                                      item.id,
+                                    ])
+                                  }
+                                  className="text-sm font-medium text-teal-700 hover:text-teal-900"
+                                >
+                                  Show {hiddenSuggestionCount} more
+                                </button>
+                              ) : suggestionsExpanded && suggestions.length > 3 ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedSuggestionItemIds((current) =>
+                                      current.filter((itemId) => itemId !== item.id)
+                                    )
+                                  }
+                                  className="text-sm font-medium text-teal-700 hover:text-teal-900"
+                                >
+                                  Show top 3
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUnmatchedL3ItemId(item.id)
+                                  setPairProductSearch(item.name)
+                                  setSelectedPairProductId('')
+                                }}
+                                className="text-sm text-slate-600 hover:text-slate-900"
+                              >
+                                Choose manually
                               </button>
                             </div>
                           </div>
@@ -1662,10 +1976,7 @@ async function handlePriceOnlySave() {
           ) : null}
         </section>
 
-        <section
-          id="product-catalogue"
-          className="mt-8 scroll-mt-6 overflow-hidden rounded-2xl border bg-white shadow-sm"
-        >
+        <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div className="border-b px-6 py-4">
             <h2 className="text-xl font-semibold text-slate-900">Import Preview</h2>
             <p className="mt-1 text-sm text-slate-700">
@@ -2001,7 +2312,10 @@ async function handlePriceOnlySave() {
           </div>
         </section>
 
-        <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
+        <section
+          id="product-catalogue"
+          className="mt-8 scroll-mt-6 overflow-hidden rounded-2xl border bg-white shadow-sm"
+        >
           <div className="flex items-start justify-between gap-3 border-b px-6 py-4">
             <div>
               <h2 className="text-xl font-semibold text-slate-900">Product Catalogue</h2>
